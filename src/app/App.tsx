@@ -4735,14 +4735,19 @@ function KanbanBoard({
       .catch(notifyError("작업 추가 실패"));
   };
 
-  // 컬럼 간 이동 — 대상 컬럼 맨 아래로. 낙관적 갱신 후 저장 실패는 토스트만.
+  // 컬럼 빈 공간으로 드롭 — 대상 컬럼 맨 아래로. 같은 컬럼이어도 "맨 아래로 이동"으로
+  // 동작(이전엔 같은 컬럼 드롭이 무시됐음). 이미 맨 아래에 있으면 아무것도 안 함.
   const moveCard = (id: string, status: KanbanStatus) => {
     const card = cards.find(c => c.id === id);
-    if (!card || card.status === status) return;
-    const destMax = Math.max(-1, ...cards.filter(c => c.status === status).map(c => c.sortOrder));
-    const sortOrder = destMax + 1;
-    setCards(cs => cs.map(c => c.id === id ? { ...c, status, sortOrder } : c));
-    updateKanbanCard(id, { status, sortOrder }).catch(notifyError("작업 이동 실패"));
+    if (!card) return;
+    const rest = cards.filter(c => c.status === status && c.id !== id).sort((a, b) => a.sortOrder - b.sortOrder);
+    if (card.status === status && (rest.length === 0 || rest[rest.length - 1].sortOrder < card.sortOrder)) return;
+    const updates = [...rest, card].map((c, i) => ({ id: c.id, status, sortOrder: i }));
+    setCards(cs => cs.map(c => {
+      const u = updates.find(x => x.id === c.id);
+      return u ? { ...c, status: u.status, sortOrder: u.sortOrder } : c;
+    }));
+    bulkUpdateKanbanCardOrder(updates).catch(notifyError("작업 이동 실패"));
   };
 
   // 카드 위에 드롭 — 그 카드의 앞/뒤(마우스가 카드 상반부면 앞)에 끼워 넣음.
@@ -4774,7 +4779,19 @@ function KanbanBoard({
     deleteKanbanCardRow(id).catch(notifyError("작업 삭제 실패"));
   };
 
+  // 편집 폼의 현재 입력값을 해당 카드에 저장. 제목이 비어 있으면 저장하지 않음(폐기).
+  // 편집 상태(editingId 등)는 건드리지 않아 저장 후 닫기/다른 카드로 전환 양쪽에서 재사용.
+  const commitEdit = (id: string) => {
+    const title = editTitle.trim();
+    if (!title) return;
+    const changes = { title, content: editContent.trim(), color: editColor };
+    setCards(cs => cs.map(c => c.id === id ? { ...c, ...changes } : c));
+    updateKanbanCard(id, changes).catch(notifyError("작업 수정 실패"));
+  };
+
   const startEdit = (card: KanbanCard) => {
+    // 다른 카드를 편집하던 중이면 그 변경분을 조용히 잃지 않도록 먼저 저장하고 전환.
+    if (editingId && editingId !== card.id) commitEdit(editingId);
     setEditingId(card.id);
     setEditTitle(card.title);
     setEditContent(card.content);
@@ -4826,13 +4843,9 @@ function KanbanBoard({
   };
 
   const saveEdit = () => {
-    if (!editingId) return;
-    const title = editTitle.trim();
-    if (!title) return;
-    const changes = { title, content: editContent.trim(), color: editColor };
-    setCards(cs => cs.map(c => c.id === editingId ? { ...c, ...changes } : c));
+    if (!editingId || !editTitle.trim()) return;
+    commitEdit(editingId);
     setEditingId(null);
-    updateKanbanCard(editingId, changes).catch(notifyError("작업 수정 실패"));
   };
 
   return (
@@ -5027,10 +5040,11 @@ function KanbanBoard({
                               {card.content}
                             </div>
                           )}
-                          {/* 체크리스트 미리보기 — 카드에서 바로 토글 가능. 추가/삭제는 클릭(편집 폼)에서. */}
+                          {/* 체크리스트 미리보기 — 카드에서 바로 토글 가능. 추가/삭제는 클릭(편집 폼)에서.
+                               카드가 과하게 길어지지 않게 5개까지만 표시, 나머지는 개수로 접음. */}
                           {checklist.length > 0 && (
                             <div className="mt-1.5 space-y-0.5">
-                              {checklist.map(({ item, depth }) => (
+                              {checklist.slice(0, 5).map(({ item, depth }) => (
                                 <div key={item.id} className="flex items-center gap-1.5 min-w-0" style={{ marginLeft: depth * 12 }}>
                                   <button
                                     onClick={e => { e.stopPropagation(); toggleCheckItem(item.id, !item.completed); }}
@@ -5048,6 +5062,11 @@ function KanbanBoard({
                                   </span>
                                 </div>
                               ))}
+                              {checklist.length > 5 && (
+                                <div className="text-[10px] opacity-50 pl-[17px]" style={{ color: cardColor }}>
+                                  +{checklist.length - 5}개 · {checklist.filter(c => c.item.completed).length}/{checklist.length} 완료
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
