@@ -2899,6 +2899,9 @@ function CalendarSection({
                       completed: false,
                       tags: [],
                       memo: "",
+                      // category 누락 시 undefined 가 낙관적 상태에 남아 카테고리 색 매칭("" 기준)과
+                      // 어긋날 수 있음 — DB 기본값과 동일하게 빈 문자열로 명시.
+                      category: "",
                       date: dateStr,
                       // 시간표 블록은 기본으로 오늘 달성률에 포함하지 않음 (필요 시 상세 패널에서 켬).
                       countInCompletion: false,
