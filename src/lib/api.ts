@@ -297,6 +297,73 @@ export async function deleteDeadlineRow(id: string) {
   await db.execute("DELETE FROM deadlines WHERE id = ?", [id]);
 }
 
+// ── kanban_cards (마감 작업별 칸반 보드) ─────────────────────────
+// 마감 작업 하나를 열면 나오는 보드의 카드. status 로 컬럼(할 작업/진행 중/끝난 작업)을
+// 구분하고, sort_order 는 같은 컬럼 안에서의 순서. deadline 삭제 시 ON DELETE CASCADE.
+export type KanbanStatus = "todo" | "doing" | "done";
+
+export interface KanbanCard {
+  id: string;
+  deadlineId: string;
+  status: KanbanStatus;
+  title: string;
+  content: string;
+  sortOrder: number;
+}
+
+const rowToKanbanCard = (r: any): KanbanCard => ({
+  id: r.id,
+  deadlineId: r.deadline_id,
+  status: (r.status === "doing" || r.status === "done" ? r.status : "todo") as KanbanStatus,
+  title: r.title ?? "",
+  content: r.content ?? "",
+  sortOrder: r.sort_order ?? 0,
+});
+
+export async function fetchKanbanCards(deadlineId: string): Promise<KanbanCard[]> {
+  const db = await getDb();
+  const rows = await db.select<any[]>(
+    "SELECT * FROM kanban_cards WHERE deadline_id = ? ORDER BY sort_order, created_at",
+    [deadlineId]
+  );
+  return rows.map(rowToKanbanCard);
+}
+
+export async function createKanbanCard(c: { deadlineId: string; status: KanbanStatus; title: string; content?: string }): Promise<KanbanCard> {
+  const db = await getDb();
+  const id = uuid();
+  const content = c.content ?? "";
+  // 같은 컬럼의 맨 아래에 붙임 — 컬럼 내 최대 sort_order + 1.
+  const rows = await db.select<any[]>(
+    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM kanban_cards WHERE deadline_id = ? AND status = ?",
+    [c.deadlineId, c.status]
+  );
+  const sortOrder = rows[0]?.n ?? 0;
+  await db.execute(
+    "INSERT INTO kanban_cards (id, deadline_id, status, title, content, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+    [id, c.deadlineId, c.status, c.title, content, sortOrder]
+  );
+  return { id, deadlineId: c.deadlineId, status: c.status, title: c.title, content, sortOrder };
+}
+
+export async function updateKanbanCard(id: string, changes: { status?: KanbanStatus; title?: string; content?: string; sortOrder?: number }): Promise<void> {
+  const db = await getDb();
+  const sets: string[] = [];
+  const vals: any[] = [];
+  if (changes.status !== undefined) { sets.push("status = ?"); vals.push(changes.status); }
+  if (changes.title !== undefined) { sets.push("title = ?"); vals.push(changes.title); }
+  if (changes.content !== undefined) { sets.push("content = ?"); vals.push(changes.content); }
+  if (changes.sortOrder !== undefined) { sets.push("sort_order = ?"); vals.push(changes.sortOrder); }
+  if (sets.length === 0) return;
+  vals.push(id);
+  await db.execute(`UPDATE kanban_cards SET ${sets.join(", ")} WHERE id = ?`, vals);
+}
+
+export async function deleteKanbanCardRow(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM kanban_cards WHERE id = ?", [id]);
+}
+
 // ── todos (날짜별 할 일 — 시간 없이 체크박스) ────────────────────
 // 반복 규칙 — 시간 블록의 BlockRepeat 과 구조 동일(구조적 타이핑으로 호환).
 export interface RepeatRule {

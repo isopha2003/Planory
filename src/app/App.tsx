@@ -12,6 +12,8 @@ import {
   fetchTemplates, createTemplate, deleteTemplateRow, fetchBlocks, insertBlock, patchBlock, deleteBlockRow,
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
   fetchDeadlines, createDeadline, toggleDeadlineRow, deleteDeadlineRow,
+  fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow,
+  type KanbanCard, type KanbanStatus,
   fetchTodos, createTodo, updateTodo, toggleTodoRow, deleteTodoRow, bulkUpdateTodoOrder, type Todo,
   insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin,
   fetchTodaySessions, startTimerSession, endTimerSession, deleteTodaySessions, fetchFocusSecByDate,
@@ -4495,7 +4497,16 @@ function DeadlinesSection({
   const [newTitle, setNewTitle] = useState("");
   const [newDueDate, setNewDueDate] = useState(TODAY_STR);
 
+  // 칸반 보드로 열어둔 마감 작업 id. 목록에서 행을 클릭하면 진입, 뒤로가기로 복귀.
+  // deadlines prop 에서 매 렌더 재조회 — 보드를 보는 중 마감이 삭제되면 자동으로 목록 복귀.
+  const [boardId, setBoardId] = useState<string | null>(null);
+  const boardDeadline = boardId ? deadlines.find(d => d.id === boardId) : undefined;
+
   const daysLeft = (date: string) => daysBetween(parseLocalDate(date), TODAY_DATE);
+
+  if (boardDeadline) {
+    return <KanbanBoard deadline={boardDeadline} onBack={() => setBoardId(null)} />;
+  }
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -4513,10 +4524,11 @@ function DeadlinesSection({
                 return (
                   <div
                     key={d.id}
-                    className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border"
+                    onClick={() => setBoardId(d.id)}
+                    className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
                     style={{ backgroundColor: color + "18", borderColor: color + "55" }}
                   >
-                    <button onClick={() => onToggle(d.id)}><Circle size={18} style={{ color }} /></button>
+                    <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color }} /></button>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium">{d.title}</div>
                       <div className="text-[11px] text-muted-foreground mt-0.5">{d.dueDate}</div>
@@ -4528,7 +4540,7 @@ function DeadlinesSection({
                       {formatDDay(dl)}
                     </span>
                     <button
-                      onClick={() => onDelete(d.id)}
+                      onClick={e => { e.stopPropagation(); onDelete(d.id); }}
                       title="삭제"
                       className="opacity-0 group-hover/dl:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive flex-shrink-0"
                     ><Trash2 size={14} /></button>
@@ -4551,10 +4563,11 @@ function DeadlinesSection({
               return (
                 <div
                   key={d.id}
-                  className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border"
+                  onClick={() => setBoardId(d.id)}
+                  className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
                   style={{ backgroundColor: color + "18", borderColor: color + "55" }}
                 >
-                  <button onClick={() => onToggle(d.id)}><Circle size={18} style={{ color }} /></button>
+                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color }} /></button>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">{d.title}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">{d.dueDate}</div>
@@ -4566,7 +4579,7 @@ function DeadlinesSection({
                     {formatDDay(dl)}
                   </span>
                   <button
-                    onClick={() => onDelete(d.id)}
+                    onClick={e => { e.stopPropagation(); onDelete(d.id); }}
                     title="삭제"
                     className="opacity-0 group-hover/dl:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive flex-shrink-0"
                   ><Trash2 size={14} /></button>
@@ -4624,11 +4637,11 @@ function DeadlinesSection({
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">완료됨</div>
             <div className="space-y-2 opacity-50">
               {completed.map(d => (
-                <div key={d.id} className="group/dl flex items-center gap-4 px-4 py-3 rounded-xl border">
-                  <button onClick={() => onToggle(d.id)}><CheckCircle2 size={18} className="text-sky-600" /></button>
+                <div key={d.id} onClick={() => setBoardId(d.id)} className="group/dl flex items-center gap-4 px-4 py-3 rounded-xl border cursor-pointer hover:bg-muted/50 transition-colors">
+                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><CheckCircle2 size={18} className="text-sky-600" /></button>
                   <div className="flex-1 min-w-0 text-sm line-through text-muted-foreground">{d.title}</div>
                   <button
-                    onClick={() => onDelete(d.id)}
+                    onClick={e => { e.stopPropagation(); onDelete(d.id); }}
                     title="삭제"
                     className="opacity-0 group-hover/dl:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive flex-shrink-0"
                   ><Trash2 size={14} /></button>
@@ -4637,6 +4650,197 @@ function DeadlinesSection({
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Kanban Board (마감 작업 상세 — 세부 작업 보드) ──────────────────
+// 마감 작업 목록에서 행을 클릭하면 진입. 할 작업/진행 중/끝난 작업 3개 컬럼에
+// 제목+내용으로 된 카드를 추가하고, 드래그로 컬럼 간 이동. 카드 디자인은 캘린더
+// 시간 블록과 동일한 문법(색 tint 배경 + 좌측 3px 스트라이프, 색 글자).
+const KANBAN_COLUMNS: { status: KanbanStatus; label: string }[] = [
+  { status: "todo", label: "할 작업" },
+  { status: "doing", label: "진행 중인 작업" },
+  { status: "done", label: "끝난 작업" },
+];
+
+function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => void }) {
+  const [cards, setCards] = useState<KanbanCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  // 카드 추가 폼이 열려 있는 컬럼(한 번에 하나만).
+  const [addingCol, setAddingCol] = useState<KanbanStatus | null>(null);
+  const [newTitle, setNewTitle] = useState("");
+  const [newContent, setNewContent] = useState("");
+  // 드래그 중 카드가 올라가 있는 컬럼 — 하이라이트용.
+  const [dragOverCol, setDragOverCol] = useState<KanbanStatus | null>(null);
+
+  const dl = daysBetween(parseLocalDate(deadline.dueDate), TODAY_DATE);
+  const color = deadlineToneHex(dl);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchKanbanCards(deadline.id)
+      .then(cs => { if (!cancelled) setCards(cs); })
+      .catch(notifyError("칸반 카드 불러오기 실패"))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [deadline.id]);
+
+  const addCard = (status: KanbanStatus) => {
+    const title = newTitle.trim();
+    if (!title) return;
+    const content = newContent.trim();
+    setNewTitle(""); setNewContent("");
+    createKanbanCard({ deadlineId: deadline.id, status, title, content })
+      .then(c => setCards(cs => [...cs, c]))
+      .catch(notifyError("작업 추가 실패"));
+  };
+
+  // 컬럼 간 이동 — 대상 컬럼 맨 아래로. 낙관적 갱신 후 저장 실패는 토스트만.
+  const moveCard = (id: string, status: KanbanStatus) => {
+    const card = cards.find(c => c.id === id);
+    if (!card || card.status === status) return;
+    const destMax = Math.max(-1, ...cards.filter(c => c.status === status).map(c => c.sortOrder));
+    const sortOrder = destMax + 1;
+    setCards(cs => cs.map(c => c.id === id ? { ...c, status, sortOrder } : c));
+    updateKanbanCard(id, { status, sortOrder }).catch(notifyError("작업 이동 실패"));
+  };
+
+  const deleteCard = (id: string) => {
+    setCards(cs => cs.filter(c => c.id !== id));
+    deleteKanbanCardRow(id).catch(notifyError("작업 삭제 실패"));
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <div className="max-w-4xl mx-auto px-8 pt-12 pb-8">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4"
+        >
+          <ArrowLeft size={14} /> 마감 작업 목록
+        </button>
+
+        {/* 헤더 — 목록 행과 같은 톤 언어(색 스트라이프 + D-day 배지). */}
+        <div className="flex items-center gap-3 mb-6">
+          <span className="w-1 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+          <div className="flex-1 min-w-0">
+            <div className="text-lg font-semibold truncate">{deadline.title}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">{deadline.dueDate}</div>
+          </div>
+          <span
+            className="text-[11px] px-2.5 py-1 rounded-full font-medium flex-shrink-0"
+            style={{ backgroundColor: color + "22", color }}
+          >
+            {formatDDay(dl)}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4 items-start">
+          {KANBAN_COLUMNS.map(({ status, label }) => {
+            const colCards = cards.filter(c => c.status === status).sort((a, b) => a.sortOrder - b.sortOrder);
+            return (
+              <div
+                key={status}
+                onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverCol(status); }}
+                onDragLeave={() => setDragOverCol(col => (col === status ? null : col))}
+                onDrop={e => {
+                  e.preventDefault();
+                  setDragOverCol(null);
+                  const id = e.dataTransfer.getData("kanbanCardId");
+                  if (id) moveCard(id, status);
+                }}
+                className={`flex flex-col rounded-xl bg-muted/40 p-3 min-h-[220px] transition-colors ${dragOverCol === status ? "ring-2 ring-primary/40 bg-muted/70" : ""}`}
+              >
+                <div className="flex items-center gap-2 mb-3 px-1">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">{colCards.length}</span>
+                </div>
+
+                <div className="space-y-2 flex-1">
+                  {colCards.map(card => (
+                    <div
+                      key={card.id}
+                      draggable
+                      onDragStart={e => {
+                        e.dataTransfer.setData("kanbanCardId", card.id);
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      className="group/kcard relative rounded-lg overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
+                      style={{
+                        backgroundColor: color + "28",
+                        borderLeft: `3px solid ${color}`,
+                        opacity: status === "done" ? 0.55 : 1,
+                      }}
+                    >
+                      <div className="px-2.5 py-2">
+                        <div className="text-xs font-semibold break-words pr-4" style={{ color }}>{card.title}</div>
+                        {card.content && (
+                          <div className="text-[11px] opacity-70 mt-0.5 whitespace-pre-wrap break-words" style={{ color }}>
+                            {card.content}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={e => { e.stopPropagation(); deleteCard(card.id); }}
+                        className="absolute top-1 right-1 size-4 rounded flex items-center justify-center opacity-0 group-hover/kcard:opacity-100 hover:bg-black/20 transition-opacity"
+                        title="작업 삭제"
+                      >
+                        <X size={9} style={{ color }} />
+                      </button>
+                    </div>
+                  ))}
+                  {!loading && colCards.length === 0 && addingCol !== status && (
+                    <div className="text-[11px] text-muted-foreground/60 text-center py-4 select-none">작업 없음</div>
+                  )}
+                </div>
+
+                {addingCol === status ? (
+                  <div className="mt-2 p-2.5 rounded-lg border bg-card space-y-1.5">
+                    <input
+                      autoFocus
+                      value={newTitle}
+                      onChange={e => setNewTitle(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") addCard(status);
+                        if (e.key === "Escape") setAddingCol(null);
+                      }}
+                      placeholder="제목..."
+                      className="w-full text-xs px-2.5 py-1.5 rounded-md bg-muted outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
+                    />
+                    <textarea
+                      value={newContent}
+                      onChange={e => setNewContent(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Escape") setAddingCol(null); }}
+                      placeholder="내용 (선택)..."
+                      rows={2}
+                      className="w-full text-[11px] px-2.5 py-1.5 rounded-md bg-muted outline-none focus:ring-2 focus:ring-ring resize-none placeholder:text-muted-foreground"
+                    />
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => addCard(status)}
+                        disabled={!newTitle.trim()}
+                        className="flex-1 text-[11px] py-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-40 transition-opacity"
+                      >추가</button>
+                      <button
+                        onClick={() => setAddingCol(null)}
+                        className="flex-1 text-[11px] py-1.5 rounded-md bg-muted hover:bg-muted/70 transition-colors"
+                      >취소</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setAddingCol(status); setNewTitle(""); setNewContent(""); }}
+                    className="flex items-center justify-center gap-1.5 w-full mt-2 py-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
+                  >
+                    <Plus size={12} /> 작업 추가
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

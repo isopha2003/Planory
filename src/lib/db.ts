@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS deadlines (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 칸반 카드 — 마감 작업(deadline) 하나에 딸린 세부 작업 보드.
+-- status 가 3개 컬럼(할 작업/진행 중/끝난 작업)을 구분, sort_order 는 컬럼 내 순서.
+CREATE TABLE IF NOT EXISTS kanban_cards (
+  id TEXT PRIMARY KEY,
+  deadline_id TEXT NOT NULL REFERENCES deadlines(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- schedule_templates 테이블은 "이 날 일정 저장" 기능과 함께 제거됨. 복사/붙여넣기가 대체.
 -- 기존 사용자의 DB에서 남아있을 수 있는 잔재 테이블을 정리.
 DROP TABLE IF EXISTS schedule_templates;
@@ -140,6 +152,7 @@ CREATE INDEX IF NOT EXISTS blocks_parent_idx ON blocks (parent_block_id);
 CREATE INDEX IF NOT EXISTS checklist_items_block_idx ON checklist_items (block_id);
 CREATE INDEX IF NOT EXISTS todo_checklist_items_todo_idx ON todo_checklist_items (todo_id);
 CREATE INDEX IF NOT EXISTS deadlines_due_date_idx ON deadlines (due_date);
+CREATE INDEX IF NOT EXISTS kanban_cards_deadline_idx ON kanban_cards (deadline_id);
 CREATE INDEX IF NOT EXISTS timer_sessions_date_idx ON timer_sessions (date);
 CREATE INDEX IF NOT EXISTS notes_folder_idx ON notes (folder_id);
 `;
