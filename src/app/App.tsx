@@ -2599,11 +2599,39 @@ function CalendarSection({
   // and immune to that timing, so use it to suppress the click for one tick after a resize ends.
   const justResizedRef = useRef(false);
 
-  // Scroll to 7am when entering grid view
+  // 시간 그리드 세로 스크롤 위치를 localStorage 로 보존 — 다른 섹션 갔다가 돌아와도
+  // 같은 시간대가 보이도록. 저장된 값이 없으면 기본 7시로 스크롤 (첫 진입 UX 유지).
+  // ⚠ 스크롤 위치는 값이 바뀌어도 리렌더가 필요 없으므로 usePersistedState 대신
+  //   ref + 이벤트 리스너로 처리해 프레임당 setState 폭주를 피함.
   useEffect(() => {
-    if (gridScrollRef.current && calView !== "month") {
-      gridScrollRef.current.scrollTop = 7 * HOUR_H;
-    }
+    if (calView === "month") return;
+    const el = gridScrollRef.current;
+    if (!el) return;
+    const KEY = "cal_grid_scroll_top";
+    // 복원 — 저장된 값이 있으면 그 위치로, 없으면 7시 기본.
+    let restored = 7 * HOUR_H;
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw !== null) {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n >= 0) restored = n;
+      }
+    } catch {}
+    el.scrollTop = restored;
+    // 스크롤 저장 — rAF 로 프레임당 1회로 스로틀.
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        try { localStorage.setItem(KEY, String(el.scrollTop)); } catch {}
+      });
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [calView]);
 
   // Resize mouse tracking — uses the local-only updater for live visual feedback on every
