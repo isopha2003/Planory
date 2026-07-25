@@ -3337,17 +3337,6 @@ function CalendarSection({
           <span className="text-xs px-2 text-muted-foreground min-w-[180px] text-center">{headerLabel}</span>
         </div>
         <div className="flex-1 flex items-center gap-2 justify-end">
-          {calView !== "month" && contentView !== "grid" && (
-            /* 할 일 리스트 그룹 기준 토글 — 날짜별(기본) ↔ 카테고리별. 할 일이 보일 때만 노출. */
-            <button
-              onClick={() => setTodoGroupMode(todoGroupMode === "date" ? "category" : "date")}
-              className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5 hover:bg-muted/80 transition-colors"
-              title="할 일 그룹 기준 전환"
-            >
-              <span className={`px-2.5 py-1 text-[11px] rounded-md transition-all ${todoGroupMode === "date" ? "bg-card shadow-sm font-medium" : "text-muted-foreground"}`}>날짜별</span>
-              <span className={`px-2.5 py-1 text-[11px] rounded-md transition-all ${todoGroupMode === "category" ? "bg-card shadow-sm font-medium" : "text-muted-foreground"}`}>카테고리별</span>
-            </button>
-          )}
           {calView !== "month" && (
             /* 시간표 ↔ 할 일 ↔ 둘 다 순서로 순환하는 단일 토글 버튼.
                텍스트 라벨은 항상 두 개 다 보이고, 활성 상태는 하이라이트로 표시. */
@@ -3536,6 +3525,7 @@ function CalendarSection({
                   viewDays={viewDays}
                   paletteColors={paletteColors}
                   groupMode={todoGroupMode}
+                  onChangeGroupMode={setTodoGroupMode}
                   onAdd={onAddTodo}
                   onAddTemplate={onAddTemplate}
                   onDelete={onDeleteTodo}
@@ -3626,7 +3616,7 @@ function CalendarSection({
 // groupMode 에 따라 날짜별(기본) 또는 카테고리별 섹션으로 묶는다. 새 할 일 추가는 섹션 hover 시
 // "+ 새 할 일" 고스트 — 날짜별은 카테고리 픽커를 거치고, 카테고리별은 그 카테고리로 즉시 생성.
 function TodoPanel({
-  todos, templates, todoChecklistItems, viewDays, paletteColors, groupMode,
+  todos, templates, todoChecklistItems, viewDays, paletteColors, groupMode, onChangeGroupMode,
   onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
   deadlines, onToggleDeadline,
   showDayHeader, onGoPrev, onGoNext, onMoveTodo, onSwapTodo,
@@ -3638,6 +3628,8 @@ function TodoPanel({
   paletteColors: string[];
   // 섹션 그룹 기준 — date: viewDays 의 각 날짜가 한 섹션, category: 카테고리가 한 섹션(기간 전체).
   groupMode: "date" | "category";
+  // 리스트 우상단 드롭다운에서 그룹 기준 변경.
+  onChangeGroupMode: (m: "date" | "category") => void;
   onAdd: (t: { title: string; date: string; endDate?: string | null; color?: string; category?: string }, options?: { openInline?: boolean }) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
   onDelete: (id: string) => void;
@@ -3679,6 +3671,22 @@ function TodoPanel({
   const [editingDraft, setEditingDraft] = useState("");
   // 섹션 hover 상태 — hover 시 "+ 새 할 일" 프리뷰(shadow)를 노출.
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  // 그룹 기준(날짜별/카테고리별) 드롭다운 열림 여부 — 바깥 클릭·Esc 로 닫음.
+  const [sortOpen, setSortOpen] = useState(false);
+  const sortRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!sortOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) setSortOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setSortOpen(false); };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sortOpen]);
   // "+ 새 할 일" 클릭 시 열리는 추가 폼이 붙는 위치. 날짜 섹션이면 date 고정, 카테고리 섹션이면
   // category 고정, 하단 공통 버튼(__global__)이면 둘 다 자유. 날짜가 자유로우면 addDate 로 선택.
   const [addPicker, setAddPicker] = useState<null | { key: string; date?: string; category?: string }>(null);
@@ -4050,6 +4058,32 @@ function TodoPanel({
       )}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-lg w-full mx-auto space-y-6">
+          {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼에 현재 기준, 펼치면 옵션 목록(선택 항목 강조). */}
+          <div className="flex justify-end -mb-3">
+            <div className="relative" ref={sortRef}>
+              <button
+                onClick={() => setSortOpen(v => !v)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border bg-card hover:bg-muted transition-colors"
+                title="그룹 기준 변경"
+              >
+                <ArrowUpDown size={12} className="text-muted-foreground" />
+                {groupMode === "date" ? "날짜별" : "카테고리별"}
+              </button>
+              {sortOpen && (
+                <div className="absolute right-0 top-full mt-1 z-30 w-32 rounded-lg border border-border bg-card shadow-lg p-1 space-y-0.5">
+                  {([["date", "날짜별"], ["category", "카테고리별"]] as const).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => { onChangeGroupMode(v); setSortOpen(false); }}
+                      className={`w-full text-left px-2.5 py-1.5 text-xs rounded-md transition-colors ${
+                        groupMode === v ? "text-primary font-medium bg-primary/5" : "hover:bg-muted"
+                      }`}
+                    >{label}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
           {groupMode === "date" ? <>
           {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출. */}
           {viewDays.filter(d => {
