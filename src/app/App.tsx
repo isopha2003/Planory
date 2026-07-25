@@ -1396,7 +1396,6 @@ export default function App() {
               pushUndo={pushUndo}
               todos={todos}
               onAddTodo={addTodo}
-              onToggleTodo={toggleTodo}
               onDeleteTodo={deleteTodo}
               onUpdateTodoTitle={updateTodoTitle}
               onMoveTodo={moveTodoToDate}
@@ -2131,7 +2130,7 @@ function CalendarSection({
   onAddTemplate, onDeleteBlockTemplate,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat, pushUndo,
-  todos, onAddTodo, onToggleTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onSwapTodo, onReorderTodos,
+  todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onSwapTodo, onReorderTodos,
 }: {
   blocks: Block[];
   deadlines: Deadline[];
@@ -2164,7 +2163,6 @@ function CalendarSection({
   pushUndo: (fn: () => Promise<void> | void) => void;
   todos: Todo[];
   onAddTodo: (t: { title: string; date: string; endDate?: string | null }) => void;
-  onToggleTodo: (id: string) => void;
   onDeleteTodo: (id: string) => void;
   onUpdateTodoTitle: (id: string, title: string) => void;
   onMoveTodo: (id: string, newDate: string) => void;
@@ -3566,7 +3564,6 @@ function CalendarSection({
                   todos={todos}
                   viewDays={viewDays}
                   onAdd={onAddTodo}
-                  onToggle={onToggleTodo}
                   onDelete={onDeleteTodo}
                   onUpdateTitle={onUpdateTodoTitle}
                   onSelectTodo={onSelectTodo}
@@ -3654,14 +3651,13 @@ function CalendarSection({
 // 그 안에 마감 → todo 순으로 노출. 마감은 빨간 톤, todo 는 카드 스타일 체크박스. 새 todo 추가는
 // 각 컬럼 하단 입력창. 실시간 편집은 title 클릭 → inline input.
 function TodoPanel({
-  todos, viewDays, onAdd, onToggle, onDelete, onUpdateTitle, onSelectTodo,
+  todos, viewDays, onAdd, onDelete, onUpdateTitle, onSelectTodo,
   deadlines, onToggleDeadline,
   showDayHeader, onGoPrev, onGoNext, onMoveTodo, onSwapTodo, onReorderTodos,
 }: {
   todos: Todo[];
   viewDays: Date[];
   onAdd: (t: { title: string; date: string; endDate?: string | null }) => void;
-  onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdateTitle: (id: string, title: string) => void;
   // 할 일 셀 클릭 → 상세 패널 열기. 없으면 기존 인라인 편집 fallback.
@@ -3868,7 +3864,7 @@ function TodoPanel({
                     onSwapTodo(otherId, t.id);
                     setDragTodoId(null); setSwapTargetId(null);
                   }}
-                  className={`group/todo relative rounded-md overflow-hidden text-[11px] transition-all ${
+                  className={`group/todo relative rounded-lg overflow-hidden text-[11px] transition-all ${
                     onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : ""
                   } ${
                     t.completed ? "opacity-60"
@@ -3876,7 +3872,7 @@ function TodoPanel({
                       : dragTodoId === t.id ? "opacity-50"
                       : "hover:brightness-95"
                   }`}
-                  style={{ backgroundColor: t.color + "28", borderLeft: `3px solid ${t.color}` }}
+                  style={{ backgroundColor: t.color + "28", borderLeft: `3px solid ${t.color}`, minHeight: 62 }}
                 >
                   {editingId === t.id ? (
                     <input
@@ -3888,19 +3884,20 @@ function TodoPanel({
                         if (e.key === "Enter") { onUpdateTitle(t.id, editingDraft.trim() || t.title); setEditingId(null); }
                         else if (e.key === "Escape") setEditingId(null);
                       }}
-                      className="w-full bg-transparent outline-none focus:ring-1 focus:ring-ring rounded px-1.5 py-1 text-[10px] font-semibold"
-                      style={{ color: t.color }}
+                      className="w-full h-full bg-transparent outline-none focus:ring-1 focus:ring-ring rounded px-1.5 py-2.5 text-[10px] font-semibold"
+                      style={{ color: t.color, minHeight: 62 }}
                     />
                   ) : (
                     /* 클릭 → 상세 패널(시간 블록과 동일). 인라인 제목 편집이 필요하면 더블클릭.
-                       카테고리는 제목 옆에 소형 뱃지, 메모는 title 아래에 최대 2줄 프리뷰. */
+                       카테고리는 제목 옆에 소형 뱃지, 메모는 title 아래에 최대 2줄 프리뷰.
+                       시간표 1시간 블록과 크기·정렬을 맞춤(min-height 62, inset-y-2.5, 중앙정렬). */
                     <button
                       onClick={() => {
                         if (onSelectTodo) onSelectTodo(t);
                         else { setEditingDraft(t.title); setEditingId(t.id); }
                       }}
                       onDoubleClick={e => { e.stopPropagation(); setEditingDraft(t.title); setEditingId(t.id); }}
-                      className="w-full min-w-0 text-left px-1.5 py-1 flex flex-col gap-0.5"
+                      className="w-full h-full min-h-[62px] min-w-0 text-left px-1.5 py-2.5 flex flex-col justify-center gap-0.5"
                       title="클릭: 상세 열기 · 더블클릭: 제목 편집"
                     >
                       <div className="flex items-baseline gap-1 min-w-0">
@@ -3923,23 +3920,12 @@ function TodoPanel({
                       )}
                     </button>
                   )}
-                  {/* 우측 상단 hover 액션 — 완료 토글/삭제. 시간 블록의 hover X 버튼과 동일 톤. */}
-                  <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5 opacity-0 group-hover/todo:opacity-100 transition-opacity">
-                    <button
-                      onClick={e => { e.stopPropagation(); onToggle(t.id); }}
-                      className="size-4 rounded flex items-center justify-center hover:bg-black/10"
-                      title={t.completed ? "완료 해제" : "완료 처리"}
-                    >
-                      {t.completed
-                        ? <CheckCircle2 size={11} style={{ color: t.color }} />
-                        : <Circle size={11} style={{ color: t.color }} />}
-                    </button>
-                    <button
-                      onClick={e => { e.stopPropagation(); onDelete(t.id); }}
-                      className="size-4 rounded flex items-center justify-center hover:bg-black/10"
-                      title="삭제"
-                    ><X size={11} style={{ color: t.color }} /></button>
-                  </div>
+                  {/* 우측 상단 hover 액션 — 시간 블록과 동일하게 삭제(X)만. 완료는 오늘 탭에서만.  */}
+                  <button
+                    onClick={e => { e.stopPropagation(); onDelete(t.id); }}
+                    className="absolute top-0.5 right-0.5 size-4 rounded flex items-center justify-center hover:bg-black/10 opacity-0 group-hover/todo:opacity-100 transition-opacity"
+                    title="삭제"
+                  ><X size={11} style={{ color: t.color }} /></button>
                 </div>
                 ))}
                 {gi < dayTodoGroups.length - 1 && <div className="h-px bg-border/40 my-0.5" />}
@@ -6233,6 +6219,17 @@ function TodoDetailPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* 오늘 달성률 포함 여부 토글 — 제목 바로 아래 상단에 배치. 시간 블록과 동일한 옵션. */}
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={todo.countInCompletion !== false}
+            onChange={e => onCountInCompletionSave(e.target.checked)}
+            className="size-3.5 rounded border-border accent-primary cursor-pointer"
+          />
+          <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
+        </label>
+
         {/* 날짜 */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">날짜</div>
@@ -6329,17 +6326,6 @@ function TodoDetailPanel({
             className="w-full h-24 px-3 py-2 text-xs bg-muted rounded-lg resize-none outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground"
           />
         </div>
-
-        {/* 오늘 달성률 포함 여부 토글 — 시간 블록과 동일한 옵션. */}
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={todo.countInCompletion !== false}
-            onChange={e => onCountInCompletionSave(e.target.checked)}
-            className="size-3.5 rounded border-border accent-primary cursor-pointer"
-          />
-          <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
-        </label>
 
         {/* Delete */}
         <button
