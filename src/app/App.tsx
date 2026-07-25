@@ -3897,7 +3897,7 @@ function TodoPanel({
                         else { setEditingDraft(t.title); setEditingId(t.id); }
                       }}
                       onDoubleClick={e => { e.stopPropagation(); setEditingDraft(t.title); setEditingId(t.id); }}
-                      className="w-full h-full min-h-[62px] min-w-0 text-left px-1.5 py-2.5 flex flex-col justify-center gap-0.5"
+                      className="w-full h-full min-h-[62px] min-w-0 text-left px-1.5 py-1.5 flex flex-col items-start justify-start gap-0.5"
                       title="클릭: 상세 열기 · 더블클릭: 제목 편집"
                     >
                       <div className="flex items-baseline gap-1 min-w-0">
