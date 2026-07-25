@@ -4057,12 +4057,13 @@ function TodoPanel({
         </div>
       )}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-lg w-full mx-auto space-y-6">
+        <div className="max-w-lg w-full mx-auto">
           {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼 오른쪽 끝을 카드 컬럼 오른쪽 끝에 맞춤.
                ⚠ translate 로 옮기면 새 stacking context 가 생겨 아래 카드가 드롭다운을 가림 —
-               위치 조정은 transform 대신 flex 로만. 섹션 헤더 라인과 겹치지 않도록 위에 분리.
-               mt-2 로 위 여백을 살짝 줘서 아래 카드와의 간격과 시각적으로 균형을 맞춤. */}
-          <div className="flex justify-end mt-2">
+               위치 조정은 transform 대신 flex 로만.
+               ⚠ 부모에 space-y-6 를 두면 버튼 아래 24px 갭이 강제로 붙어 버튼이 붕 떠 보임 —
+               space-y-6 는 실제 섹션 목록에만 걸고, 버튼-섹션 사이 간격은 mb-2 로 좁게. */}
+          <div className="flex justify-end mb-2">
             <div className="relative" ref={sortRef}>
               <button
                 onClick={() => setSortOpen(v => !v)}
@@ -4087,6 +4088,7 @@ function TodoPanel({
               )}
             </div>
           </div>
+          <div className="space-y-6">
           {groupMode === "date" ? <>
           {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출. */}
           {viewDays.filter(d => {
@@ -4267,6 +4269,7 @@ function TodoPanel({
             );
           })}
           </>}
+          </div>
         </div>
       </div>
     </div>
