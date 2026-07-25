@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   CheckCircle2, Circle, Clock, Play, Pause,
-  Plus, X, ChevronLeft, ChevronRight, List, Grid3x3,
+  Plus, X, ChevronLeft, ChevronRight, ChevronDown, List, Grid3x3,
   BarChart2, Settings, Calendar, Target, Flame, FileText,
   Edit3, Check, AlertCircle, PictureInPicture2 as PictureInPicture,
   Folder, FolderPlus, MoreVertical, ArrowLeft, ArrowUpDown, Trash2,
@@ -193,6 +193,22 @@ const groupTodosByCategory = <T extends { category?: string; sortOrder: number }
     else groups.push({ category: cat, todos: [t] });
   }
   return groups;
+};
+
+// 미분류(카테고리 없음) todo 의 색상 — 회색 톤. 카테고리를 지정하지 않은 상태에서만 사용.
+const UNCATEGORIZED_TODO_COLOR = "#94A3B8";
+
+// 카테고리 이름 → 색상 조회. templates 중 kind='todo' 인 것에서 title 매칭.
+// 매칭 실패(카테고리 삭제/미분류)면 회색 기본색. 렌더링·상세 패널·드래그 모든 경로가 이 함수를
+// 거쳐야 카테고리 색 변경이 자동으로 반영됨(todos.color 컬럼은 무시).
+const getCategoryColor = <T extends { title: string; color: string; kind: "time" | "todo" }>(
+  templates: T[],
+  category?: string,
+): string => {
+  const name = (category ?? "").trim();
+  if (!name) return UNCATEGORIZED_TODO_COLOR;
+  const tpl = templates.find(t => t.kind === "todo" && t.title === name);
+  return tpl?.color ?? UNCATEGORIZED_TODO_COLOR;
 };
 
 // 두 음(A5→E6) 상승 chime — Web Audio로 코드에서 직접 생성해 파일/OS 사운드 설정에
@@ -1107,9 +1123,23 @@ export default function App() {
   };
 
   // 템플릿 삭제 — 이미 이 템플릿으로 만들어진 블록은 그대로 두고 template_id만 NULL로 끊김.
+  // kind='todo' (= 카테고리) 삭제 시엔 이름이 매칭되는 todos.category 를 빈 문자열(미분류)로
+  // 이동. 색상은 렌더링 시 getCategoryColor 가 자동으로 미분류 톤으로 바꿔줌.
   const deleteTemplate = (id: string) => {
+    const target = templates.find(x => x.id === id);
     setTemplates(ts => ts.filter(x => x.id !== id));
     setBlocks(bs => bs.map(b => b.templateId === id ? { ...b, templateId: undefined } : b));
+    if (target?.kind === "todo") {
+      const name = target.title;
+      const orphaned = todos.filter(t => t.category === name);
+      if (orphaned.length > 0) {
+        setTodos(ts => ts.map(t => t.category === name ? { ...t, category: "" } : t));
+        // DB 도 각각 UPDATE. 실패해도 UI 는 유지 — 다음 로드에서 정정됨.
+        for (const t of orphaned) {
+          updateTodo(t.id, { category: "" }).catch(() => {});
+        }
+      }
+    }
     deleteTemplateRow(id).catch(notifyError("블록 템플릿 삭제 실패"));
   };
 
@@ -1126,13 +1156,16 @@ export default function App() {
 
   // ── todos ─────────────────────────────────────────────────
   const addTodo = (
-    t: { title: string; date: string; endDate?: string | null; color?: string },
+    t: { title: string; date: string; endDate?: string | null; color?: string; category?: string },
     options?: { openInline?: boolean },
   ) => {
     if (!t.title.trim()) return;
     // 같은 날짜의 기존 todo 중 최대 sort_order + 1 을 부여해 새 항목이 맨 아래로 붙게 함.
     const nextSort = Math.max(-1, ...todos.filter(x => x.date === t.date).map(x => x.sortOrder)) + 1;
+    // todo.color 컬럼은 DB 스키마 호환용으로만 남고 렌더링은 카테고리 색을 조회함.
+    // 여기서는 어떤 값이든 상관없지만 NOT NULL 이라 기본 색을 채워 둠.
     const color = t.color ?? "#5AA9E6";
+    const category = t.category ?? "";
     // openInline 경로: 상세 패널을 곧바로 띄우고 제목을 편집 상태로 여는 게 목적.
     // 낙관적 temp id 로 열면 real id 로 스왑될 때 상세 패널(key={id})이 리마운트되며
     // 사용자가 입력하던 제목이 날아감 — 블록의 openInline 처리와 동일하게 DB 저장을 기다렸다가
@@ -1149,7 +1182,7 @@ export default function App() {
       return;
     }
     const tempId = `temp-${crypto.randomUUID()}`;
-    setTodos(ts => [...ts, { id: tempId, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, memo: "", category: "", countInCompletion: true, sortOrder: nextSort }]);
+    setTodos(ts => [...ts, { id: tempId, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, memo: "", category, countInCompletion: true, sortOrder: nextSort }]);
     createTodo(t)
       .then(real => {
         setTodos(ts => ts.map(x => (x.id === tempId ? { ...real, sortOrder: nextSort } : x)));
@@ -1191,11 +1224,6 @@ export default function App() {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, memo } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, memo } : prev));
     updateTodo(id, { memo }).catch(notifyError("todo 메모 저장 실패"));
-  };
-  const updateTodoColor = (id: string, color: string) => {
-    setTodos(ts => ts.map(t => t.id === id ? { ...t, color } : t));
-    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, color } : prev));
-    updateTodo(id, { color }).catch(notifyError("todo 색상 저장 실패"));
   };
   const updateTodoCategory = (id: string, category: string) => {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, category } : t));
@@ -1370,6 +1398,7 @@ export default function App() {
               blocks={todayBlocks}
               deadlines={deadlines.filter(d => !d.completed)}
               todos={todos.filter(t => t.date === TODAY_STR || (t.endDate && TODAY_STR >= t.date && TODAY_STR <= t.endDate))}
+              templates={templates}
               completionRate={completionRate}
               onToggle={toggleBlock}
               onToggleDeadline={toggleDeadline}
@@ -1537,10 +1566,9 @@ export default function App() {
           <TodoDetailPanel
             key={selectedTodo.id}
             todo={selectedTodo}
+            templates={templates}
             initialEditTitle={selectedTodo.id === justCreatedTodoId}
             paletteColors={paletteColors}
-            onAddPaletteColor={addPaletteColor}
-            onRemovePaletteColor={removePaletteColor}
             onClose={() => setSelectedTodo(null)}
             onToggle={() => toggleTodo(selectedTodo.id)}
             onDelete={() => deleteTodo(selectedTodo.id)}
@@ -1550,10 +1578,10 @@ export default function App() {
                 setJustCreatedTodoId(prev => (prev === selectedTodo.id ? null : prev));
               }
             }}
-            onColorSave={(color) => updateTodoColor(selectedTodo.id, color)}
             onMemoSave={(memo) => updateTodoMemo(selectedTodo.id, memo)}
             onCategorySave={(category) => updateTodoCategory(selectedTodo.id, category)}
             onCountInCompletionSave={(v) => updateTodoCountInCompletion(selectedTodo.id, v)}
+            onAddTemplate={addTemplate}
           />
         )}
       </div>
@@ -1896,11 +1924,12 @@ function CircleProgress({ value, size, strokeWidth = 5 }: { value: number; size:
 
 // ── Today Section ──────────────────────────────────────────────────
 function TodaySection({
-  blocks, deadlines, todos, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onSwapTodo, onSelect, onSelectTodo, onGoToCalendar,
+  blocks, deadlines, todos, templates, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onSwapTodo, onSelect, onSelectTodo, onGoToCalendar,
 }: {
   blocks: Block[];
   deadlines: Deadline[];
   todos: Todo[];
+  templates: Template[];
   completionRate: number;
   onToggle: (id: string) => void;
   onToggleDeadline: (id: string) => void;
@@ -2009,7 +2038,9 @@ function TodaySection({
                   <span>{group.category || "미분류"}</span>
                   <div className="flex-1 h-px bg-border/60" />
                 </div>
-                {group.todos.map(t => (
+                {group.todos.map(t => {
+                  const color = getCategoryColor(templates, t.category);
+                  return (
                   <div key={t.id}
                     draggable={!!onSwapTodo}
                     onDragStart={e => {
@@ -2046,10 +2077,10 @@ function TodaySection({
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }} className="flex-shrink-0 mt-0.5">
                       {t.completed
-                        ? <CheckCircle2 size={16} style={{ color: t.color }} />
+                        ? <CheckCircle2 size={16} style={{ color }} />
                         : <Circle size={16} className="text-muted-foreground" />}
                     </button>
-                    <span className="w-0.5 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
+                    <span className="w-0.5 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                     <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                       {/* 제목 옆에 카테고리(있으면) 를 인라인 뱃지로. 헤더가 있어도 시각적 강조를 위해 표시. */}
                       <div className="flex items-baseline gap-1.5 min-w-0">
@@ -2057,7 +2088,7 @@ function TodaySection({
                         {t.category && (
                           <span
                             className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
-                            style={{ color: t.color, backgroundColor: t.color + "20" }}
+                            style={{ color, backgroundColor: color + "20" }}
                           >{t.category}</span>
                         )}
                       </div>
@@ -2069,7 +2100,8 @@ function TodaySection({
                       className="opacity-0 group-hover/todo:opacity-100 text-muted-foreground hover:text-destructive transition-opacity mt-0.5"
                     ><X size={13} /></button>
                   </div>
-                ))}
+                  );
+                })}
                 {gi < todoGroups.length - 1 && <div className="h-px bg-border/40" />}
               </div>
             ))}
@@ -3123,16 +3155,18 @@ function CalendarSection({
                      클릭 → 상세 패널 (색상/메모 편집). 시간 블록과 동일한 인터랙션.
                      카테고리는 제목 앞에 소형 라벨로. 월 뷰 셀은 좁아서 메모 프리뷰는 생략. */}
                 <div className="space-y-0.5">
-                  {dayTodos.map(t => (
+                  {dayTodos.map(t => {
+                    const color = getCategoryColor(templates, t.category);
+                    return (
                     <div key={t.id}
                       onClick={e => { e.stopPropagation(); onSelectTodo?.(t); }}
                       className={`rounded overflow-hidden text-[9px] cursor-pointer transition-all ${t.completed ? "opacity-60" : "hover:brightness-95"}`}
-                      style={{ backgroundColor: t.color + "28", borderLeft: `3px solid ${t.color}` }}
+                      style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
                       title={t.category ? `[${t.category}] 상세 열기` : "상세 열기"}
                     >
                       <span
                         className={`truncate leading-tight block px-1 py-0.5 font-medium ${t.completed ? "line-through" : ""}`}
-                        style={{ color: t.color }}
+                        style={{ color }}
                       >
                         {t.category && (
                           <span className="opacity-70 mr-1">[{t.category}]</span>
@@ -3140,7 +3174,8 @@ function CalendarSection({
                         {t.title}
                       </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {/* 새 todo 인라인 입력 — 셀 클릭으로 열리며 Enter/Escape/blur 로 확정/취소 */}
                 {monthEditing === dateStr && (
@@ -3447,17 +3482,18 @@ function CalendarSection({
                 </>
               )}
 
-              {/* 일정 템플릿 — 할 일 열에 드래그해서 추가. 시간표만 보는 화면에서는 숨김. 시간대 필드 없음. */}
+              {/* 카테고리 — 할 일 열에 드래그해서 그 카테고리로 새 할 일 만들기.
+                    시간표만 보는 화면에서는 숨김. 이름 + 색만 있고 태그/시간대 없음. */}
               {contentView !== "grid" && (
                 <div className={contentView !== "todos" ? "mt-3 pt-2 border-t border-sidebar-border" : ""}>
-                  <div className="text-[10px] font-medium text-muted-foreground px-2 py-1 uppercase tracking-wide">일정 템플릿</div>
+                  <div className="text-[10px] font-medium text-muted-foreground px-2 py-1 uppercase tracking-wide">카테고리</div>
                   {templates.filter(t => t.kind === "todo").map(t => (
                     <div key={t.id} draggable
                       onDragStart={e => {
                         // 시간 그리드 드롭 로직이 templateId 를 소비하지 않도록 todoTemplateId 를 별도 키로 넘긴다.
+                        // 드롭 시 이 카테고리 이름/색을 그대로 새 할 일에 적용.
                         e.dataTransfer.setData("todoTemplateId", t.id);
-                        e.dataTransfer.setData("todoTitle", t.title);
-                        e.dataTransfer.setData("todoColor", t.color);
+                        e.dataTransfer.setData("todoCategory", t.title);
                         e.dataTransfer.effectAllowed = "copy";
                         const rect = e.currentTarget.getBoundingClientRect();
                         e.dataTransfer.setDragImage(e.currentTarget, e.clientX - rect.left, e.clientY - rect.top);
@@ -3470,7 +3506,7 @@ function CalendarSection({
                         onMouseDown={e => e.stopPropagation()}
                         onDragStart={e => { e.stopPropagation(); e.preventDefault(); }}
                         draggable={false}
-                        title="템플릿 삭제"
+                        title="카테고리 삭제 — 이 카테고리의 할 일들은 미분류로 이동"
                         className="opacity-0 group-hover/tpl:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-destructive flex-shrink-0"
                       ><X size={11} /></button>
                     </div>
@@ -3481,7 +3517,7 @@ function CalendarSection({
                         autoFocus
                         value={newTplTitle}
                         onChange={e => setNewTplTitle(e.target.value)}
-                        placeholder="제목..."
+                        placeholder="카테고리 이름..."
                         className="w-full text-xs px-2 py-1 rounded bg-card border border-border outline-none focus:ring-1 focus:ring-ring"
                       />
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -3520,23 +3556,24 @@ function CalendarSection({
                           onClose={() => setShowTplCustomColor(false)}
                         />
                       )}
-                      <input
-                        value={newTplTags}
-                        onChange={e => setNewTplTags(e.target.value)}
-                        placeholder="태그 (쉼표로 구분)"
-                        className="w-full text-xs px-2 py-1 rounded bg-card border border-border outline-none focus:ring-1 focus:ring-ring"
-                      />
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => {
-                            if (!newTplTitle.trim()) return;
+                            const name = newTplTitle.trim();
+                            if (!name) return;
+                            // 같은 이름의 카테고리가 이미 있으면 중복 생성 방지 — todos.category 매칭이
+                            // 문자열 기반이라 두 카테고리가 같은 이름을 가지면 색 조회가 랜덤해짐.
+                            if (templates.some(x => x.kind === "todo" && x.title === name)) {
+                              setShowNewTpl(null);
+                              return;
+                            }
                             onAddTemplate({
-                              title: newTplTitle.trim(),
+                              title: name,
                               color: newTplColor,
-                              tags: newTplTags.split(",").map(t => t.trim()).filter(Boolean),
+                              tags: [],
                               kind: "todo",
                             });
-                            setNewTplTitle(""); setNewTplTags(""); setShowNewTpl(null);
+                            setNewTplTitle(""); setShowNewTpl(null);
                           }}
                           disabled={!newTplTitle.trim()}
                           className="flex-1 text-[11px] py-1 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 transition-opacity"
@@ -3549,7 +3586,7 @@ function CalendarSection({
                       onClick={() => setShowNewTpl("todo")}
                       className="flex items-center gap-1.5 px-2 py-2 text-xs text-muted-foreground hover:text-foreground w-full rounded-lg hover:bg-sidebar-accent transition-colors"
                     >
-                      <Plus size={11}/> 새 일정 템플릿
+                      <Plus size={11}/> 새 카테고리
                     </button>
                   )}
                 </div>
@@ -3588,8 +3625,11 @@ function CalendarSection({
               >
                 <TodoPanel
                   todos={todos}
+                  templates={templates}
                   viewDays={viewDays}
+                  paletteColors={paletteColors}
                   onAdd={onAddTodo}
+                  onAddTemplate={onAddTemplate}
                   onDelete={onDeleteTodo}
                   onUpdateTitle={onUpdateTodoTitle}
                   onSelectTodo={onSelectTodo}
@@ -3677,13 +3717,16 @@ function CalendarSection({
 // 그 안에 마감 → todo 순으로 노출. 마감은 빨간 톤, todo 는 카드 스타일 체크박스. 새 todo 추가는
 // 각 컬럼 하단 입력창. 실시간 편집은 title 클릭 → inline input.
 function TodoPanel({
-  todos, viewDays, onAdd, onDelete, onUpdateTitle, onSelectTodo,
+  todos, templates, viewDays, paletteColors, onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo,
   deadlines, onToggleDeadline,
   showDayHeader, onGoPrev, onGoNext, onMoveTodo, onSwapTodo, onReorderTodos,
 }: {
   todos: Todo[];
+  templates: Template[];
   viewDays: Date[];
-  onAdd: (t: { title: string; date: string; endDate?: string | null; color?: string }, options?: { openInline?: boolean }) => void;
+  paletteColors: string[];
+  onAdd: (t: { title: string; date: string; endDate?: string | null; color?: string; category?: string }, options?: { openInline?: boolean }) => void;
+  onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
   onDelete: (id: string) => void;
   onUpdateTitle: (id: string, title: string) => void;
   // 할 일 셀 클릭 → 상세 패널 열기. 없으면 기존 인라인 편집 fallback.
@@ -3721,6 +3764,51 @@ function TodoPanel({
   const [editingDraft, setEditingDraft] = useState("");
   // 컬럼 hover 상태 — 시간 그리드처럼 hover 시 "+ 새 할 일" 프리뷰(shadow)를 노출.
   const [hoverDate, setHoverDate] = useState<string | null>(null);
+  // "+ 새 할 일" 프리뷰 클릭 시 열리는 카테고리 선택 UI 가 붙는 컬럼(date).
+  const [pickerOpenDate, setPickerOpenDate] = useState<string | null>(null);
+  // 카테고리 선택 UI 안에서 "새 카테고리" 인라인 폼이 열려있는지.
+  const [newCatMode, setNewCatMode] = useState(false);
+  const [newCatTitle, setNewCatTitle] = useState("");
+  const [newCatColor, setNewCatColor] = useState<string>(paletteColors[0] ?? "#5AA9E6");
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  // 카테고리 선택 UI 바깥 클릭 · Esc 로 닫기.
+  useEffect(() => {
+    if (!pickerOpenDate) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpenDate(null); setNewCatMode(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setPickerOpenDate(null); setNewCatMode(false); }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [pickerOpenDate]);
+  // 카테고리 목록 — 사이드바와 동일 필터. kind='todo' 인 템플릿이 곧 카테고리.
+  const categories = templates.filter(t => t.kind === "todo");
+  // 카테고리 선택 → 그 카테고리로 새 할 일 만들고 상세 패널 오픈.
+  const pickCategory = (dateStr: string, category: string) => {
+    onAdd({ title: "새 할 일", date: dateStr, category }, { openInline: true });
+    setPickerOpenDate(null);
+    setNewCatMode(false);
+  };
+  // 새 카테고리 생성 → 만든 카테고리로 곧바로 할 일 생성 진입.
+  const commitNewCategory = (dateStr: string) => {
+    const name = newCatTitle.trim();
+    if (!name) return;
+    // 이름 충돌 시 기존 카테고리 재사용 — 색은 기존 것을 유지.
+    const existing = categories.find(c => c.title === name);
+    if (!existing) {
+      onAddTemplate({ title: name, color: newCatColor, tags: [], kind: "todo" });
+    }
+    setNewCatTitle(""); setNewCatMode(false);
+    pickCategory(dateStr, name);
+  };
   // 시간표 블록과 시각적으로 통일 — 마감/할 일 모두 색상 스트라이프가 있는 블록 형태.
   // 할 일은 각자 색상을 가지며, 마감은 남은 일수 톤(deadlineToneHex)에 따라 색이 정해짐.
   return (
@@ -3812,15 +3900,15 @@ function TodoPanel({
               onMouseEnter={() => setHoverDate(dateStr)}
               onMouseLeave={() => setHoverDate(prev => prev === dateStr ? null : prev)}
               onDragOver={e => {
-                // 일정 템플릿(todoTemplateId) 이나 기존 todo(todoId) 를 이 컬럼에 놓을 수 있게 허용.
+                // 카테고리(todoTemplateId/todoCategory) 나 기존 todo(todoId) 를 이 컬럼에 놓을 수 있게 허용.
                 // ⚠ Chromium 의 dataTransfer.types 는 소문자로 정규화됨 → 반드시 소문자 비교.
                 const types = e.dataTransfer.types;
-                const isTpl = types.includes("todotemplateid") || types.includes("todotitle");
+                const isCat = types.includes("todotemplateid") || types.includes("todocategory");
                 const isTodo = types.includes("todoid");
-                if (isTpl || isTodo) {
+                if (isCat || isTodo) {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = isTodo ? "move" : "copy";
-                  if (isTpl) setTplHoverDate(dateStr);
+                  if (isCat) setTplHoverDate(dateStr);
                 }
               }}
               onDragLeave={e => {
@@ -3830,11 +3918,12 @@ function TodoPanel({
               }}
               onDrop={e => {
                 setTplHoverDate(null);
-                const title = e.dataTransfer.getData("todoTitle");
-                if (title) {
+                // 카테고리 드래그 → 빈 제목의 새 할 일 + 상세 패널 자동 오픈(제목 편집 상태).
+                // 색은 렌더링 시 카테고리에서 자동 조회되므로 여기서 전달하지 않음.
+                const category = e.dataTransfer.getData("todoCategory");
+                if (category) {
                   e.preventDefault();
-                  const color = e.dataTransfer.getData("todoColor") || undefined;
-                  onAdd({ title, date: dateStr, color });
+                  onAdd({ title: "새 할 일", date: dateStr, category }, { openInline: true });
                   return;
                 }
                 // 기존 todo 를 이 컬럼(빈 영역) 에 드랍하면 date 만 이 컬럼으로 옮김.
@@ -3858,7 +3947,9 @@ function TodoPanel({
                   <span className="truncate">{group.category || "미분류"}</span>
                   <div className="flex-1 h-px bg-border/60" />
                 </div>
-                {group.todos.map(t => (
+                {group.todos.map(t => {
+                const color = getCategoryColor(templates, t.category);
+                return (
                 <div key={t.id}
                   draggable={!!onMoveTodo && editingId !== t.id}
                   onDragStart={e => {
@@ -3896,7 +3987,7 @@ function TodoPanel({
                       : dragTodoId === t.id ? "opacity-50"
                       : "hover:brightness-95"
                   }`}
-                  style={{ backgroundColor: t.color + "28", borderLeft: `3px solid ${t.color}`, minHeight: 62 }}
+                  style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}`, minHeight: 62 }}
                 >
                   {editingId === t.id ? (
                     <input
@@ -3909,7 +4000,7 @@ function TodoPanel({
                         else if (e.key === "Escape") setEditingId(null);
                       }}
                       className="w-full h-full bg-transparent outline-none focus:ring-1 focus:ring-ring rounded px-1.5 py-2.5 text-[10px] font-semibold"
-                      style={{ color: t.color, minHeight: 62 }}
+                      style={{ color, minHeight: 62 }}
                     />
                   ) : (
                     /* 클릭 → 상세 패널(시간 블록과 동일). 인라인 제목 편집이 필요하면 더블클릭.
@@ -3927,19 +4018,19 @@ function TodoPanel({
                       <div className="flex items-baseline gap-1 min-w-0">
                         <span
                           className={`min-w-0 truncate text-[10px] font-semibold ${t.completed ? "line-through" : ""}`}
-                          style={{ color: t.color }}
+                          style={{ color }}
                         >{t.title}</span>
                         {t.category && (
                           <span
                             className="text-[8px] font-semibold uppercase tracking-wide px-1 rounded-sm flex-shrink-0"
-                            style={{ color: t.color, backgroundColor: t.color + "30" }}
+                            style={{ color, backgroundColor: color + "30" }}
                           >{t.category}</span>
                         )}
                       </div>
                       {t.memo && (
                         <span
                           className="text-[9px] leading-tight opacity-70 line-clamp-2 whitespace-pre-wrap break-words"
-                          style={{ color: t.color }}
+                          style={{ color }}
                         >{t.memo}</span>
                       )}
                     </button>
@@ -3949,9 +4040,10 @@ function TodoPanel({
                     onClick={e => { e.stopPropagation(); onDelete(t.id); }}
                     className="absolute top-0.5 right-0.5 size-4 rounded flex items-center justify-center hover:bg-black/10 opacity-0 group-hover/todo:opacity-100 transition-opacity"
                     title="삭제"
-                  ><X size={11} style={{ color: t.color }} /></button>
+                  ><X size={11} style={{ color }} /></button>
                 </div>
-                ))}
+                );
+                })}
                 {gi < dayTodoGroups.length - 1 && <div className="h-px bg-border/40 my-0.5" />}
               </React.Fragment>
               ))}
@@ -3962,18 +4054,93 @@ function TodoPanel({
                 </div>
               )}
               {/* 새 할 일 프리뷰 — 시간 그리드의 hover ghost 와 톤/그림자를 맞춤.
-                    클릭하면 곧바로 빈 할 일이 만들어지고 상세 패널이 열리며 제목이 편집 상태로
-                    시작 — 그 자리에서 제목/카테고리/메모/색상까지 이어서 작성할 수 있게. */}
-              {hoverDate === dateStr && tplHoverDate !== dateStr && (
+                    클릭하면 카테고리 선택 UI 로 전환 → 카테고리 고르면 그 카테고리로 할 일 생성
+                    + 상세 패널 자동 오픈 (제목 편집 상태). 색은 카테고리 색을 그대로 상속. */}
+              {pickerOpenDate === dateStr ? (
+                <div
+                  ref={pickerRef}
+                  className="rounded-lg bg-card border border-primary/25 shadow-lg p-1 space-y-0.5"
+                  style={{ boxShadow: "0 6px 16px -6px rgba(90, 169, 230, 0.35), 0 2px 6px -2px rgba(90, 169, 230, 0.25)" }}
+                >
+                  <div className="text-[9px] text-muted-foreground px-1.5 py-0.5 uppercase tracking-wide">카테고리 선택</div>
+                  {categories.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => pickCategory(dateStr, c.title)}
+                      className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+                    >
+                      <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
+                      <span className="text-[10px] truncate">{c.title}</span>
+                    </button>
+                  ))}
+                  {categories.length === 0 && (
+                    <div className="text-[9px] text-muted-foreground px-1.5 py-1">아직 카테고리가 없어요</div>
+                  )}
+                  <button
+                    onClick={() => pickCategory(dateStr, "")}
+                    className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+                  >
+                    <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: UNCATEGORIZED_TODO_COLOR }} />
+                    <span className="text-[10px] text-muted-foreground truncate">미분류</span>
+                  </button>
+                  <div className="h-px bg-border/60 my-0.5" />
+                  {newCatMode ? (
+                    <div className="p-1 space-y-1">
+                      <input
+                        autoFocus
+                        value={newCatTitle}
+                        onChange={e => setNewCatTitle(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") { e.preventDefault(); commitNewCategory(dateStr); }
+                          else if (e.key === "Escape") { e.preventDefault(); setNewCatMode(false); setNewCatTitle(""); }
+                        }}
+                        placeholder="카테고리 이름..."
+                        className="w-full text-[10px] px-1.5 py-1 rounded bg-muted outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <div className="flex flex-wrap gap-1">
+                        {paletteColors.map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setNewCatColor(c)}
+                            className={`size-4 rounded-full transition-transform ${newCatColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                            style={{ backgroundColor: c }}
+                            title={c}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => commitNewCategory(dateStr)}
+                          disabled={!newCatTitle.trim()}
+                          className="flex-1 text-[10px] py-1 rounded bg-primary text-primary-foreground disabled:opacity-40"
+                        >추가</button>
+                        <button
+                          onClick={() => { setNewCatMode(false); setNewCatTitle(""); }}
+                          className="flex-1 text-[10px] py-1 rounded bg-muted hover:bg-muted/70"
+                        >취소</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setNewCatMode(true)}
+                      className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+                    >
+                      <Plus size={10} className="text-muted-foreground" />
+                      <span className="text-[10px] text-muted-foreground truncate">새 카테고리</span>
+                    </button>
+                  )}
+                </div>
+              ) : hoverDate === dateStr && tplHoverDate !== dateStr ? (
                 <button
-                  onClick={() => onAdd({ title: "새 할 일", date: dateStr }, { openInline: true })}
+                  onClick={() => { setPickerOpenDate(dateStr); setNewCatMode(false); }}
                   className="w-full min-h-[62px] px-1.5 py-1.5 rounded-lg text-left bg-primary/5 ring-1 ring-primary/25 hover:ring-primary/40 transition-shadow"
                   style={{ boxShadow: "0 6px 16px -6px rgba(90, 169, 230, 0.35), 0 2px 6px -2px rgba(90, 169, 230, 0.25)" }}
                   title="새 할 일 추가"
                 >
                   <div className="text-[10px] text-primary/70 font-medium">+ 새 할 일</div>
                 </button>
-              )}
+              ) : null}
             </div>
           );
         })}
@@ -6180,48 +6347,80 @@ function NewChecklistItemForm({
 
 // ── Todo detail side panel ─────────────────────────────────────────
 // 시간 블록의 BlockDetailPanel 과 같은 자리에 뜨는 라이트 버전. 시간 블록에 있는
-// 반복/자식 블록/습관 스태킹/체크리스트 같은 기능은 없이 제목·색상·메모·완료·삭제만.
+// 반복/자식 블록/습관 스태킹/체크리스트 같은 기능은 없이 제목·카테고리·메모·완료·삭제만.
+// 색상은 카테고리에서 자동 상속하므로 팔레트 UI 는 없음.
 function TodoDetailPanel({
-  todo, initialEditTitle, paletteColors, onAddPaletteColor, onRemovePaletteColor,
-  onClose, onToggle, onDelete, onTitleSave, onColorSave, onMemoSave, onCategorySave, onCountInCompletionSave,
+  todo, templates, initialEditTitle, paletteColors,
+  onClose, onToggle, onDelete, onTitleSave, onMemoSave, onCategorySave, onCountInCompletionSave, onAddTemplate,
 }: {
   todo: Todo;
+  templates: Template[];
   // 캘린더에서 방금 만들어진 할 일이면 상세 패널이 열리자마자 제목 편집 모드로 시작.
   initialEditTitle?: boolean;
   paletteColors: string[];
-  onAddPaletteColor: (color: string) => void;
-  onRemovePaletteColor: (color: string) => void;
   onClose: () => void;
   onToggle: () => void;
   onDelete: () => void;
   onTitleSave: (title: string) => void;
-  onColorSave: (color: string) => void;
   onMemoSave: (memo: string) => void;
   onCategorySave: (category: string) => void;
   onCountInCompletionSave: (v: boolean) => void;
+  onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
 }) {
   const [memo, setMemo] = useState(todo.memo);
   const [category, setCategory] = useState(todo.category);
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
   const [titleDraft, setTitleDraft] = useState(todo.title);
-  const [showCustomColor, setShowCustomColor] = useState(false);
+  // 카테고리 드롭다운 열림 여부 · 새 카테고리 인라인 폼 상태.
+  const [catOpen, setCatOpen] = useState(false);
+  const [newCatMode, setNewCatMode] = useState(false);
+  const [newCatTitle, setNewCatTitle] = useState("");
+  const [newCatColor, setNewCatColor] = useState<string>(paletteColors[0] ?? "#5AA9E6");
+  const catDropdownRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!catOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (catDropdownRef.current && !catDropdownRef.current.contains(e.target as Node)) {
+        setCatOpen(false); setNewCatMode(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setCatOpen(false); setNewCatMode(false); }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [catOpen]);
+  const categories = templates.filter(t => t.kind === "todo");
+  const color = getCategoryColor(templates, category);
   const commitTitle = () => {
     const trimmed = titleDraft.trim();
     if (trimmed && trimmed !== todo.title) onTitleSave(trimmed);
     else setTitleDraft(todo.title);
     setEditingTitle(false);
   };
-  const commitCategory = () => {
-    const trimmed = category.trim();
-    if (trimmed !== todo.category) onCategorySave(trimmed);
-    setCategory(trimmed);
+  const chooseCategory = (name: string) => {
+    setCategory(name);
+    if (name !== todo.category) onCategorySave(name);
+    setCatOpen(false); setNewCatMode(false);
+  };
+  const commitNewCategory = () => {
+    const name = newCatTitle.trim();
+    if (!name) return;
+    const existing = categories.find(c => c.title === name);
+    if (!existing) onAddTemplate({ title: name, color: newCatColor, tags: [], kind: "todo" });
+    setNewCatTitle(""); setNewCatMode(false);
+    chooseCategory(name);
   };
 
   return (
     <div className="w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border flex-shrink-0">
-        <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: todo.color }} />
+        <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
         {editingTitle ? (
           <input
             autoFocus
@@ -6282,68 +6481,103 @@ function TodoDetailPanel({
           }`}
         >
           {todo.completed
-            ? <CheckCircle2 size={16} style={{ color: todo.color }} />
+            ? <CheckCircle2 size={16} style={{ color }} />
             : <Circle size={16} className="text-muted-foreground" />}
           <span className={`text-xs ${todo.completed ? "text-muted-foreground line-through" : ""}`}>
             {todo.completed ? "완료됨 — 다시 열기" : "완료 처리"}
           </span>
         </button>
 
-        {/* 색상 — 시간 블록과 같은 팔레트 공유 */}
-        <div>
-          <div className="text-[11px] font-medium text-muted-foreground mb-2">색상</div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {paletteColors.map(c => (
-              <div key={c} className="relative group/color size-6 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => onColorSave(c)}
-                  className={`size-6 rounded-full transition-transform ${todo.color.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
-                  style={{ backgroundColor: c }}
-                  title={c}
-                />
-                <button
-                  type="button"
-                  onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
-                  className="absolute -top-1 -right-1 size-3.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
-                  title="팔레트에서 제거"
-                >
-                  <X size={8} strokeWidth={2.5} />
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => setShowCustomColor(v => !v)}
-              className={`size-6 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-muted/40 hover:bg-muted"}`}
-              title="사용자 지정 색상 추가"
-            >
-              <Plus size={12} className={showCustomColor ? "text-primary" : "text-muted-foreground"} />
-            </button>
-          </div>
-          {showCustomColor && (
-            <CustomColorPickerInline
-              initial={todo.color}
-              onAdd={(color) => { onColorSave(color); onAddPaletteColor(color); }}
-              onClose={() => setShowCustomColor(false)}
-            />
-          )}
-        </div>
-
-        {/* Category — 자유 텍스트. 같은 문자열끼리 그룹핑되어 정렬됨. 비워두면 미분류. */}
-        <div>
+        {/* 카테고리 — 기존 목록에서 선택하거나 이 자리에서 새로 만들기.
+             할 일 색상은 선택한 카테고리 색을 자동 상속하므로 색상 편집 UI 는 없음. */}
+        <div className="relative">
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">카테고리</div>
-          <input
-            value={category}
-            onChange={e => setCategory(e.target.value)}
-            onBlur={commitCategory}
-            onKeyDown={e => {
-              if (e.key === "Enter") { e.preventDefault(); commitCategory(); (e.currentTarget as HTMLInputElement).blur(); }
-              else if (e.key === "Escape") { setCategory(todo.category); (e.currentTarget as HTMLInputElement).blur(); }
-            }}
-            placeholder="예: 공부, 운동, 집안일"
-            className="w-full px-3 py-2 text-xs bg-muted rounded-lg outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground"
-          />
+          <button
+            onClick={() => { setCatOpen(v => !v); setNewCatMode(false); }}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-muted hover:bg-muted/70 transition-colors text-left"
+          >
+            <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
+            <span className={`flex-1 text-xs truncate ${category ? "text-foreground" : "text-muted-foreground"}`}>
+              {category || "미분류"}
+            </span>
+            <ChevronDown size={12} className="text-muted-foreground flex-shrink-0" />
+          </button>
+          {catOpen && (
+            <div
+              ref={catDropdownRef}
+              className="absolute left-0 right-0 top-full mt-1 z-20 rounded-lg border border-border bg-card shadow-lg p-1 space-y-0.5 max-h-72 overflow-y-auto"
+            >
+              {categories.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => chooseCategory(c.title)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted text-left ${c.title === category ? "bg-muted/60" : ""}`}
+                >
+                  <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
+                  <span className="text-xs truncate">{c.title}</span>
+                  {c.title === category && <Check size={11} className="text-primary flex-shrink-0" />}
+                </button>
+              ))}
+              {categories.length === 0 && (
+                <div className="text-[10px] text-muted-foreground px-2 py-1.5">아직 카테고리가 없어요</div>
+              )}
+              <button
+                onClick={() => chooseCategory("")}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted text-left ${!category ? "bg-muted/60" : ""}`}
+              >
+                <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: UNCATEGORIZED_TODO_COLOR }} />
+                <span className="text-xs text-muted-foreground truncate">미분류</span>
+                {!category && <Check size={11} className="text-primary flex-shrink-0" />}
+              </button>
+              <div className="h-px bg-border/60 my-0.5" />
+              {newCatMode ? (
+                <div className="p-1.5 space-y-1.5">
+                  <input
+                    autoFocus
+                    value={newCatTitle}
+                    onChange={e => setNewCatTitle(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") { e.preventDefault(); commitNewCategory(); }
+                      else if (e.key === "Escape") { e.preventDefault(); setNewCatMode(false); setNewCatTitle(""); }
+                    }}
+                    placeholder="카테고리 이름..."
+                    className="w-full text-xs px-2 py-1 rounded bg-muted outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {paletteColors.map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setNewCatColor(c)}
+                        className={`size-4 rounded-full transition-transform ${newCatColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                        style={{ backgroundColor: c }}
+                        title={c}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={commitNewCategory}
+                      disabled={!newCatTitle.trim()}
+                      className="flex-1 text-[11px] py-1 rounded bg-primary text-primary-foreground disabled:opacity-40"
+                    >추가</button>
+                    <button
+                      onClick={() => { setNewCatMode(false); setNewCatTitle(""); }}
+                      className="flex-1 text-[11px] py-1 rounded bg-muted hover:bg-muted/70"
+                    >취소</button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setNewCatMode(true)}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted text-left"
+                >
+                  <Plus size={11} className="text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground truncate">새 카테고리</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Memo */}
