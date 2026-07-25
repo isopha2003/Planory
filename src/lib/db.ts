@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS kanban_cards (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 칸반 카드 체크리스트 — blocks/todos 의 checklist 테이블과 동일한 자유 중첩 구조.
+-- 폴리모픽 FK 대신 테이블 분리(기존 checklist 테이블들과 같은 유지보수 방침).
+CREATE TABLE IF NOT EXISTS kanban_checklist_items (
+  id TEXT PRIMARY KEY,
+  card_id TEXT NOT NULL REFERENCES kanban_cards(id) ON DELETE CASCADE,
+  parent_item_id TEXT REFERENCES kanban_checklist_items(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  completed INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- schedule_templates 테이블은 "이 날 일정 저장" 기능과 함께 제거됨. 복사/붙여넣기가 대체.
 -- 기존 사용자의 DB에서 남아있을 수 있는 잔재 테이블을 정리.
 DROP TABLE IF EXISTS schedule_templates;
@@ -155,6 +167,7 @@ CREATE INDEX IF NOT EXISTS checklist_items_block_idx ON checklist_items (block_i
 CREATE INDEX IF NOT EXISTS todo_checklist_items_todo_idx ON todo_checklist_items (todo_id);
 CREATE INDEX IF NOT EXISTS deadlines_due_date_idx ON deadlines (due_date);
 CREATE INDEX IF NOT EXISTS kanban_cards_deadline_idx ON kanban_cards (deadline_id);
+CREATE INDEX IF NOT EXISTS kanban_checklist_items_card_idx ON kanban_checklist_items (card_id);
 CREATE INDEX IF NOT EXISTS timer_sessions_date_idx ON timer_sessions (date);
 CREATE INDEX IF NOT EXISTS notes_folder_idx ON notes (folder_id);
 `;

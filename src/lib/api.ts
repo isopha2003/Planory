@@ -381,6 +381,62 @@ export async function deleteKanbanCardRow(id: string): Promise<void> {
   await db.execute("DELETE FROM kanban_cards WHERE id = ?", [id]);
 }
 
+// ── kanban_checklist_items (칸반 카드 체크리스트 — 자유 중첩) ─────
+// blocks/todos 체크리스트와 동일한 구조. 보드 진입 시 마감 하나 분량을 통째로
+// 로드해서(카드 조인) 카드 위 미리보기와 편집 폼이 같은 상태를 공유.
+export interface KanbanChecklistItem {
+  id: string;
+  cardId: string;
+  parentItemId?: string;
+  text: string;
+  completed: boolean;
+  sortOrder: number;
+}
+
+const rowToKanbanChecklistItem = (r: any): KanbanChecklistItem => ({
+  id: r.id,
+  cardId: r.card_id,
+  parentItemId: r.parent_item_id ?? undefined,
+  text: r.text,
+  completed: !!r.completed,
+  sortOrder: r.sort_order ?? 0,
+});
+
+export async function fetchKanbanChecklistItemsByDeadline(deadlineId: string): Promise<KanbanChecklistItem[]> {
+  const db = await getDb();
+  const rows = await db.select<any[]>(
+    `SELECT i.* FROM kanban_checklist_items i
+       JOIN kanban_cards c ON i.card_id = c.id
+      WHERE c.deadline_id = ?
+      ORDER BY i.created_at`,
+    [deadlineId]
+  );
+  return rows.map(rowToKanbanChecklistItem);
+}
+
+export async function createKanbanChecklistItem(cardId: string, text: string, parentItemId?: string): Promise<KanbanChecklistItem> {
+  const db = await getDb();
+  const id = uuid();
+  await db.execute(
+    "INSERT INTO kanban_checklist_items (id, card_id, parent_item_id, text) VALUES (?, ?, ?, ?)",
+    [id, cardId, parentItemId ?? null, text]
+  );
+  return { id, cardId, parentItemId, text, completed: false, sortOrder: 0 };
+}
+
+export async function toggleKanbanChecklistItemRow(id: string, completed: boolean): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE kanban_checklist_items SET completed = ? WHERE id = ?",
+    [completed ? 1 : 0, id]
+  );
+}
+
+export async function deleteKanbanChecklistItemRow(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM kanban_checklist_items WHERE id = ?", [id]);
+}
+
 // ── todos (날짜별 할 일 — 시간 없이 체크박스) ────────────────────
 // 반복 규칙 — 시간 블록의 BlockRepeat 과 구조 동일(구조적 타이핑으로 호환).
 export interface RepeatRule {

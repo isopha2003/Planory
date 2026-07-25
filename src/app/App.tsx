@@ -13,7 +13,8 @@ import {
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
   fetchDeadlines, createDeadline, toggleDeadlineRow, deleteDeadlineRow,
   fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow, bulkUpdateKanbanCardOrder,
-  type KanbanCard, type KanbanStatus,
+  fetchKanbanChecklistItemsByDeadline, createKanbanChecklistItem, toggleKanbanChecklistItemRow, deleteKanbanChecklistItemRow,
+  type KanbanCard, type KanbanStatus, type KanbanChecklistItem,
   fetchTodos, createTodo, updateTodo, toggleTodoRow, deleteTodoRow, bulkUpdateTodoOrder, type Todo,
   insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin,
   fetchTodaySessions, startTimerSession, endTimerSession, deleteTodaySessions, fetchFocusSecByDate,
@@ -1586,7 +1587,10 @@ export default function App() {
             />
           )}
           {section === "deadlines" && (
-            <DeadlinesSection deadlines={deadlines} onToggle={toggleDeadline} onAddDeadline={addDeadline} onDelete={deleteDeadline} />
+            <DeadlinesSection
+              deadlines={deadlines} onToggle={toggleDeadline} onAddDeadline={addDeadline} onDelete={deleteDeadline}
+              paletteColors={paletteColors} onAddPaletteColor={addPaletteColor} onRemovePaletteColor={removePaletteColor}
+            />
           )}
           {section === "grass" && (
             <GrassSection
@@ -4482,11 +4486,15 @@ function MultiRepeatModal({
 // ── Deadlines Section ──────────────────────────────────────────────
 function DeadlinesSection({
   deadlines, onToggle, onAddDeadline, onDelete,
+  paletteColors, onAddPaletteColor, onRemovePaletteColor,
 }: {
   deadlines: Deadline[];
   onToggle: (id: string) => void;
   onAddDeadline: (d: { title: string; dueDate: string }) => void;
   onDelete: (id: string) => void;
+  paletteColors: string[];
+  onAddPaletteColor: (color: string) => void;
+  onRemovePaletteColor: (color: string) => void;
 }) {
   const active = deadlines.filter(d => !d.completed);
   const overdue = active.filter(d => d.dueDate < TODAY_STR);
@@ -4505,7 +4513,12 @@ function DeadlinesSection({
   const daysLeft = (date: string) => daysBetween(parseLocalDate(date), TODAY_DATE);
 
   if (boardDeadline) {
-    return <KanbanBoard deadline={boardDeadline} onBack={() => setBoardId(null)} />;
+    return (
+      <KanbanBoard
+        deadline={boardDeadline} onBack={() => setBoardId(null)}
+        paletteColors={paletteColors} onAddPaletteColor={onAddPaletteColor} onRemovePaletteColor={onRemovePaletteColor}
+      />
+    );
   }
 
   return (
@@ -4665,7 +4678,15 @@ const KANBAN_COLUMNS: { status: KanbanStatus; label: string }[] = [
   { status: "done", label: "끝난 작업" },
 ];
 
-function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => void }) {
+function KanbanBoard({
+  deadline, onBack, paletteColors, onAddPaletteColor, onRemovePaletteColor,
+}: {
+  deadline: Deadline;
+  onBack: () => void;
+  paletteColors: string[];
+  onAddPaletteColor: (color: string) => void;
+  onRemovePaletteColor: (color: string) => void;
+}) {
   const [cards, setCards] = useState<KanbanCard[]>([]);
   const [loading, setLoading] = useState(true);
   // 카드 추가 폼이 열려 있는 컬럼(한 번에 하나만).
@@ -4682,15 +4703,19 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
   const [editContent, setEditContent] = useState("");
   // 편집 중 색상 — 빈 문자열이면 마감 D-day 톤을 따라가는 기본값.
   const [editColor, setEditColor] = useState("");
+  // 편집 폼의 커스텀 색상 입력(hex) 열림 여부.
+  const [showCustomColor, setShowCustomColor] = useState(false);
+  // 이 마감의 모든 카드 체크리스트 — 카드 위 미리보기와 편집 폼이 공유.
+  const [checkItems, setCheckItems] = useState<KanbanChecklistItem[]>([]);
 
   const dl = daysBetween(parseLocalDate(deadline.dueDate), TODAY_DATE);
   const color = deadlineToneHex(dl);
 
   useEffect(() => {
     let cancelled = false;
-    fetchKanbanCards(deadline.id)
-      .then(cs => { if (!cancelled) setCards(cs); })
-      .catch(notifyError("칸반 카드 불러오기 실패"))
+    Promise.all([fetchKanbanCards(deadline.id), fetchKanbanChecklistItemsByDeadline(deadline.id)])
+      .then(([cs, items]) => { if (!cancelled) { setCards(cs); setCheckItems(items); } })
+      .catch(notifyError("칸반 보드 불러오기 실패"))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [deadline.id]);
@@ -4741,6 +4766,8 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
   const deleteCard = (id: string) => {
     if (editingId === id) setEditingId(null);
     setCards(cs => cs.filter(c => c.id !== id));
+    // DB 는 ON DELETE CASCADE 로 체크리스트도 함께 지워짐 — 로컬 상태도 정리.
+    setCheckItems(is => is.filter(i => i.cardId !== id));
     deleteKanbanCardRow(id).catch(notifyError("작업 삭제 실패"));
   };
 
@@ -4749,6 +4776,50 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
     setEditTitle(card.title);
     setEditContent(card.content);
     setEditColor(card.color);
+    setShowCustomColor(false);
+  };
+
+  // ── 체크리스트 — BlockDetailPanel 과 동일한 낙관적 갱신 패턴 ──
+  const addCheckItem = async (cardId: string, text: string, parentItemId?: string) => {
+    try {
+      const created = await createKanbanChecklistItem(cardId, text, parentItemId);
+      setCheckItems(is => [...is, created]);
+    } catch (e) { notifyError("체크리스트 항목 추가 실패")(e); }
+  };
+  const toggleCheckItem = (id: string, completed: boolean) => {
+    setCheckItems(is => is.map(i => i.id === id ? { ...i, completed } : i));
+    toggleKanbanChecklistItemRow(id, completed).catch(notifyError("체크리스트 저장 실패"));
+  };
+  const deleteCheckItem = (id: string) => {
+    // DB FK 가 ON DELETE CASCADE 라 하위 항목도 함께 지워짐 — 로컬 상태에서도 자손을 전부 수집해 제거.
+    setCheckItems(is => {
+      const toRemove = new Set([id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const it of is) {
+          if (it.parentItemId && toRemove.has(it.parentItemId) && !toRemove.has(it.id)) {
+            toRemove.add(it.id); grew = true;
+          }
+        }
+      }
+      return is.filter(i => !toRemove.has(i.id));
+    });
+    deleteKanbanChecklistItemRow(id).catch(notifyError("체크리스트 삭제 실패"));
+  };
+
+  // 카드 위 미리보기용 — 해당 카드의 체크리스트를 DFS 순서(부모 뒤에 자식, 깊이 포함)로 평탄화.
+  const flattenChecklist = (cardId: string): { item: KanbanChecklistItem; depth: number }[] => {
+    const list = checkItems.filter(i => i.cardId === cardId);
+    const out: { item: KanbanChecklistItem; depth: number }[] = [];
+    const walk = (parentId: string | undefined, depth: number) => {
+      for (const it of list.filter(i => i.parentItemId === parentId)) {
+        out.push({ item: it, depth });
+        walk(it.id, depth + 1);
+      }
+    };
+    walk(undefined, 0);
+    return out;
   };
 
   const saveEdit = () => {
@@ -4811,6 +4882,7 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
                   {colCards.map(card => {
                     // 카드 개별 색이 있으면 그것, 없으면 마감 D-day 톤(기본).
                     const cardColor = card.color || color;
+                    const checklist = flattenChecklist(card.id);
 
                     // 클릭으로 편집 중 — 카드 자리를 인라인 폼으로 대체.
                     if (editingId === card.id) {
@@ -4836,18 +4908,70 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
                             rows={3}
                             className="w-full text-[11px] px-2.5 py-1.5 rounded-md bg-muted outline-none focus:ring-2 focus:ring-ring resize-none placeholder:text-muted-foreground"
                           />
-                          {/* 색상 — 첫 스와치는 "기본"(마감 D-day 톤을 따라감), 나머지는 블록 팔레트 프리셋. */}
-                          <div className="flex flex-wrap gap-1 items-center py-0.5">
-                            {["", ...DEFAULT_BLOCK_COLORS].map(c => (
-                              <button
-                                key={c || "default"}
-                                type="button"
-                                onClick={() => setEditColor(c)}
-                                className={`size-4 rounded-full transition-transform ${c === "" ? "border border-dashed border-foreground/50" : ""} ${editColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
-                                style={{ backgroundColor: c || color }}
-                                title={c || "기본 (마감 톤)"}
-                              />
+                          {/* 색상 — 첫 스와치는 "기본"(마감 D-day 톤을 따라감), 나머지는 앱 공용 팔레트.
+                               스와치 호버 X 로 팔레트에서 제거, + 로 커스텀 hex 색을 추가(팔레트에 저장돼
+                               캘린더 블록/카테고리 색 선택에도 함께 나타남). */}
+                          <div className="flex flex-wrap gap-1.5 items-center py-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditColor("")}
+                              className={`size-4 rounded-full border border-dashed border-foreground/50 transition-transform flex-shrink-0 ${editColor === "" ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                              style={{ backgroundColor: color }}
+                              title="기본 (마감 톤)"
+                            />
+                            {paletteColors.map(c => (
+                              <div key={c} className="relative group/color size-4 flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditColor(c)}
+                                  className={`size-4 rounded-full transition-transform ${editColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                                  style={{ backgroundColor: c }}
+                                  title={c}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
+                                  className="absolute -top-1 -right-1 size-3 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
+                                  title="팔레트에서 제거"
+                                >
+                                  <X size={7} strokeWidth={2.5} />
+                                </button>
+                              </div>
                             ))}
+                            <button
+                              type="button"
+                              onClick={() => setShowCustomColor(v => !v)}
+                              className={`size-4 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-muted/40 hover:bg-muted"}`}
+                              title="사용자 지정 색상 추가"
+                            >
+                              <Plus size={9} className={showCustomColor ? "text-primary" : "text-muted-foreground"} />
+                            </button>
+                          </div>
+                          {showCustomColor && (
+                            <CustomColorPickerInline
+                              initial={editColor || color}
+                              onAdd={(c) => { setEditColor(c); onAddPaletteColor(c); }}
+                              onClose={() => setShowCustomColor(false)}
+                            />
+                          )}
+                          {/* 체크리스트 — 블록/할 일 상세와 동일한 무제한 중첩 ChecklistNode.
+                               항목 추가/토글/삭제는 저장 버튼과 무관하게 즉시 반영. */}
+                          <div className="pt-0.5">
+                            <div className="text-[10px] font-medium text-muted-foreground mb-1">체크리스트</div>
+                            <div className="space-y-0.5">
+                              {checkItems.filter(i => i.cardId === card.id && !i.parentItemId).map(item => (
+                                <ChecklistNode
+                                  key={item.id}
+                                  item={item}
+                                  items={checkItems.filter(i => i.cardId === card.id)}
+                                  depth={0}
+                                  onToggle={toggleCheckItem}
+                                  onDelete={deleteCheckItem}
+                                  onAddChild={(text, pid) => addCheckItem(card.id, text, pid)}
+                                />
+                              ))}
+                              <NewChecklistItemForm onAdd={text => addCheckItem(card.id, text)} />
+                            </div>
                           </div>
                           <div className="flex gap-1.5">
                             <button
@@ -4898,6 +5022,29 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
                           {card.content && (
                             <div className="text-[11px] opacity-70 mt-0.5 whitespace-pre-wrap break-words" style={{ color: cardColor }}>
                               {card.content}
+                            </div>
+                          )}
+                          {/* 체크리스트 미리보기 — 카드에서 바로 토글 가능. 추가/삭제는 클릭(편집 폼)에서. */}
+                          {checklist.length > 0 && (
+                            <div className="mt-1.5 space-y-0.5">
+                              {checklist.map(({ item, depth }) => (
+                                <div key={item.id} className="flex items-center gap-1.5 min-w-0" style={{ marginLeft: depth * 12 }}>
+                                  <button
+                                    onClick={e => { e.stopPropagation(); toggleCheckItem(item.id, !item.completed); }}
+                                    className="flex-shrink-0"
+                                  >
+                                    {item.completed
+                                      ? <CheckCircle2 size={11} style={{ color: cardColor }} />
+                                      : <Circle size={11} className="opacity-60" style={{ color: cardColor }} />}
+                                  </button>
+                                  <span
+                                    className={`text-[10px] truncate ${item.completed ? "line-through opacity-50" : "opacity-80"}`}
+                                    style={{ color: cardColor }}
+                                  >
+                                    {item.text}
+                                  </span>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
