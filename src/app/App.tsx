@@ -2061,10 +2061,15 @@ function TodaySection({
   const sorted = [...blocks].sort((a, b) => a.startH * 60 + a.startM - (b.startH * 60 + b.startM));
   const done = blocks.filter(b => b.completed).length;
   const overdueDeadlines = deadlines.filter(d => d.dueDate < TODAY_STR);
-  // 오늘 마감 + 앞으로 남은 마감을 하나의 "이번 주 마감 일정" 섹션에 묶어 D-day 배지·톤으로
-  // 급함 정도를 시각화. dueDate 오름차순으로 정렬해 가장 임박한 것부터.
+  // 오늘부터 7일 뒤(포함) 까지의 마감만 노출 — 달력 주(월~일) 가 아니라 슬라이딩 7일 창.
+  // 화면에 매일 "일주일 내 임박한 마감" 만 유지돼 오늘 기준으로 급함을 판단하기 좋음.
+  const oneWeekAheadStr = (() => {
+    const d = new Date(TODAY_DATE);
+    d.setDate(d.getDate() + 7);
+    return toDateStr(d);
+  })();
   const upcomingDeadlines = deadlines
-    .filter(d => d.dueDate >= TODAY_STR)
+    .filter(d => d.dueDate >= TODAY_STR && d.dueDate <= oneWeekAheadStr)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const [todoDraft, setTodoDraft] = useState("");
   const [dragTodoId, setDragTodoId] = useState<string | null>(null);
@@ -2111,11 +2116,11 @@ function TodaySection({
           </div>
         )}
 
-        {/* 이번 주 마감 일정 — 오늘 포함, 앞으로 남은 마감. D-day 배지·카드 톤이 남은 일수에 따라
+        {/* 일주일 내 마감 일정 — 오늘부터 +7일 이내(포함). D-day 배지·카드 톤이 남은 일수에 따라
               초록→노랑→주황→빨강으로 바뀌어 급함 정도를 즉시 보이도록. */}
         {upcomingDeadlines.length > 0 && (
           <div className="mb-4">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">이번 주 마감 일정</div>
+            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">일주일 내 마감 일정</div>
             <div className="space-y-1.5">
               {upcomingDeadlines.map(d => {
                 const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
