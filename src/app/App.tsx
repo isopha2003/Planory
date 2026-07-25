@@ -3464,7 +3464,6 @@ function CalendarSection({
                   viewDays={viewDays}
                   paletteColors={paletteColors}
                   groupMode={todoGroupMode}
-                  defaultAddDate={toDateStr(viewDate)}
                   onAdd={onAddTodo}
                   onAddTemplate={onAddTemplate}
                   onDelete={onDeleteTodo}
@@ -3555,7 +3554,7 @@ function CalendarSection({
 // groupMode 에 따라 날짜별(기본) 또는 카테고리별 섹션으로 묶는다. 새 할 일 추가는 섹션 hover 시
 // "+ 새 할 일" 고스트 — 날짜별은 카테고리 픽커를 거치고, 카테고리별은 그 카테고리로 즉시 생성.
 function TodoPanel({
-  todos, templates, todoChecklistItems, viewDays, paletteColors, groupMode, defaultAddDate,
+  todos, templates, todoChecklistItems, viewDays, paletteColors, groupMode,
   onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
   deadlines, onToggleDeadline,
   showDayHeader, onGoPrev, onGoNext, onMoveTodo, onSwapTodo,
@@ -3567,8 +3566,6 @@ function TodoPanel({
   paletteColors: string[];
   // 섹션 그룹 기준 — date: viewDays 의 각 날짜가 한 섹션, category: 카테고리가 한 섹션(기간 전체).
   groupMode: "date" | "category";
-  // 카테고리별 그룹에서 새 할 일을 만들 때 붙일 날짜(현재 viewDate).
-  defaultAddDate: string;
   onAdd: (t: { title: string; date: string; endDate?: string | null; color?: string; category?: string }, options?: { openInline?: boolean }) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
   onDelete: (id: string) => void;
@@ -3610,23 +3607,26 @@ function TodoPanel({
   const [editingDraft, setEditingDraft] = useState("");
   // 섹션 hover 상태 — hover 시 "+ 새 할 일" 프리뷰(shadow)를 노출.
   const [hoverKey, setHoverKey] = useState<string | null>(null);
-  // "+ 새 할 일" 프리뷰 클릭 시 열리는 카테고리 선택 UI 가 붙는 날짜 섹션(date).
-  const [pickerOpenDate, setPickerOpenDate] = useState<string | null>(null);
+  // "+ 새 할 일" 클릭 시 열리는 추가 폼이 붙는 위치. 날짜 섹션이면 date 고정, 카테고리 섹션이면
+  // category 고정, 하단 공통 버튼(__global__)이면 둘 다 자유. 날짜가 자유로우면 addDate 로 선택.
+  const [addPicker, setAddPicker] = useState<null | { key: string; date?: string; category?: string }>(null);
+  // 추가 폼의 날짜 선택값 — 폼을 열 때마다 오늘로 리셋.
+  const [addDate, setAddDate] = useState<string>(TODAY_STR);
   // 카테고리 선택 UI 안에서 "새 카테고리" 인라인 폼이 열려있는지.
   const [newCatMode, setNewCatMode] = useState(false);
   const [newCatTitle, setNewCatTitle] = useState("");
   const [newCatColor, setNewCatColor] = useState<string>(paletteColors[0] ?? "#5AA9E6");
   const pickerRef = useRef<HTMLDivElement | null>(null);
-  // 카테고리 선택 UI 바깥 클릭 · Esc 로 닫기.
+  // 추가 폼 바깥 클릭 · Esc 로 닫기.
   useEffect(() => {
-    if (!pickerOpenDate) return;
+    if (!addPicker) return;
     const onDocMouseDown = (e: MouseEvent) => {
       if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setPickerOpenDate(null); setNewCatMode(false);
+        setAddPicker(null); setNewCatMode(false);
       }
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setPickerOpenDate(null); setNewCatMode(false); }
+      if (e.key === "Escape") { setAddPicker(null); setNewCatMode(false); }
     };
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onKeyDown);
@@ -3634,13 +3634,13 @@ function TodoPanel({
       document.removeEventListener("mousedown", onDocMouseDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [pickerOpenDate]);
+  }, [addPicker]);
   // 카테고리 목록 — 사이드바와 동일 필터. kind='todo' 인 템플릿이 곧 카테고리.
   const categories = templates.filter(t => t.kind === "todo");
   // 카테고리 선택 → 그 카테고리로 새 할 일 만들고 상세 패널 오픈.
   const pickCategory = (dateStr: string, category: string) => {
     onAdd({ title: "새 할 일", date: dateStr, category }, { openInline: true });
-    setPickerOpenDate(null);
+    setAddPicker(null);
     setNewCatMode(false);
   };
   // 새 카테고리 생성 → 만든 카테고리로 곧바로 할 일 생성 진입.
@@ -3804,83 +3804,109 @@ function TodoPanel({
     );
   };
 
-  // 날짜 섹션의 "+ 새 할 일" 클릭 시 열리는 카테고리 선택 UI.
-  const renderCategoryPicker = (dateStr: string) => (
-    <div
-      ref={pickerRef}
-      className="rounded-xl bg-card border border-primary/25 shadow-lg p-1 space-y-0.5"
-      style={ghostShadow}
-    >
-      <div className="text-[9px] text-muted-foreground px-1.5 py-0.5 uppercase tracking-wide">카테고리 선택</div>
-      {categories.map(c => (
-        <button
-          key={c.id}
-          onClick={() => pickCategory(dateStr, c.title)}
-          className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
-        >
-          <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
-          <span className="text-[10px] truncate">{c.title}</span>
-        </button>
-      ))}
-      {categories.length === 0 && (
-        <div className="text-[9px] text-muted-foreground px-1.5 py-1">아직 카테고리가 없어요</div>
-      )}
-      <button
-        onClick={() => pickCategory(dateStr, "")}
-        className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+  // "+ 새 할 일" 클릭 시 열리는 추가 폼. 날짜가 자유로우면(전역/카테고리 섹션) 날짜 입력을 먼저
+  // 보여주고(기본 오늘), 카테고리가 자유로우면 카테고리 목록을, 고정이면 추가 버튼만 보여준다.
+  const renderAddPicker = () => {
+    if (!addPicker) return null;
+    const effDate = addPicker.date ?? addDate;
+    return (
+      <div
+        ref={pickerRef}
+        className="rounded-xl bg-card border border-primary/25 shadow-lg p-1 space-y-0.5"
+        style={ghostShadow}
       >
-        <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: UNCATEGORIZED_TODO_COLOR }} />
-        <span className="text-[10px] text-muted-foreground truncate">미분류</span>
-      </button>
-      <div className="h-px bg-border/60 my-0.5" />
-      {newCatMode ? (
-        <div className="p-1 space-y-1">
-          <input
-            autoFocus
-            value={newCatTitle}
-            onChange={e => setNewCatTitle(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === "Enter") { e.preventDefault(); commitNewCategory(dateStr); }
-              else if (e.key === "Escape") { e.preventDefault(); setNewCatMode(false); setNewCatTitle(""); }
-            }}
-            placeholder="카테고리 이름..."
-            className="w-full text-[10px] px-1.5 py-1 rounded bg-muted outline-none focus:ring-1 focus:ring-ring"
-          />
-          <div className="flex flex-wrap gap-1">
-            {paletteColors.map(c => (
+        {addPicker.date == null && (
+          <div className="px-1.5 py-0.5 space-y-0.5">
+            <div className="text-[9px] text-muted-foreground uppercase tracking-wide">날짜</div>
+            <input
+              type="date"
+              value={addDate}
+              onChange={e => { if (e.target.value) setAddDate(e.target.value); }}
+              className="w-full text-[11px] px-1.5 py-1 rounded bg-muted outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+        )}
+        {addPicker.category !== undefined ? (
+          /* 카테고리 고정(카테고리 섹션) — 날짜만 고르고 바로 추가. */
+          <button
+            onClick={() => pickCategory(effDate, addPicker.category!)}
+            className="w-full text-[11px] py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+          >추가</button>
+        ) : (
+          <>
+            <div className="text-[9px] text-muted-foreground px-1.5 py-0.5 uppercase tracking-wide">카테고리 선택</div>
+            {categories.map(c => (
               <button
-                key={c}
-                type="button"
-                onClick={() => setNewCatColor(c)}
-                className={`size-4 rounded-full transition-transform ${newCatColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
-                style={{ backgroundColor: c }}
-                title={c}
-              />
+                key={c.id}
+                onClick={() => pickCategory(effDate, c.title)}
+                className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+              >
+                <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
+                <span className="text-[10px] truncate">{c.title}</span>
+              </button>
             ))}
-          </div>
-          <div className="flex gap-1">
+            {categories.length === 0 && (
+              <div className="text-[9px] text-muted-foreground px-1.5 py-1">아직 카테고리가 없어요</div>
+            )}
             <button
-              onClick={() => commitNewCategory(dateStr)}
-              disabled={!newCatTitle.trim()}
-              className="flex-1 text-[10px] py-1 rounded bg-primary text-primary-foreground disabled:opacity-40"
-            >추가</button>
-            <button
-              onClick={() => { setNewCatMode(false); setNewCatTitle(""); }}
-              className="flex-1 text-[10px] py-1 rounded bg-muted hover:bg-muted/70"
-            >취소</button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setNewCatMode(true)}
-          className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
-        >
-          <Plus size={10} className="text-muted-foreground" />
-          <span className="text-[10px] text-muted-foreground truncate">새 카테고리</span>
-        </button>
-      )}
-    </div>
-  );
+              onClick={() => pickCategory(effDate, "")}
+              className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+            >
+              <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: UNCATEGORIZED_TODO_COLOR }} />
+              <span className="text-[10px] text-muted-foreground truncate">미분류</span>
+            </button>
+            <div className="h-px bg-border/60 my-0.5" />
+            {newCatMode ? (
+              <div className="p-1 space-y-1">
+                <input
+                  autoFocus
+                  value={newCatTitle}
+                  onChange={e => setNewCatTitle(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") { e.preventDefault(); commitNewCategory(effDate); }
+                    else if (e.key === "Escape") { e.preventDefault(); setNewCatMode(false); setNewCatTitle(""); }
+                  }}
+                  placeholder="카테고리 이름..."
+                  className="w-full text-[10px] px-1.5 py-1 rounded bg-muted outline-none focus:ring-1 focus:ring-ring"
+                />
+                <div className="flex flex-wrap gap-1">
+                  {paletteColors.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setNewCatColor(c)}
+                      className={`size-4 rounded-full transition-transform ${newCatColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    />
+                  ))}
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => commitNewCategory(effDate)}
+                    disabled={!newCatTitle.trim()}
+                    className="flex-1 text-[10px] py-1 rounded bg-primary text-primary-foreground disabled:opacity-40"
+                  >추가</button>
+                  <button
+                    onClick={() => { setNewCatMode(false); setNewCatTitle(""); }}
+                    className="flex-1 text-[10px] py-1 rounded bg-muted hover:bg-muted/70"
+                  >취소</button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setNewCatMode(true)}
+                className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+              >
+                <Plus size={10} className="text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground truncate">새 카테고리</span>
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {showDayHeader && (onGoPrev || onGoNext) && (
@@ -3934,7 +3960,9 @@ function TodoPanel({
               </div>
             </div>
           )}
-          {groupMode === "date" ? viewDays.map((day) => {
+          {groupMode === "date" ? <>
+          {/* 할 일이 없는 날짜 섹션은 숨김 — 할 일이 있는 날만 날짜 헤더 + 카드 노출. */}
+          {viewDays.filter(d => todos.some(t => coversDate(t, toDateStr(d)))).map((day) => {
             const dateStr = toDateStr(day);
             const isToday = dateStr === TODAY_STR;
             const dow = day.getDay();
@@ -3997,11 +4025,11 @@ function TodoPanel({
                       <Plus size={12} /> 여기에 새 할 일 추가
                     </div>
                   )}
-                  {/* "+ 새 할 일" — hover 고스트 클릭 → 카테고리 픽커 → 선택 시 생성 + 상세 패널 오픈. */}
-                  {pickerOpenDate === dateStr ? renderCategoryPicker(dateStr)
+                  {/* "+ 새 할 일" — hover 고스트 클릭 → 카테고리 픽커(날짜는 이 섹션으로 고정). */}
+                  {addPicker?.key === dateStr ? renderAddPicker()
                     : hoverKey === dateStr && tplHoverKey !== dateStr ? (
                       <button
-                        onClick={() => { setPickerOpenDate(dateStr); setNewCatMode(false); }}
+                        onClick={() => { setAddPicker({ key: dateStr, date: dateStr }); setNewCatMode(false); }}
                         className={ghostCardCls}
                         style={ghostShadow}
                         title="새 할 일 추가"
@@ -4012,7 +4040,23 @@ function TodoPanel({
                 </div>
               </div>
             );
-          }) : categorySections.map(sec => {
+          })}
+          {viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && (
+            <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없어요</p>
+          )}
+          {/* 빈 날짜 섹션이 없으므로 새 할 일 진입점은 하단 공통 버튼 — 날짜(기본 오늘)와
+               카테고리를 폼에서 선택해 추가. */}
+          {addPicker?.key === "__global__" ? renderAddPicker() : (
+            <button
+              onClick={() => { setAddDate(TODAY_STR); setAddPicker({ key: "__global__" }); setNewCatMode(false); }}
+              className={ghostCardCls}
+              style={ghostShadow}
+              title="새 할 일 추가"
+            >
+              <span className="text-xs text-primary/70 font-medium">+ 새 할 일</span>
+            </button>
+          )}
+          </> : categorySections.map(sec => {
             const color = sec.category ? getCategoryColor(templates, sec.category) : UNCATEGORIZED_TODO_COLOR;
             const key = `cat:${sec.category || "__none__"}`;
             return (
@@ -4061,17 +4105,18 @@ function TodoPanel({
                       <Plus size={12} /> 이 카테고리로 이동
                     </div>
                   )}
-                  {/* "+ 새 할 일" — 카테고리가 정해져 있으니 픽커 없이 즉시 생성 + 상세 패널 오픈. */}
-                  {hoverKey === key && tplHoverKey !== key && (
-                    <button
-                      onClick={() => onAdd({ title: "새 할 일", date: defaultAddDate, category: sec.category }, { openInline: true })}
-                      className={ghostCardCls}
-                      style={ghostShadow}
-                      title="새 할 일 추가"
-                    >
-                      <span className="text-xs text-primary/70 font-medium">+ 새 할 일</span>
-                    </button>
-                  )}
+                  {/* "+ 새 할 일" — 카테고리는 섹션 것으로 고정, 날짜(기본 오늘)만 폼에서 선택. */}
+                  {addPicker?.key === key ? renderAddPicker()
+                    : hoverKey === key && tplHoverKey !== key ? (
+                      <button
+                        onClick={() => { setAddDate(TODAY_STR); setAddPicker({ key, category: sec.category }); setNewCatMode(false); }}
+                        className={ghostCardCls}
+                        style={ghostShadow}
+                        title="새 할 일 추가"
+                      >
+                        <span className="text-xs text-primary/70 font-medium">+ 새 할 일</span>
+                      </button>
+                    ) : null}
                 </div>
               </div>
             );
