@@ -18,30 +18,48 @@ const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const EXPORT_SCHEMA_VERSION = 1;
 // export/import 대상 테이블 — 스키마 순서상 FK 부모가 먼저 오도록 정렬(가져오기 시 삽입 순서로 사용).
+// ⚠ db.ts 에 테이블을 추가하면 여기(그리고 TABLE_COLUMNS)에도 반드시 추가할 것 —
+//   빠뜨리면 JSON 백업에서 그 테이블 데이터가 통째로 누락된다.
 const TABLES = [
   "block_templates",
   "note_folders",
   "blocks",
   "checklist_items",
   "deadlines",
+  "kanban_cards",
+  "kanban_checklist_items",
   "todos",
+  "todo_checklist_items",
   "timer_sessions",
   "notes",
 ] as const;
 
 type TableName = typeof TABLES[number];
 
+// v1 내보내기 초기부터 존재했던 테이블 — 이들이 배열로 없으면 손상 파일로 간주.
+// 이후에 추가된 테이블(kanban_*, todo_checklist_items)은 예전 백업 파일에 없을 수
+// 있으므로 없으면 빈 배열로 취급해 하위 호환을 유지한다.
+const REQUIRED_TABLES: readonly TableName[] = [
+  "block_templates", "note_folders", "blocks", "checklist_items",
+  "deadlines", "todos", "timer_sessions", "notes",
+];
+
 // 각 테이블별로 허용하는 컬럼 화이트리스트 — db.ts의 SCHEMA와 일치해야 함.
 // import 시 백업 파일에서 온 임의의 키를 SQL에 그대로 넣지 않도록 이 목록으로 교차 필터.
 // (개인용 로컬 앱이라 위험도는 낮지만, 손상·조작된 백업 파일로 스키마 이상 상태에
 //  빠지는 걸 근본적으로 차단.)
+// ⚠ db.ts 에 컬럼을 추가하면 여기에도 추가할 것 — 빠뜨리면 복원 시 그 컬럼 값이
+//   조용히 버려져 데이터가 손상된다(예전에 kind/category 등이 실제로 누락돼 있었음).
 const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
-  block_templates: ["id", "title", "color", "tags", "created_at"],
+  block_templates: ["id", "title", "color", "tags", "kind", "created_at"],
   note_folders:    ["id", "name", "color", "sort_order", "created_at"],
-  blocks:          ["id", "template_id", "parent_block_id", "title", "color", "date", "start_time", "end_time", "completed", "completed_at", "memo", "next_block_id", "repeat_group_id", "repeat_rule", "created_at"],
+  blocks:          ["id", "template_id", "parent_block_id", "title", "color", "date", "start_time", "end_time", "completed", "completed_at", "memo", "category", "next_block_id", "repeat_group_id", "repeat_rule", "count_in_completion", "created_at"],
   checklist_items: ["id", "block_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
   deadlines:       ["id", "title", "due_date", "completed", "completed_at", "created_at"],
-  todos:           ["id", "title", "date", "end_date", "completed", "completed_at", "sort_order", "created_at"],
+  kanban_cards:    ["id", "deadline_id", "status", "title", "content", "color", "sort_order", "created_at"],
+  kanban_checklist_items: ["id", "card_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
+  todos:           ["id", "title", "date", "end_date", "color", "completed", "completed_at", "memo", "category", "count_in_completion", "sort_order", "repeat_group_id", "repeat_rule", "created_at"],
+  todo_checklist_items: ["id", "todo_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
   timer_sessions:  ["id", "date", "started_at", "ended_at", "end_reason", "created_at"],
   notes:           ["id", "title", "content", "category", "folder_id", "sort_order", "is_draft", "created_at", "updated_at"],
 };
@@ -156,14 +174,15 @@ export async function importFromJson(): Promise<{ path: string } | null> {
   const text = await readTextFile(picked as string);
   let parsed: any;
   try { parsed = JSON.parse(text); }
-  catch { throw new Error("JSON 파일을 파싱할 수 없어요."); }
+  catch { throw new Error("JSON 파일을 파싱할 수 없습니다."); }
 
-  if (parsed?.schema !== "plan-partner-export") throw new Error("Planory 백업 파일이 아니에요.");
-  if (parsed?.version !== EXPORT_SCHEMA_VERSION) throw new Error(`지원하지 않는 백업 버전(${parsed?.version})이에요.`);
+  if (parsed?.schema !== "plan-partner-export") throw new Error("Planory 백업 파일이 아닙니다.");
+  if (parsed?.version !== EXPORT_SCHEMA_VERSION) throw new Error(`지원하지 않는 백업 버전(${parsed?.version})입니다.`);
   const tables = parsed?.tables;
-  if (!tables || typeof tables !== "object") throw new Error("파일 내용이 손상되었어요.");
-  for (const t of TABLES) {
-    if (!Array.isArray(tables[t])) throw new Error(`테이블 '${t}' 데이터가 없어요.`);
+  if (!tables || typeof tables !== "object") throw new Error("파일 내용이 손상되었습니다.");
+  // 초기 v1 테이블만 필수로 검증 — 이후 추가된 테이블은 예전 백업 파일에 없을 수 있음.
+  for (const t of REQUIRED_TABLES) {
+    if (!Array.isArray(tables[t])) throw new Error(`테이블 '${t}' 데이터가 없습니다.`);
   }
 
   // 가져오기 직전에 안전망 백업 한 번 더 만들어둠 — 잘못된 파일로 덮어써도 되돌릴 수 있게.
@@ -187,7 +206,8 @@ export async function importFromJson(): Promise<{ path: string } | null> {
       await db.execute(`DELETE FROM ${t}`);
     }
     for (const t of TABLES) {
-      const rows = tables[t] as any[];
+      // 이후 버전에서 추가된 테이블은 예전 백업에 없음 — 빈 배열로 취급(그 테이블은 비워진 채 복원).
+      const rows: any[] = Array.isArray(tables[t]) ? tables[t] : [];
       if (rows.length === 0) continue;
       // 화이트리스트로 필터 — 백업 파일 rows[0]에 있는 키 중 스키마에 실제 존재하는
       // 것만 사용. 알 수 없는 컬럼이 있어도 조용히 버림(엄격 매칭보다 관대한 편이
