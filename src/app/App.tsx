@@ -4060,8 +4060,9 @@ function TodoPanel({
         <div className="max-w-lg w-full mx-auto space-y-6">
           {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼 오른쪽 끝을 카드 컬럼 오른쪽 끝에 맞춤.
                ⚠ translate 로 옮기면 새 stacking context 가 생겨 아래 카드가 드롭다운을 가림 —
-               위치 조정은 transform 대신 flex 로만. 섹션 헤더 라인과 겹치지 않도록 위에 분리. */}
-          <div className="flex justify-end">
+               위치 조정은 transform 대신 flex 로만. 섹션 헤더 라인과 겹치지 않도록 위에 분리.
+               mt-2 로 위 여백을 살짝 줘서 아래 카드와의 간격과 시각적으로 균형을 맞춤. */}
+          <div className="flex justify-end mt-2">
             <div className="relative" ref={sortRef}>
               <button
                 onClick={() => setSortOpen(v => !v)}
