@@ -389,7 +389,7 @@ export default function App() {
         setTodos(tds);
         setTodoChecklistItems(tcis);
       } catch (e: any) {
-        setLoadError(e.message ?? "데이터를 불러오지 못했어요");
+        setLoadError(e.message ?? "데이터를 불러오지 못했습니다");
       } finally {
         setLoading(false);
       }
@@ -516,7 +516,7 @@ export default function App() {
       try {
         const granted = await isPermissionGranted();
         if (!granted) return;
-        sendNotification({ title: "타이머가 멈춰 있어요", body: `${abandonMin}분 동안 아무 활동도 없어요. 다시 시작할까요?` });
+        sendNotification({ title: "타이머가 멈춰 있습니다", body: `${abandonMin}분 동안 아무 활동도 없습니다. 다시 시작하시겠습니까?` });
       } catch (e) { console.error(e); }
     }, abandonMin * 60 * 1000);
     return () => window.clearTimeout(id);
@@ -743,7 +743,7 @@ export default function App() {
           }
           setPomPhase("break");
           setPomPhaseSec(0);
-          notifyPomodoro("집중 완료", `${pomBreak}분 쉬어요`);
+          notifyPomodoro("집중 완료", `${pomBreak}분 쉽니다`);
         } else {
           try {
             const session = await startTimerSession(TODAY_STR);
@@ -752,7 +752,7 @@ export default function App() {
           } catch (e) { notifyError("휴식 후 세션 시작 실패")(e); }
           setPomPhase("focus");
           setPomPhaseSec(0);
-          notifyPomodoro("휴식 완료", `다시 ${pomWork}분 집중해요`);
+          notifyPomodoro("휴식 완료", `다시 ${pomWork}분 집중합니다`);
         }
       } finally {
         pomTransitionBusyRef.current = false;
@@ -784,8 +784,8 @@ export default function App() {
     if (pendingParent || pendingTemplate) {
       if (retryLeft <= 0) {
         const reason = pendingParent
-          ? "부모 블록 저장이 완료되지 않아 자식 블록을 만들 수 없어요"
-          : "템플릿 저장이 완료되지 않아 이 블록을 만들 수 없어요";
+          ? "부모 블록 저장이 완료되지 않아 자식 블록을 만들 수 없습니다"
+          : "템플릿 저장이 완료되지 않아 이 블록을 만들 수 없습니다";
         notifyError("블록 추가 실패")(new Error(reason));
         return;
       }
@@ -1432,7 +1432,7 @@ export default function App() {
     return (
       <div className="flex h-screen items-center justify-center bg-background text-sm">
         <div className="text-center">
-          <div className="text-destructive font-medium mb-1">데이터를 불러오지 못했어요</div>
+          <div className="text-destructive font-medium mb-1">데이터를 불러오지 못했습니다</div>
           <div className="text-muted-foreground text-xs">{loadError}</div>
         </div>
       </div>
@@ -1975,7 +1975,7 @@ function TimerHistoryPopover({ sessions, onClose, onReset }: { sessions: TimerSe
           </div>
         </div>
         {segments.length === 0 ? (
-          <p className="text-[11px] text-muted-foreground text-center py-3">아직 오늘 기록이 없어요</p>
+          <p className="text-[11px] text-muted-foreground text-center py-3">아직 오늘 기록이 없습니다</p>
         ) : (
           <div className="space-y-1 max-h-56 overflow-y-auto">
             {segments.slice().reverse().map((seg, i) => (
@@ -2005,7 +2005,7 @@ function TimerHistoryPopover({ sessions, onClose, onReset }: { sessions: TimerSe
         <div className="pt-2 mt-2 border-t border-border flex items-center justify-end gap-2">
           {confirmReset ? (
             <>
-              <span className="text-[10px] text-muted-foreground">정말 초기화할까요?</span>
+              <span className="text-[10px] text-muted-foreground">정말 초기화하시겠습니까?</span>
               <button onClick={() => setConfirmReset(false)} className="text-[10px] text-muted-foreground hover:text-foreground px-2 py-1 rounded">취소</button>
               <button onClick={onReset} className="text-[10px] text-destructive font-medium hover:bg-destructive/10 px-2 py-1 rounded">초기화</button>
             </>
@@ -2307,7 +2307,7 @@ function TodaySection({
 
         {blocks.length === 0 && (
           <div className="mt-10 text-center py-8">
-            <div className="text-sm font-medium text-muted-foreground">오늘 계획된 활동이 없어요</div>
+            <div className="text-sm font-medium text-muted-foreground">오늘 계획된 활동이 없습니다</div>
             <button
               onClick={onGoToCalendar}
               className="mt-3 text-xs px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
@@ -3063,7 +3063,7 @@ function CalendarSection({
                         backgroundColor: overlap ? "#ef444418" : srcColor + "20",
                         borderColor: overlap ? "#ef4444" : srcColor }}>
                       <div className="text-[10px] font-semibold truncate" style={{ color: overlap ? "#ef4444" : srcColor }}>
-                        {overlap ? "⚠ 이미 일정이 있어요" : src.title}
+                        {overlap ? "⚠ 이미 일정이 있습니다" : src.title}
                       </div>
                       {!overlap && (
                         <div className="text-[9px] opacity-60 mt-0.5" style={{ color: srcColor }}>
@@ -4050,7 +4050,7 @@ function TodoPanel({
               </button>
             ))}
             {categories.length === 0 && (
-              <div className="text-[9px] text-muted-foreground px-1.5 py-1">아직 카테고리가 없어요</div>
+              <div className="text-[9px] text-muted-foreground px-1.5 py-1">아직 카테고리가 없습니다</div>
             )}
             <button
               onClick={() => pickCategory(effDate, "")}
@@ -4266,7 +4266,7 @@ function TodoPanel({
             );
           })}
           {viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && rangeDeadlines.length === 0 && (
-            <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없어요</p>
+            <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없습니다</p>
           )}
           {/* 빈 날짜 섹션이 없으므로 새 할 일 진입점은 하단 공통 버튼 — 날짜(기본 오늘)와
                카테고리를 폼에서 선택해 추가. */}
@@ -4393,7 +4393,7 @@ function RepeatDeleteModal({
             className="w-full text-left px-3 py-2.5 rounded-lg border border-destructive/40 text-xs hover:bg-destructive/10 text-destructive transition-colors"
           >
             <div className="font-medium">이후 모든 블록 삭제</div>
-            <div className="text-[10px] text-destructive/70 mt-0.5">오늘 이후의 반복 인스턴스가 함께 사라져요</div>
+            <div className="text-[10px] text-destructive/70 mt-0.5">오늘 이후의 반복 인스턴스가 함께 사라집니다</div>
           </button>
         </div>
         <div className="flex items-center gap-2 mt-4">
@@ -5954,12 +5954,12 @@ function NoteList({
         {shown.length === 0 && (viewFolderId !== null || folders.length === 0) ? (
           <div className="text-center py-16 text-sm text-muted-foreground">
             {inDrafts
-              ? "임시 저장된 메모가 없어요. \"새 메모\"로 만든 뒤 \"저장\"을 누르지 않고 나가면 여기 모여요."
+              ? "임시 저장된 메모가 없습니다. \"새 메모\"로 만든 뒤 \"저장\"을 누르지 않고 나가면 여기 모입니다."
               : notes.filter(n => !n.isDraft).length === 0 && folders.length === 0
-              ? "아직 메모가 없어요. \"새 메모\"로 첫 메모를 만들어보세요."
+              ? "아직 메모가 없습니다. \"새 메모\"로 첫 메모를 만들어보세요."
               : viewFolderId !== null
-              ? "이 폴더에는 아직 메모가 없어요. 다른 메모를 여기로 드래그해 옮길 수 있어요."
-              : "이 조건에 해당하는 메모가 없어요."}
+              ? "이 폴더에는 아직 메모가 없습니다. 다른 메모를 여기로 드래그해 옮길 수 있습니다."
+              : "이 조건에 해당하는 메모가 없습니다."}
           </div>
         ) : (
           <div className="space-y-2">
@@ -6322,7 +6322,7 @@ function SettingsSection({
     try {
       const r = await checkForUpdate();
       if (r.status === "up-to-date") {
-        flash("update", "ok", "이미 최신 버전이에요.");
+        flash("update", "ok", "이미 최신 버전입니다.");
       } else if (r.status === "available") {
         // 인라인 확인 카드로 전환 — 사용자가 "설치"를 눌러야 실제 다운로드+재시작이 시작됨.
         setPendingUpdate(r);
@@ -6780,7 +6780,7 @@ function BlockDetailPanel({
                 </button>
               ))}
               {categories.length === 0 && (
-                <div className="text-[10px] text-muted-foreground px-2 py-1.5">아직 카테고리가 없어요</div>
+                <div className="text-[10px] text-muted-foreground px-2 py-1.5">아직 카테고리가 없습니다</div>
               )}
               <button
                 onClick={() => chooseCategory("")}
@@ -7170,7 +7170,7 @@ function TodoDetailPanel({
                 </button>
               ))}
               {categories.length === 0 && (
-                <div className="text-[10px] text-muted-foreground px-2 py-1.5">아직 카테고리가 없어요</div>
+                <div className="text-[10px] text-muted-foreground px-2 py-1.5">아직 카테고리가 없습니다</div>
               )}
               <button
                 onClick={() => chooseCategory("")}
