@@ -77,12 +77,14 @@ CREATE TABLE IF NOT EXISTS deadlines (
 
 -- 칸반 카드 — 마감 작업(deadline) 하나에 딸린 세부 작업 보드.
 -- status 가 3개 컬럼(할 작업/진행 중/끝난 작업)을 구분, sort_order 는 컬럼 내 순서.
+-- color 는 카드 개별 색상 — 빈 문자열이면 마감 D-day 톤 색을 따라감(기본).
 CREATE TABLE IF NOT EXISTS kanban_cards (
   id TEXT PRIMARY KEY,
   deadline_id TEXT NOT NULL REFERENCES deadlines(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done')),
   title TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -201,6 +203,12 @@ const TODO_UPGRADES = [
   "ALTER TABLE todos ADD COLUMN repeat_rule TEXT",
 ];
 
+// kanban_cards 사후 컬럼 추가 — color 컬럼이 없던 초기 버전 설치를 위한 방어.
+// 빈 문자열이면 마감 D-day 톤을 따라가는 기본 동작.
+const KANBAN_UPGRADES = [
+  "ALTER TABLE kanban_cards ADD COLUMN color TEXT NOT NULL DEFAULT ''",
+];
+
 let dbPromise: Promise<Database> | null = null;
 
 // 첫 호출 시 DB 파일 열고 스키마 초기화, 이후 호출은 같은 인스턴스 반환.
@@ -244,6 +252,9 @@ export function getDb(): Promise<Database> {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
       for (const stmt of TODO_UPGRADES) {
+        try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
+      }
+      for (const stmt of KANBAN_UPGRADES) {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
       try {

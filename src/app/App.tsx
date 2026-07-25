@@ -12,7 +12,7 @@ import {
   fetchTemplates, createTemplate, deleteTemplateRow, fetchBlocks, insertBlock, patchBlock, deleteBlockRow,
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
   fetchDeadlines, createDeadline, toggleDeadlineRow, deleteDeadlineRow,
-  fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow,
+  fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow, bulkUpdateKanbanCardOrder,
   type KanbanCard, type KanbanStatus,
   fetchTodos, createTodo, updateTodo, toggleTodoRow, deleteTodoRow, bulkUpdateTodoOrder, type Todo,
   insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin,
@@ -4674,6 +4674,14 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
   const [newContent, setNewContent] = useState("");
   // 드래그 중 카드가 올라가 있는 컬럼 — 하이라이트용.
   const [dragOverCol, setDragOverCol] = useState<KanbanStatus | null>(null);
+  // 드래그 중인 카드 id — 원본 카드를 반투명 처리.
+  const [dragCardId, setDragCardId] = useState<string | null>(null);
+  // 클릭으로 편집 중인 카드 — 카드 자리에 인라인 편집 폼을 렌더.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
+  // 편집 중 색상 — 빈 문자열이면 마감 D-day 톤을 따라가는 기본값.
+  const [editColor, setEditColor] = useState("");
 
   const dl = daysBetween(parseLocalDate(deadline.dueDate), TODAY_DATE);
   const color = deadlineToneHex(dl);
@@ -4691,7 +4699,9 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
     const title = newTitle.trim();
     if (!title) return;
     const content = newContent.trim();
-    setNewTitle(""); setNewContent("");
+    // 추가 후 폼을 닫음 — 열어두면 방금 추가한 카드 아래에 빈 폼이 다시 떠서
+    // "작업 추가 탭이 또 열리는" 것처럼 보임. 연속 추가는 버튼을 다시 누르는 쪽이 명확.
+    setNewTitle(""); setNewContent(""); setAddingCol(null);
     createKanbanCard({ deadlineId: deadline.id, status, title, content })
       .then(c => setCards(cs => [...cs, c]))
       .catch(notifyError("작업 추가 실패"));
@@ -4707,9 +4717,48 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
     updateKanbanCard(id, { status, sortOrder }).catch(notifyError("작업 이동 실패"));
   };
 
+  // 카드 위에 드롭 — 그 카드의 앞/뒤(마우스가 카드 상반부면 앞)에 끼워 넣음.
+  // 같은 컬럼 재정렬과 다른 컬럼으로의 위치 지정 이동을 모두 처리. 대상 컬럼 전체의
+  // sort_order 를 0..n 으로 다시 매겨 한 번에 저장(부분 반영 방지는 bulk 함수가 담당).
+  const reorderCard = (dragId: string, targetId: string, before: boolean) => {
+    if (dragId === targetId) return;
+    const drag = cards.find(c => c.id === dragId);
+    const target = cards.find(c => c.id === targetId);
+    if (!drag || !target) return;
+    const col = target.status;
+    const list = cards.filter(c => c.status === col && c.id !== dragId).sort((a, b) => a.sortOrder - b.sortOrder);
+    const idx = list.findIndex(c => c.id === targetId);
+    if (idx < 0) return;
+    list.splice(before ? idx : idx + 1, 0, drag);
+    const updates = list.map((c, i) => ({ id: c.id, status: col, sortOrder: i }));
+    setCards(cs => cs.map(c => {
+      const u = updates.find(x => x.id === c.id);
+      return u ? { ...c, status: u.status, sortOrder: u.sortOrder } : c;
+    }));
+    bulkUpdateKanbanCardOrder(updates).catch(notifyError("작업 순서 저장 실패"));
+  };
+
   const deleteCard = (id: string) => {
+    if (editingId === id) setEditingId(null);
     setCards(cs => cs.filter(c => c.id !== id));
     deleteKanbanCardRow(id).catch(notifyError("작업 삭제 실패"));
+  };
+
+  const startEdit = (card: KanbanCard) => {
+    setEditingId(card.id);
+    setEditTitle(card.title);
+    setEditContent(card.content);
+    setEditColor(card.color);
+  };
+
+  const saveEdit = () => {
+    if (!editingId) return;
+    const title = editTitle.trim();
+    if (!title) return;
+    const changes = { title, content: editContent.trim(), color: editColor };
+    setCards(cs => cs.map(c => c.id === editingId ? { ...c, ...changes } : c));
+    setEditingId(null);
+    updateKanbanCard(editingId, changes).catch(notifyError("작업 수정 실패"));
   };
 
   return (
@@ -4759,38 +4808,109 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
                 </div>
 
                 <div className="space-y-2 flex-1">
-                  {colCards.map(card => (
-                    <div
-                      key={card.id}
-                      draggable
-                      onDragStart={e => {
-                        e.dataTransfer.setData("kanbanCardId", card.id);
-                        e.dataTransfer.effectAllowed = "move";
-                      }}
-                      className="group/kcard relative rounded-lg overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
-                      style={{
-                        backgroundColor: color + "28",
-                        borderLeft: `3px solid ${color}`,
-                        opacity: status === "done" ? 0.55 : 1,
-                      }}
-                    >
-                      <div className="px-2.5 py-2">
-                        <div className="text-xs font-semibold break-words pr-4" style={{ color }}>{card.title}</div>
-                        {card.content && (
-                          <div className="text-[11px] opacity-70 mt-0.5 whitespace-pre-wrap break-words" style={{ color }}>
-                            {card.content}
+                  {colCards.map(card => {
+                    // 카드 개별 색이 있으면 그것, 없으면 마감 D-day 톤(기본).
+                    const cardColor = card.color || color;
+
+                    // 클릭으로 편집 중 — 카드 자리를 인라인 폼으로 대체.
+                    if (editingId === card.id) {
+                      return (
+                        <div key={card.id} className="p-2.5 rounded-lg border bg-card space-y-1.5"
+                          style={{ borderLeft: `3px solid ${editColor || color}` }}>
+                          <input
+                            autoFocus
+                            value={editTitle}
+                            onChange={e => setEditTitle(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && !e.nativeEvent.isComposing) saveEdit();
+                              if (e.key === "Escape") setEditingId(null);
+                            }}
+                            placeholder="제목..."
+                            className="w-full text-xs px-2.5 py-1.5 rounded-md bg-muted outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
+                          />
+                          <textarea
+                            value={editContent}
+                            onChange={e => setEditContent(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Escape") setEditingId(null); }}
+                            placeholder="내용 (선택)..."
+                            rows={3}
+                            className="w-full text-[11px] px-2.5 py-1.5 rounded-md bg-muted outline-none focus:ring-2 focus:ring-ring resize-none placeholder:text-muted-foreground"
+                          />
+                          {/* 색상 — 첫 스와치는 "기본"(마감 D-day 톤을 따라감), 나머지는 블록 팔레트 프리셋. */}
+                          <div className="flex flex-wrap gap-1 items-center py-0.5">
+                            {["", ...DEFAULT_BLOCK_COLORS].map(c => (
+                              <button
+                                key={c || "default"}
+                                type="button"
+                                onClick={() => setEditColor(c)}
+                                className={`size-4 rounded-full transition-transform ${c === "" ? "border border-dashed border-foreground/50" : ""} ${editColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                                style={{ backgroundColor: c || color }}
+                                title={c || "기본 (마감 톤)"}
+                              />
+                            ))}
                           </div>
-                        )}
-                      </div>
-                      <button
-                        onClick={e => { e.stopPropagation(); deleteCard(card.id); }}
-                        className="absolute top-1 right-1 size-4 rounded flex items-center justify-center opacity-0 group-hover/kcard:opacity-100 hover:bg-black/20 transition-opacity"
-                        title="작업 삭제"
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={saveEdit}
+                              disabled={!editTitle.trim()}
+                              className="flex-1 text-[11px] py-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-40 transition-opacity"
+                            >저장</button>
+                            <button
+                              onClick={() => setEditingId(null)}
+                              className="flex-1 text-[11px] py-1.5 rounded-md bg-muted hover:bg-muted/70 transition-colors"
+                            >취소</button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={card.id}
+                        draggable
+                        onDragStart={e => {
+                          e.dataTransfer.setData("kanbanCardId", card.id);
+                          e.dataTransfer.effectAllowed = "move";
+                          setDragCardId(card.id);
+                        }}
+                        onDragEnd={() => { setDragCardId(null); setDragOverCol(null); }}
+                        onDragOver={e => { e.preventDefault(); }}
+                        onDrop={e => {
+                          // 카드 위에 드롭 — 컬럼 핸들러(맨 아래 추가)로 버블링되지 않게 여기서 소비.
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDragOverCol(null);
+                          const id = e.dataTransfer.getData("kanbanCardId");
+                          if (!id) return;
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          reorderCard(id, card.id, e.clientY < rect.top + rect.height / 2);
+                        }}
+                        onClick={() => startEdit(card)}
+                        className="group/kcard relative rounded-lg overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
+                        style={{
+                          backgroundColor: cardColor + "28",
+                          borderLeft: `3px solid ${cardColor}`,
+                          opacity: dragCardId === card.id ? 0.3 : status === "done" ? 0.55 : 1,
+                        }}
                       >
-                        <X size={9} style={{ color }} />
-                      </button>
-                    </div>
-                  ))}
+                        <div className="px-2.5 py-2">
+                          <div className="text-xs font-semibold break-words pr-4" style={{ color: cardColor }}>{card.title}</div>
+                          {card.content && (
+                            <div className="text-[11px] opacity-70 mt-0.5 whitespace-pre-wrap break-words" style={{ color: cardColor }}>
+                              {card.content}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); deleteCard(card.id); }}
+                          className="absolute top-1 right-1 size-4 rounded flex items-center justify-center opacity-0 group-hover/kcard:opacity-100 hover:bg-black/20 transition-opacity"
+                          title="작업 삭제"
+                        >
+                          <X size={9} style={{ color: cardColor }} />
+                        </button>
+                      </div>
+                    );
+                  })}
                   {!loading && colCards.length === 0 && addingCol !== status && (
                     <div className="text-[11px] text-muted-foreground/60 text-center py-4 select-none">작업 없음</div>
                   )}
@@ -4803,7 +4923,8 @@ function KanbanBoard({ deadline, onBack }: { deadline: Deadline; onBack: () => v
                       value={newTitle}
                       onChange={e => setNewTitle(e.target.value)}
                       onKeyDown={e => {
-                        if (e.key === "Enter") addCard(status);
+                        // 한글 IME 조합 중 Enter 는 keydown 이 두 번 와서 중복 추가됨 — 조합 중이면 무시.
+                        if (e.key === "Enter" && !e.nativeEvent.isComposing) addCard(status);
                         if (e.key === "Escape") setAddingCol(null);
                       }}
                       placeholder="제목..."

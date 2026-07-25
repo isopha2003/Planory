@@ -308,6 +308,8 @@ export interface KanbanCard {
   status: KanbanStatus;
   title: string;
   content: string;
+  // 카드 개별 색상(hex). 빈 문자열이면 마감 D-day 톤 색을 따라감(기본).
+  color: string;
   sortOrder: number;
 }
 
@@ -317,6 +319,7 @@ const rowToKanbanCard = (r: any): KanbanCard => ({
   status: (r.status === "doing" || r.status === "done" ? r.status : "todo") as KanbanStatus,
   title: r.title ?? "",
   content: r.content ?? "",
+  color: r.color ?? "",
   sortOrder: r.sort_order ?? 0,
 });
 
@@ -329,10 +332,11 @@ export async function fetchKanbanCards(deadlineId: string): Promise<KanbanCard[]
   return rows.map(rowToKanbanCard);
 }
 
-export async function createKanbanCard(c: { deadlineId: string; status: KanbanStatus; title: string; content?: string }): Promise<KanbanCard> {
+export async function createKanbanCard(c: { deadlineId: string; status: KanbanStatus; title: string; content?: string; color?: string }): Promise<KanbanCard> {
   const db = await getDb();
   const id = uuid();
   const content = c.content ?? "";
+  const color = c.color ?? "";
   // 같은 컬럼의 맨 아래에 붙임 — 컬럼 내 최대 sort_order + 1.
   const rows = await db.select<any[]>(
     "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM kanban_cards WHERE deadline_id = ? AND status = ?",
@@ -340,23 +344,36 @@ export async function createKanbanCard(c: { deadlineId: string; status: KanbanSt
   );
   const sortOrder = rows[0]?.n ?? 0;
   await db.execute(
-    "INSERT INTO kanban_cards (id, deadline_id, status, title, content, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-    [id, c.deadlineId, c.status, c.title, content, sortOrder]
+    "INSERT INTO kanban_cards (id, deadline_id, status, title, content, color, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [id, c.deadlineId, c.status, c.title, content, color, sortOrder]
   );
-  return { id, deadlineId: c.deadlineId, status: c.status, title: c.title, content, sortOrder };
+  return { id, deadlineId: c.deadlineId, status: c.status, title: c.title, content, color, sortOrder };
 }
 
-export async function updateKanbanCard(id: string, changes: { status?: KanbanStatus; title?: string; content?: string; sortOrder?: number }): Promise<void> {
+export async function updateKanbanCard(id: string, changes: { status?: KanbanStatus; title?: string; content?: string; color?: string; sortOrder?: number }): Promise<void> {
   const db = await getDb();
   const sets: string[] = [];
   const vals: any[] = [];
   if (changes.status !== undefined) { sets.push("status = ?"); vals.push(changes.status); }
   if (changes.title !== undefined) { sets.push("title = ?"); vals.push(changes.title); }
   if (changes.content !== undefined) { sets.push("content = ?"); vals.push(changes.content); }
+  if (changes.color !== undefined) { sets.push("color = ?"); vals.push(changes.color); }
   if (changes.sortOrder !== undefined) { sets.push("sort_order = ?"); vals.push(changes.sortOrder); }
   if (sets.length === 0) return;
   vals.push(id);
   await db.execute(`UPDATE kanban_cards SET ${sets.join(", ")} WHERE id = ?`, vals);
+}
+
+// 드래그 재정렬 결과를 한 번에 저장 — bulkUpdateTodoOrder 와 같은 패턴(개별 UPDATE 순차).
+export async function bulkUpdateKanbanCardOrder(items: { id: string; status: KanbanStatus; sortOrder: number }[]): Promise<void> {
+  if (items.length === 0) return;
+  const db = await getDb();
+  for (const it of items) {
+    await db.execute(
+      "UPDATE kanban_cards SET status = ?, sort_order = ? WHERE id = ?",
+      [it.status, it.sortOrder, it.id]
+    );
+  }
 }
 
 export async function deleteKanbanCardRow(id: string): Promise<void> {
