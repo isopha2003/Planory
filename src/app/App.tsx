@@ -640,8 +640,8 @@ export default function App() {
   //    캡처된 "stopped"를 보고 항상 early return → 정지 자체가 안 됨.
   //  - 뜬 창의 시작 버튼: 이미 running 상태여도 startSession의 `if (timerState === "running") return;`
   //    가드가 캡처된 "stopped"를 보고 통과 → 중복 세션 생성 가능.
-  const startSessionRef = useRef<() => void>();
-  const endSessionRef = useRef<(reason: "manual" | "auto") => void>();
+  const startSessionRef = useRef<(() => void) | undefined>(undefined);
+  const endSessionRef = useRef<((reason: "manual" | "auto") => void) | undefined>(undefined);
   startSessionRef.current = startSession;
   endSessionRef.current = endSession;
   useEffect(() => {

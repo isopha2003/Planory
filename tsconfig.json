@@ -1,0 +1,23 @@
+{
+  // 타입 검사 전용 설정 — 빌드는 vite(esbuild)가 타입을 벗겨내기만 하므로,
+  // 릴리즈 전 `npm run typecheck` 로 프롭 시그니처/오타 급의 실수를 잡는 안전망.
+  // strict 는 끔: Figma Make 생성 코드베이스 전체를 소급 수정하는 비용이 커서,
+  // 우선 명백한 타입 오류(존재하지 않는 프롭·함수 인자 불일치 등)만 잡는 수준으로 시작.
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "strict": false,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"]
+}
