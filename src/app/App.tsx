@@ -4058,8 +4058,9 @@ function TodoPanel({
       )}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-lg w-full mx-auto space-y-6">
-          {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼에 현재 기준, 펼치면 옵션 목록(선택 항목 강조). */}
-          <div className="flex justify-end -mb-3">
+          {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼에 현재 기준, 펼치면 옵션 목록(선택 항목 강조).
+               카드 컬럼 오른쪽 끝에서 살짝 바깥으로(translate) 빼서 리스트와 겹쳐 보이지 않게. */}
+          <div className="flex justify-end -mb-3 translate-x-6">
             <div className="relative" ref={sortRef}>
               <button
                 onClick={() => setSortOpen(v => !v)}
