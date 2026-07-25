@@ -86,8 +86,15 @@ export async function createTemplate(t: { title: string; color: string; tags: st
 // 블록 템플릿 삭제 — 이 템플릿으로 만들어진 기존 블록은 그대로 남고 template_id만
 // NULL이 됨(스키마의 ON DELETE SET NULL). 즉 캘린더에 이미 놓인 블록은 사라지지 않고,
 // 태그 조인만 끊어져 template.tags 자동 상속이 없어질 뿐.
+//
+// ⚠ FK 방어(이하 delete 계열 공통): 스키마의 ON DELETE CASCADE/SET NULL 은
+// PRAGMA foreign_keys=ON 이 걸린 커넥션에서만 동작하는데, tauri-plugin-sql 의 커넥션 풀이
+// PRAGMA 를 안 건 커넥션으로 DELETE 를 실행할 수 있음. 그래서 cascade/set-null 에만 의존하지
+// 않고 참조 정리를 명시적 SQL 로 함께 실행한다. FK 가 정상 동작하는 커넥션에서는 중복
+// 실행이지만 결과가 같아(idempotent) 무해함.
 export async function deleteTemplateRow(id: string) {
   const db = await getDb();
+  await db.execute("UPDATE blocks SET template_id = NULL WHERE template_id = ?", [id]);
   await db.execute("DELETE FROM block_templates WHERE id = ?", [id]);
 }
 
@@ -202,11 +209,36 @@ export async function patchBlock(id: string, changes: any) {
 
 export async function deleteBlockRow(id: string) {
   const db = await getDb();
-  await db.execute("DELETE FROM blocks WHERE id = ?", [id]);
+  // FK 방어 — 자식 블록(깊이 무관)과 그 체크리스트, 이 블록을 가리키는 next_block_id
+  // 참조를 명시적으로 정리한 뒤 본체+자식 블록을 삭제.
+  await db.execute(
+    `DELETE FROM checklist_items WHERE block_id IN (
+       WITH RECURSIVE sub(bid) AS (
+         SELECT id FROM blocks WHERE id = ?
+         UNION ALL
+         SELECT b.id FROM blocks b JOIN sub s ON b.parent_block_id = s.bid
+       ) SELECT bid FROM sub
+     )`,
+    [id]
+  );
+  await db.execute("UPDATE blocks SET next_block_id = NULL WHERE next_block_id = ?", [id]);
+  await db.execute(
+    `WITH RECURSIVE sub(bid) AS (
+       SELECT id FROM blocks WHERE id = ?
+       UNION ALL
+       SELECT b.id FROM blocks b JOIN sub s ON b.parent_block_id = s.bid
+     ) DELETE FROM blocks WHERE id IN (SELECT bid FROM sub)`,
+    [id]
+  );
 }
 
 export async function deleteBlocksByRepeatGroup(repeatGroupId: string, fromDate: string) {
   const db = await getDb();
+  // FK 방어 — 지워질 인스턴스들의 체크리스트를 먼저 정리.
+  await db.execute(
+    "DELETE FROM checklist_items WHERE block_id IN (SELECT id FROM blocks WHERE repeat_group_id = ? AND date >= ?)",
+    [repeatGroupId, fromDate]
+  );
   await db.execute(
     "DELETE FROM blocks WHERE repeat_group_id = ? AND date >= ?",
     [repeatGroupId, fromDate]
@@ -218,6 +250,11 @@ export async function deleteBlocksByRepeatGroup(repeatGroupId: string, fromDate:
 // 이전 규칙으로 만든 인스턴스가 DB에 그대로 남아 refetch 시 새/구 인스턴스가 함께 나타남.
 export async function deleteRepeatInstancesExceptOrigin(repeatGroupId: string, originId: string) {
   const db = await getDb();
+  // FK 방어 — 지워질 인스턴스들의 체크리스트를 먼저 정리.
+  await db.execute(
+    "DELETE FROM checklist_items WHERE block_id IN (SELECT id FROM blocks WHERE repeat_group_id = ? AND id != ?)",
+    [repeatGroupId, originId]
+  );
   await db.execute(
     "DELETE FROM blocks WHERE repeat_group_id = ? AND id != ?",
     [repeatGroupId, originId]
@@ -294,6 +331,12 @@ export async function toggleDeadlineRow(id: string, completed: boolean) {
 
 export async function deleteDeadlineRow(id: string) {
   const db = await getDb();
+  // FK 방어 — 이 마감에 딸린 칸반 체크리스트 → 칸반 카드 → 마감 순으로 명시적 삭제.
+  await db.execute(
+    "DELETE FROM kanban_checklist_items WHERE card_id IN (SELECT id FROM kanban_cards WHERE deadline_id = ?)",
+    [id]
+  );
+  await db.execute("DELETE FROM kanban_cards WHERE deadline_id = ?", [id]);
   await db.execute("DELETE FROM deadlines WHERE id = ?", [id]);
 }
 
@@ -378,6 +421,8 @@ export async function bulkUpdateKanbanCardOrder(items: { id: string; status: Kan
 
 export async function deleteKanbanCardRow(id: string): Promise<void> {
   const db = await getDb();
+  // FK 방어 — 체크리스트 행은 모두 card_id 를 갖고 있어 한 번의 DELETE 로 트리 전체가 정리됨.
+  await db.execute("DELETE FROM kanban_checklist_items WHERE card_id = ?", [id]);
   await db.execute("DELETE FROM kanban_cards WHERE id = ?", [id]);
 }
 
@@ -434,7 +479,15 @@ export async function toggleKanbanChecklistItemRow(id: string, completed: boolea
 
 export async function deleteKanbanChecklistItemRow(id: string): Promise<void> {
   const db = await getDb();
-  await db.execute("DELETE FROM kanban_checklist_items WHERE id = ?", [id]);
+  // FK 방어 — 하위 항목(깊이 무관)을 재귀 CTE 로 함께 삭제.
+  await db.execute(
+    `WITH RECURSIVE sub(iid) AS (
+       SELECT id FROM kanban_checklist_items WHERE id = ?
+       UNION ALL
+       SELECT c.id FROM kanban_checklist_items c JOIN sub s ON c.parent_item_id = s.iid
+     ) DELETE FROM kanban_checklist_items WHERE id IN (SELECT iid FROM sub)`,
+    [id]
+  );
 }
 
 // ── todos (날짜별 할 일 — 시간 없이 체크박스) ────────────────────
@@ -534,6 +587,11 @@ export async function insertTodosBulk(todos: Todo[]): Promise<void> {
 // 반복 규칙 재적용 시 이전 규칙으로 만든 인스턴스 정리 — 원본(origin)은 남김.
 export async function deleteTodoRepeatInstancesExceptOrigin(repeatGroupId: string, originId: string): Promise<void> {
   const db = await getDb();
+  // FK 방어 — 지워질 인스턴스들의 체크리스트를 먼저 정리.
+  await db.execute(
+    "DELETE FROM todo_checklist_items WHERE todo_id IN (SELECT id FROM todos WHERE repeat_group_id = ? AND id != ?)",
+    [repeatGroupId, originId]
+  );
   await db.execute("DELETE FROM todos WHERE repeat_group_id = ? AND id != ?", [repeatGroupId, originId]);
 }
 
@@ -560,6 +618,8 @@ export async function toggleTodoRow(id: string, completed: boolean): Promise<voi
 
 export async function deleteTodoRow(id: string): Promise<void> {
   const db = await getDb();
+  // FK 방어 — 이 todo 의 체크리스트를 먼저 정리(모든 행이 todo_id 를 가져 한 번에 트리 전체).
+  await db.execute("DELETE FROM todo_checklist_items WHERE todo_id = ?", [id]);
   await db.execute("DELETE FROM todos WHERE id = ?", [id]);
 }
 
@@ -756,7 +816,10 @@ export async function updateFolder(id: string, changes: { name?: string; color?:
 
 export async function deleteFolder(id: string): Promise<void> {
   const db = await getDb();
-  // ON DELETE SET NULL로 소속 노트는 루트(폴더 없음)로 빠짐
+  // ON DELETE SET NULL로 소속 노트는 루트(폴더 없음)로 빠짐.
+  // FK 방어 — set-null 이 안 걸린 커넥션이면 노트가 죽은 folder_id 를 물고 어느 목록에도
+  // 안 보이게 될 수 있어 명시적으로 먼저 해제.
+  await db.execute("UPDATE notes SET folder_id = NULL WHERE folder_id = ?", [id]);
   await db.execute("DELETE FROM note_folders WHERE id = ?", [id]);
 }
 
@@ -797,7 +860,15 @@ export async function toggleChecklistItemRow(id: string, completed: boolean) {
 
 export async function deleteChecklistItemRow(id: string) {
   const db = await getDb();
-  await db.execute("DELETE FROM checklist_items WHERE id = ?", [id]);
+  // FK 방어 — 하위 항목(깊이 무관)을 재귀 CTE 로 함께 삭제.
+  await db.execute(
+    `WITH RECURSIVE sub(iid) AS (
+       SELECT id FROM checklist_items WHERE id = ?
+       UNION ALL
+       SELECT c.id FROM checklist_items c JOIN sub s ON c.parent_item_id = s.iid
+     ) DELETE FROM checklist_items WHERE id IN (SELECT iid FROM sub)`,
+    [id]
+  );
 }
 
 // ── todo_checklist_items (Todo 체크리스트 — blocks 와 동일한 구조/시맨틱) ────
@@ -856,5 +927,13 @@ export async function toggleTodoChecklistItemRow(id: string, completed: boolean)
 
 export async function deleteTodoChecklistItemRow(id: string) {
   const db = await getDb();
-  await db.execute("DELETE FROM todo_checklist_items WHERE id = ?", [id]);
+  // FK 방어 — 하위 항목(깊이 무관)을 재귀 CTE 로 함께 삭제.
+  await db.execute(
+    `WITH RECURSIVE sub(iid) AS (
+       SELECT id FROM todo_checklist_items WHERE id = ?
+       UNION ALL
+       SELECT c.id FROM todo_checklist_items c JOIN sub s ON c.parent_item_id = s.iid
+     ) DELETE FROM todo_checklist_items WHERE id IN (SELECT iid FROM sub)`,
+    [id]
+  );
 }
