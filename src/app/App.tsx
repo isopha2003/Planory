@@ -3339,7 +3339,9 @@ function CalendarSection({
         <div className="flex-1 flex items-center gap-2 justify-end">
           {calView !== "month" && (
             /* 시간표 ↔ 할 일 ↔ 둘 다 순서로 순환하는 단일 토글 버튼.
-               텍스트 라벨은 항상 두 개 다 보이고, 활성 상태는 하이라이트로 표시. */
+               활성 표시는 개별 span 배경 대신 절대 위치 인디케이터 하나로 —
+               둘 다 활성일 때 라벨 사이 gap 이 구분선처럼 보이던 문제를 없애고,
+               상태 전환 시 left/width 트랜지션으로 자연스럽게 이동/신축. */
             (() => {
               const gridOn = contentView === "grid" || contentView === "both";
               const todosOn = contentView === "todos" || contentView === "both";
@@ -3348,15 +3350,26 @@ function CalendarSection({
                 else if (contentView === "todos") setContentView("both");
                 else setContentView("grid");
               };
-              const label = (on: boolean) => `px-2.5 py-1 text-[11px] rounded-md transition-all ${on ? "bg-card shadow-sm font-medium" : "text-muted-foreground"}`;
+              // 인디케이터 위치/폭 — grid: 왼쪽 절반 / todos: 오른쪽 절반 / both: 전체.
+              // 트랙 안쪽 2px 패딩만큼 좌우로 여백을 남겨 인디케이터가 트랙에 딱 붙지 않게.
+              const indicator: React.CSSProperties = contentView === "grid"
+                ? { left: 2, width: "calc(50% - 2px)" }
+                : contentView === "todos"
+                ? { left: "50%", width: "calc(50% - 2px)" }
+                : { left: 2, width: "calc(100% - 4px)" };
               return (
                 <button
                   onClick={cycle}
-                  className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5 hover:bg-muted/80 transition-colors"
+                  className="relative inline-flex items-center rounded-full bg-muted h-7 w-[140px] hover:bg-muted/80 transition-colors overflow-hidden"
                   title="시간표 → 할 일 → 둘 다 순환"
                 >
-                  <span className={label(gridOn)}>시간표</span>
-                  <span className={label(todosOn)}>할 일</span>
+                  <span
+                    aria-hidden
+                    className="absolute top-0.5 bottom-0.5 rounded-full bg-card shadow-sm transition-[left,width] duration-200 ease-out"
+                    style={indicator}
+                  />
+                  <span className={`relative z-10 flex-1 text-center text-[11px] transition-colors ${gridOn ? "font-medium text-foreground" : "text-muted-foreground"}`}>시간표</span>
+                  <span className={`relative z-10 flex-1 text-center text-[11px] transition-colors ${todosOn ? "font-medium text-foreground" : "text-muted-foreground"}`}>할 일</span>
                 </button>
               );
             })()
