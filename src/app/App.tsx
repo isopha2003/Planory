@@ -3738,6 +3738,38 @@ function TodoPanel({
   const viewDateStrs = viewDays.map(toDateStr);
   const firstDs = viewDateStrs[0];
   const lastDs = viewDateStrs[viewDateStrs.length - 1];
+  // 마감 — 할 일 단독 모드에서만 카드로 노출 (시간 그리드가 함께 보일 땐 그쪽 상단 마감 행이 유일한 소스).
+  const rangeDeadlines = showDayHeader
+    ? deadlines.filter(d => viewDateStrs.includes(d.dueDate)).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+    : [];
+
+  // 마감 카드 — 할 일 카드와 같은 블록 형태(원형 체크 + 스트라이프), 색은 남은 일수 톤 규칙.
+  const renderDeadlineCard = (d: Deadline) => {
+    const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
+    const color = deadlineToneHex(daysLeft);
+    return (
+      <div
+        key={d.id}
+        onClick={() => onToggleDeadline(d.id)}
+        className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer hover:shadow-sm transition-all ${d.completed ? "bg-card opacity-60" : ""}`}
+        style={d.completed ? undefined : { backgroundColor: color + "18", borderColor: color + "55" }}
+        title={d.completed ? "완료됨 — 다시 열기" : "완료 처리"}
+      >
+        {d.completed
+          ? <CheckCircle2 size={18} className="flex-shrink-0" style={{ color }} />
+          : <Circle size={18} className="flex-shrink-0 text-muted-foreground" />}
+        <span className="w-0.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+        <div className="flex-1 min-w-0">
+          <div className={`text-sm font-medium truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</div>
+          <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>
+        </div>
+        <span
+          className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+          style={{ backgroundColor: color + "22", color }}
+        >{formatDDay(daysLeft)}</span>
+      </div>
+    );
+  };
   // 카테고리별 그룹 — 기간에 걸치는 todo 전체를 카테고리 섹션으로. 빈 카테고리도 섹션을 만들어
   // 드랍/추가 대상이 되게 하고, 미분류는 항상 마지막.
   const rangeTodos = todos.filter(t => t.date <= lastDs && (t.endDate ?? t.date) >= firstDs);
@@ -4016,47 +4048,14 @@ function TodoPanel({
           )}
         </div>
       )}
-      {/* 고정 마감 행 — 할 일만 보는 모드에선 시간 그리드가 없으니 여기서 마감을 대신 노출.
-           시간 그리드 상단의 마감 행과 동일한 톤/포맷(남은 일수별 색). 요일 헤더 컬럼과 정렬. */}
-      {showDayHeader && (
-        <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden">
-          <div className="w-12 flex-shrink-0 flex items-start justify-end pt-1 pr-2 text-[9px] text-muted-foreground select-none">마감</div>
-          {viewDays.map((day, i) => {
-            const ds = toDateStr(day);
-            const cellDeadlines = deadlines.filter(d => d.dueDate === ds);
-            return (
-              <div key={i} className="flex-1 min-w-0 border-l border-border/40 px-1 py-1 space-y-0.5">
-                {cellDeadlines.map(d => {
-                  const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
-                  const color = deadlineToneHex(daysLeft);
-                  return (
-                    <div
-                      key={d.id}
-                      onClick={() => onToggleDeadline(d.id)}
-                      className={`rounded overflow-hidden text-[10px] cursor-pointer transition-all flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
-                      style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
-                      title={d.completed ? "완료됨 — 다시 열기" : "완료 처리"}
-                    >
-                      <span
-                        className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
-                        style={{ color }}
-                      >{d.title}</span>
-                      <span className="text-[9px] font-semibold leading-none flex-shrink-0" style={{ color }}>
-                        {formatDDay(daysLeft)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      )}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-lg w-full mx-auto space-y-6">
           {groupMode === "date" ? <>
-          {/* 할 일이 없는 날짜 섹션은 숨김 — 할 일이 있는 날만 날짜 헤더 + 카드 노출. */}
-          {viewDays.filter(d => todos.some(t => coversDate(t, toDateStr(d)))).map((day) => {
+          {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출. */}
+          {viewDays.filter(d => {
+            const ds = toDateStr(d);
+            return todos.some(t => coversDate(t, ds)) || rangeDeadlines.some(dl => dl.dueDate === ds);
+          }).map((day) => {
             const dateStr = toDateStr(day);
             const isToday = dateStr === TODAY_STR;
             const dow = day.getDay();
@@ -4112,6 +4111,8 @@ function TodoPanel({
                   <div className="flex-1 h-px bg-border/60" />
                 </div>
                 <div className="space-y-2">
+                  {/* 마감 — 해당 날짜 섹션의 가장 상단에 카드로 노출. */}
+                  {rangeDeadlines.filter(dl => dl.dueDate === dateStr).map(renderDeadlineCard)}
                   {dayTodos.map(t => renderTodoCard(t, { showCategory: true }))}
                   {/* 카테고리 드래그 hover 시 드랍 위치 프리뷰 */}
                   {tplHoverKey === dateStr && (
@@ -4135,7 +4136,7 @@ function TodoPanel({
               </div>
             );
           })}
-          {viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && (
+          {viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && rangeDeadlines.length === 0 && (
             <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없어요</p>
           )}
           {/* 빈 날짜 섹션이 없으므로 새 할 일 진입점은 하단 공통 버튼 — 날짜(기본 오늘)와
@@ -4150,7 +4151,20 @@ function TodoPanel({
               <span className="text-xs text-primary/70 font-medium">+ 새 할 일</span>
             </button>
           )}
-          </> : categorySections.map(sec => {
+          </> : <>
+          {/* 마감 — 카테고리별 그룹에선 항상 리스트 최상단 섹션에 카드로 노출. */}
+          {rangeDeadlines.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[11px] font-semibold tracking-wide text-muted-foreground">마감</span>
+                <div className="flex-1 h-px bg-border/60" />
+              </div>
+              <div className="space-y-2">
+                {rangeDeadlines.map(renderDeadlineCard)}
+              </div>
+            </div>
+          )}
+          {categorySections.map(sec => {
             const color = sec.category ? getCategoryColor(templates, sec.category) : UNCATEGORIZED_TODO_COLOR;
             const key = `cat:${sec.category || "__none__"}`;
             return (
@@ -4215,6 +4229,7 @@ function TodoPanel({
               </div>
             );
           })}
+          </>}
         </div>
       </div>
     </div>
