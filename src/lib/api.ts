@@ -46,6 +46,7 @@ export function rowToBlock(row: any) {
     completed: !!row.completed,
     tags: row._template_tags ? jsonOrEmpty(row._template_tags) : [],
     memo: row.memo ?? "",
+    category: row.category ?? "",
     date: row.date,
     repeatGroupId: row.repeat_group_id ?? undefined,
     repeat: jsonOrNull(row.repeat_rule) ?? undefined,
@@ -130,8 +131,8 @@ export async function insertBlock(block: any) {
   await db.execute(
     `INSERT INTO blocks (
       id, template_id, parent_block_id, title, color, date, start_time, end_time,
-      completed, completed_at, memo, next_block_id, repeat_group_id, repeat_rule, count_in_completion
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      completed, completed_at, memo, category, next_block_id, repeat_group_id, repeat_rule, count_in_completion
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       block.templateId ?? null,
@@ -144,6 +145,7 @@ export async function insertBlock(block: any) {
       block.completed ? 1 : 0,
       block.completed ? new Date().toISOString() : null,
       block.memo ?? "",
+      block.category ?? "",
       block.nextBlockId ?? null,
       block.repeatGroupId ?? null,
       block.repeat ? JSON.stringify(block.repeat) : null,
@@ -183,6 +185,7 @@ export async function patchBlock(id: string, changes: any) {
     push("completed_at", changes.completed ? new Date().toISOString() : null);
   }
   if (changes.memo !== undefined) push("memo", changes.memo);
+  if (changes.category !== undefined) push("category", changes.category ?? "");
   if (changes.repeatGroupId !== undefined) push("repeat_group_id", changes.repeatGroupId ?? null);
   if (changes.repeat !== undefined) push("repeat_rule", changes.repeat ? JSON.stringify(changes.repeat) : null);
   if (changes.nextBlockId !== undefined) push("next_block_id", changes.nextBlockId ?? null);
@@ -237,8 +240,8 @@ export async function insertBlocksBulk(blocks: any[]) {
     await db.execute(
       `INSERT INTO blocks (
         id, template_id, parent_block_id, title, color, date, start_time, end_time,
-        completed, completed_at, memo, next_block_id, repeat_group_id, repeat_rule, count_in_completion
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        completed, completed_at, memo, category, next_block_id, repeat_group_id, repeat_rule, count_in_completion
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         block.templateId ?? null,
@@ -251,6 +254,7 @@ export async function insertBlocksBulk(blocks: any[]) {
         block.completed ? 1 : 0,
         block.completed ? new Date().toISOString() : null,
         block.memo ?? "",
+        block.category ?? "",
         block.nextBlockId ?? null,
         block.repeatGroupId ?? null,
         block.repeat ? JSON.stringify(block.repeat) : null,
@@ -619,4 +623,63 @@ export async function toggleChecklistItemRow(id: string, completed: boolean) {
 export async function deleteChecklistItemRow(id: string) {
   const db = await getDb();
   await db.execute("DELETE FROM checklist_items WHERE id = ?", [id]);
+}
+
+// ── todo_checklist_items (Todo 체크리스트 — blocks 와 동일한 구조/시맨틱) ────
+// UI 는 동일한 ChecklistNode 로 렌더링. row 형태를 맞추기 위해 blockId 대신 todoId 를
+// 그대로 필드명으로 씀 — 호출자(App)가 컴포넌트에 넘길 때 정규화.
+export async function fetchTodoChecklistItems(todoId: string) {
+  const db = await getDb();
+  const rows = await db.select<any[]>(
+    "SELECT * FROM todo_checklist_items WHERE todo_id = ? ORDER BY created_at",
+    [todoId]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    todoId: r.todo_id,
+    parentItemId: r.parent_item_id ?? undefined,
+    text: r.text,
+    completed: !!r.completed,
+    sortOrder: r.sort_order,
+  }));
+}
+
+// 앱 시작 시 한번 불러와서 상태에 캐시해 todo 카드 프리뷰(체크리스트 요약)에 사용.
+// todos 처럼 개인용/소규모 데이터라 전체 로드가 부담 없음.
+export async function fetchAllTodoChecklistItems() {
+  const db = await getDb();
+  const rows = await db.select<any[]>(
+    "SELECT * FROM todo_checklist_items ORDER BY created_at"
+  );
+  return rows.map(r => ({
+    id: r.id,
+    todoId: r.todo_id,
+    parentItemId: r.parent_item_id ?? undefined,
+    text: r.text,
+    completed: !!r.completed,
+    sortOrder: r.sort_order,
+  }));
+}
+
+export async function createTodoChecklistItem(todoId: string, text: string, parentItemId?: string) {
+  const db = await getDb();
+  const id = uuid();
+  await db.execute(
+    "INSERT INTO todo_checklist_items (id, todo_id, parent_item_id, text) VALUES (?, ?, ?, ?)",
+    [id, todoId, parentItemId ?? null, text]
+  );
+  return { id, todoId, parentItemId, text, completed: false, sortOrder: 0 };
+}
+
+export async function toggleTodoChecklistItemRow(id: string, completed: boolean) {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE todo_checklist_items SET completed = ? WHERE id = ?",
+    [completed ? 1 : 0, id]
+  );
+}
+
+export async function deleteTodoChecklistItemRow(id: string) {
+  const db = await getDb();
+  await db.execute("DELETE FROM todo_checklist_items WHERE id = ?", [id]);
 }

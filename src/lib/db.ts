@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS blocks (
   completed INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
   memo TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT '',
   next_block_id TEXT REFERENCES blocks(id) ON DELETE SET NULL,
   repeat_group_id TEXT,
   repeat_rule TEXT,
@@ -46,6 +47,19 @@ CREATE TABLE IF NOT EXISTS checklist_items (
   id TEXT PRIMARY KEY,
   block_id TEXT NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
   parent_item_id TEXT REFERENCES checklist_items(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  completed INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Todo 체크리스트 — blocks 의 checklist_items 와 동일한 형태의 자유 중첩 구조를
+-- 별도 테이블로 유지. block_id NOT NULL FK 를 폴리모픽으로 바꾸는 SQLite 마이그레이션이
+-- 번거로워서 테이블 자체를 분리(스키마 중복이지만 유지보수 리스크 최소).
+CREATE TABLE IF NOT EXISTS todo_checklist_items (
+  id TEXT PRIMARY KEY,
+  todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+  parent_item_id TEXT REFERENCES todo_checklist_items(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   completed INTEGER NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
@@ -122,6 +136,7 @@ CREATE INDEX IF NOT EXISTS todos_date_idx ON todos (date);
 CREATE INDEX IF NOT EXISTS blocks_date_idx ON blocks (date);
 CREATE INDEX IF NOT EXISTS blocks_parent_idx ON blocks (parent_block_id);
 CREATE INDEX IF NOT EXISTS checklist_items_block_idx ON checklist_items (block_id);
+CREATE INDEX IF NOT EXISTS todo_checklist_items_todo_idx ON todo_checklist_items (todo_id);
 CREATE INDEX IF NOT EXISTS deadlines_due_date_idx ON deadlines (due_date);
 CREATE INDEX IF NOT EXISTS timer_sessions_date_idx ON timer_sessions (date);
 CREATE INDEX IF NOT EXISTS notes_folder_idx ON notes (folder_id);
@@ -150,8 +165,11 @@ const BLOCK_TEMPLATE_UPGRADES = [
 
 // blocks 사후 컬럼 추가.
 // count_in_completion: 오늘 달성률 계산에 이 블록을 포함할지 토글. 기본 1(포함).
+// category: 할 일과 동일하게 카테고리(kind='todo' block_template.title) 매칭 문자열.
+// 색상은 렌더링 시 이 문자열로 매칭되는 카테고리 색을 사용(blocks.color 컬럼은 스키마 호환용).
 const BLOCK_UPGRADES = [
   "ALTER TABLE blocks ADD COLUMN count_in_completion INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE blocks ADD COLUMN category TEXT NOT NULL DEFAULT ''",
 ];
 
 // todos 에 color 컬럼 사후 추가 — 시간 블록과 같은 스트라이프 UI 를 위해 색상 필요.
