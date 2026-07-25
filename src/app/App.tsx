@@ -2624,16 +2624,16 @@ function CalendarSection({
 
   const viewDays = calView === "day" ? [viewDate] : getWeekDays(viewDate);
 
+  // 상세 날짜/요일은 아래 요일 헤더가 보여주므로 상단 라벨은 연/월만 표시.
   const headerLabel = (() => {
-    if (calView === "day") {
-      return `${viewDate.getFullYear()}년 ${viewDate.getMonth()+1}월 ${viewDate.getDate()}일 ${DAYS_KO[viewDate.getDay()]}요일`;
-    }
     if (calView === "week") {
-      const wd = viewDays;
-      const s = wd[0], e = wd[6];
-      return s.getMonth() === e.getMonth()
-        ? `${s.getFullYear()}년 ${s.getMonth()+1}월 ${s.getDate()}–${e.getDate()}일`
-        : `${s.getMonth()+1}월 ${s.getDate()}일 – ${e.getMonth()+1}월 ${e.getDate()}일`;
+      const s = viewDays[0], e = viewDays[6];
+      if (s.getMonth() !== e.getMonth()) {
+        return s.getFullYear() === e.getFullYear()
+          ? `${s.getFullYear()}년 ${s.getMonth()+1}월 – ${e.getMonth()+1}월`
+          : `${s.getFullYear()}년 ${s.getMonth()+1}월 – ${e.getFullYear()}년 ${e.getMonth()+1}월`;
+      }
+      return `${s.getFullYear()}년 ${s.getMonth()+1}월`;
     }
     return `${viewDate.getFullYear()}년 ${viewDate.getMonth()+1}월`;
   })();
@@ -3987,19 +3987,37 @@ function TodoPanel({
   };
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {showDayHeader && (onGoPrev || onGoNext) && (
-        /* 할 일 단독 모드 상단 내비게이션 — 기간 이동 chevron 만 슬림하게 유지. */
-        <div className="flex items-center justify-between border-b border-border flex-shrink-0 bg-card">
-          <button
-            onClick={onGoPrev}
-            className="px-4 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
-            title="이전"
-          ><ChevronLeft size={15} /></button>
-          <button
-            onClick={onGoNext}
-            className="px-4 py-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
-            title="다음"
-          ><ChevronRight size={15} /></button>
+      {showDayHeader && (
+        /* 요일/날짜 헤더 — 시간표 뷰의 요일 헤더와 동일한 톤. 좌/우 끝 chevron 으로 기간 이동. */
+        <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden">
+          {onGoPrev ? (
+            <button
+              onClick={onGoPrev}
+              className="w-12 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+              title="이전"
+            ><ChevronLeft size={16} /></button>
+          ) : <div className="w-12 flex-shrink-0" />}
+          {viewDays.map((day, i) => {
+            const isToday = toDateStr(day) === TODAY_STR;
+            const dow = day.getDay();
+            return (
+              <div key={i} className="flex-1 text-center py-2 min-w-0">
+                <div className={`text-[10px] ${viewDays.length > 1 && dow === 0 ? "text-red-400" : viewDays.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
+                  {DAYS_KO[dow]}
+                </div>
+                <div className={`inline-flex items-center justify-center w-7 h-7 mt-0.5 rounded-full text-xs font-medium ${isToday ? "bg-primary text-primary-foreground" : "text-foreground"}`}>
+                  {day.getDate()}
+                </div>
+              </div>
+            );
+          })}
+          {onGoNext && (
+            <button
+              onClick={onGoNext}
+              className="absolute right-0 top-0 bottom-0 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-l"
+              title="다음"
+            ><ChevronRight size={16} /></button>
+          )}
         </div>
       )}
       <div className="flex-1 overflow-y-auto p-6">
