@@ -3693,6 +3693,10 @@ function TodoPanel({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
+  // 컬럼 hover 상태 — 시간 그리드처럼 hover 시 "+ 새 할 일" 프리뷰(shadow)를 노출.
+  const [hoverDate, setHoverDate] = useState<string | null>(null);
+  // 현재 새 할 일 입력이 열린 컬럼. 프리뷰 클릭 시 이 컬럼으로 전환됨.
+  const [editingDate, setEditingDate] = useState<string | null>(null);
   const commitDraft = (dateStr: string) => {
     const v = (drafts[dateStr] ?? "").trim();
     if (!v) return;
@@ -3787,6 +3791,8 @@ function TodoPanel({
           );
           return (
             <div key={dateStr}
+              onMouseEnter={() => setHoverDate(dateStr)}
+              onMouseLeave={() => setHoverDate(prev => prev === dateStr ? null : prev)}
               onDragOver={e => {
                 // 일정 템플릿(todoTemplateId) 이나 기존 todo(todoId) 를 이 컬럼에 놓을 수 있게 허용.
                 // ⚠ Chromium 의 dataTransfer.types 는 소문자로 정규화됨 → 반드시 소문자 비교.
@@ -3937,14 +3943,33 @@ function TodoPanel({
                   <Plus size={11} /> 여기에 새 할 일 추가
                 </div>
               )}
-              {/* 새 할 일 입력 */}
-              <input
-                value={drafts[dateStr] ?? ""}
-                onChange={e => setDrafts(d => ({ ...d, [dateStr]: e.target.value }))}
-                onKeyDown={e => { if (e.key === "Enter") commitDraft(dateStr); }}
-                placeholder="+ 새 할 일"
-                className="w-full px-2 py-1 rounded text-[11px] bg-transparent border border-dashed border-border/60 hover:border-primary/40 focus:border-primary outline-none placeholder:text-muted-foreground/60"
-              />
+              {/* 새 할 일 입력 — 시간 그리드의 hover ghost와 톤/그림자를 맞춤.
+                    평상시엔 숨어있다가 컬럼 hover 시 "+ 새 할 일" 프리뷰가 나타나고,
+                    클릭하면 그 자리에 인라인 입력이 열림. Enter/Blur = 저장, Esc = 취소. */}
+              {editingDate === dateStr ? (
+                <input
+                  autoFocus
+                  value={drafts[dateStr] ?? ""}
+                  onChange={e => setDrafts(d => ({ ...d, [dateStr]: e.target.value }))}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") { commitDraft(dateStr); setEditingDate(null); }
+                    else if (e.key === "Escape") { setDrafts(d => ({ ...d, [dateStr]: "" })); setEditingDate(null); }
+                  }}
+                  onBlur={() => { commitDraft(dateStr); setEditingDate(null); }}
+                  placeholder="새 할 일"
+                  className="w-full min-h-[62px] px-2 rounded-lg text-[11px] bg-primary/5 ring-1 ring-primary/40 outline-none placeholder:text-primary/50"
+                  style={{ boxShadow: "0 6px 16px -6px rgba(90, 169, 230, 0.35), 0 2px 6px -2px rgba(90, 169, 230, 0.25)" }}
+                />
+              ) : hoverDate === dateStr && tplHoverDate !== dateStr ? (
+                <button
+                  onClick={() => setEditingDate(dateStr)}
+                  className="w-full min-h-[62px] px-1.5 py-1.5 rounded-lg text-left bg-primary/5 ring-1 ring-primary/25 hover:ring-primary/40 transition-shadow"
+                  style={{ boxShadow: "0 6px 16px -6px rgba(90, 169, 230, 0.35), 0 2px 6px -2px rgba(90, 169, 230, 0.25)" }}
+                  title="새 할 일 추가"
+                >
+                  <div className="text-[10px] text-primary/70 font-medium">+ 새 할 일</div>
+                </button>
+              ) : null}
             </div>
           );
         })}
