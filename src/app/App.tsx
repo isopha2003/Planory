@@ -278,6 +278,8 @@ export default function App() {
   // 캘린더 클릭으로 방금 만들어진 블록 id — 상세 패널이 제목 편집 모드로 자동 진입하고,
   // 이 블록의 제목이 처음 저장될 때 매칭 템플릿을 좌측 사이드바에 자동 추가하는 트리거로 씀.
   const [justCreatedBlockId, setJustCreatedBlockId] = useState<string | null>(null);
+  // Todo 도 동일 — 캘린더에서 새 할 일 프리뷰를 눌러 만든 직후엔 상세 패널이 제목 편집 모드로.
+  const [justCreatedTodoId, setJustCreatedTodoId] = useState<string | null>(null);
 
   // 다중 블록 UX용 — 클립보드(Ctrl+C/V), 실행 취소 스택(Ctrl+Z), 다시 실행 스택(Ctrl+Y).
   // 클립보드는 블록의 얕은 스냅샷: 원본과 무관한 새 블록으로 붙여넣기 위해 date/id 만 재계산.
@@ -1123,12 +1125,30 @@ export default function App() {
   };
 
   // ── todos ─────────────────────────────────────────────────
-  const addTodo = (t: { title: string; date: string; endDate?: string | null; color?: string }) => {
+  const addTodo = (
+    t: { title: string; date: string; endDate?: string | null; color?: string },
+    options?: { openInline?: boolean },
+  ) => {
     if (!t.title.trim()) return;
-    const tempId = `temp-${crypto.randomUUID()}`;
     // 같은 날짜의 기존 todo 중 최대 sort_order + 1 을 부여해 새 항목이 맨 아래로 붙게 함.
     const nextSort = Math.max(-1, ...todos.filter(x => x.date === t.date).map(x => x.sortOrder)) + 1;
     const color = t.color ?? "#5AA9E6";
+    // openInline 경로: 상세 패널을 곧바로 띄우고 제목을 편집 상태로 여는 게 목적.
+    // 낙관적 temp id 로 열면 real id 로 스왑될 때 상세 패널(key={id})이 리마운트되며
+    // 사용자가 입력하던 제목이 날아감 — 블록의 openInline 처리와 동일하게 DB 저장을 기다렸다가
+    // 진짜 id 로 시작.
+    if (options?.openInline) {
+      createTodo(t)
+        .then(real => {
+          setTodos(ts => [...ts, { ...real, sortOrder: nextSort }]);
+          openTodoDetail(real);
+          setJustCreatedTodoId(real.id);
+          if (nextSort !== 0) updateTodo(real.id, { sortOrder: nextSort }).catch(() => {});
+        })
+        .catch(notifyError("todo 추가 실패"));
+      return;
+    }
+    const tempId = `temp-${crypto.randomUUID()}`;
     setTodos(ts => [...ts, { id: tempId, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, memo: "", category: "", countInCompletion: true, sortOrder: nextSort }]);
     createTodo(t)
       .then(real => {
@@ -1517,13 +1537,19 @@ export default function App() {
           <TodoDetailPanel
             key={selectedTodo.id}
             todo={selectedTodo}
+            initialEditTitle={selectedTodo.id === justCreatedTodoId}
             paletteColors={paletteColors}
             onAddPaletteColor={addPaletteColor}
             onRemovePaletteColor={removePaletteColor}
             onClose={() => setSelectedTodo(null)}
             onToggle={() => toggleTodo(selectedTodo.id)}
             onDelete={() => deleteTodo(selectedTodo.id)}
-            onTitleSave={(title) => updateTodoTitle(selectedTodo.id, title)}
+            onTitleSave={(title) => {
+              updateTodoTitle(selectedTodo.id, title);
+              if (selectedTodo.id === justCreatedTodoId) {
+                setJustCreatedTodoId(prev => (prev === selectedTodo.id ? null : prev));
+              }
+            }}
             onColorSave={(color) => updateTodoColor(selectedTodo.id, color)}
             onMemoSave={(memo) => updateTodoMemo(selectedTodo.id, memo)}
             onCategorySave={(category) => updateTodoCategory(selectedTodo.id, category)}
@@ -2162,7 +2188,7 @@ function CalendarSection({
   onBulkSetRepeat: (ids: string[], repeat: BlockRepeat) => void;
   pushUndo: (fn: () => Promise<void> | void) => void;
   todos: Todo[];
-  onAddTodo: (t: { title: string; date: string; endDate?: string | null }) => void;
+  onAddTodo: (t: { title: string; date: string; endDate?: string | null; color?: string }, options?: { openInline?: boolean }) => void;
   onDeleteTodo: (id: string) => void;
   onUpdateTodoTitle: (id: string, title: string) => void;
   onMoveTodo: (id: string, newDate: string) => void;
@@ -3657,7 +3683,7 @@ function TodoPanel({
 }: {
   todos: Todo[];
   viewDays: Date[];
-  onAdd: (t: { title: string; date: string; endDate?: string | null }) => void;
+  onAdd: (t: { title: string; date: string; endDate?: string | null; color?: string }, options?: { openInline?: boolean }) => void;
   onDelete: (id: string) => void;
   onUpdateTitle: (id: string, title: string) => void;
   // 할 일 셀 클릭 → 상세 패널 열기. 없으면 기존 인라인 편집 fallback.
@@ -3690,19 +3716,11 @@ function TodoPanel({
       window.removeEventListener("drop", clear);
     };
   }, []);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // 기존 할 일 카드의 인라인 제목 편집 상태.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
   // 컬럼 hover 상태 — 시간 그리드처럼 hover 시 "+ 새 할 일" 프리뷰(shadow)를 노출.
   const [hoverDate, setHoverDate] = useState<string | null>(null);
-  // 현재 새 할 일 입력이 열린 컬럼. 프리뷰 클릭 시 이 컬럼으로 전환됨.
-  const [editingDate, setEditingDate] = useState<string | null>(null);
-  const commitDraft = (dateStr: string) => {
-    const v = (drafts[dateStr] ?? "").trim();
-    if (!v) return;
-    onAdd({ title: v, date: dateStr });
-    setDrafts(d => ({ ...d, [dateStr]: "" }));
-  };
   // 시간표 블록과 시각적으로 통일 — 마감/할 일 모두 색상 스트라이프가 있는 블록 형태.
   // 할 일은 각자 색상을 가지며, 마감은 남은 일수 톤(deadlineToneHex)에 따라 색이 정해짐.
   return (
@@ -3943,33 +3961,19 @@ function TodoPanel({
                   <Plus size={11} /> 여기에 새 할 일 추가
                 </div>
               )}
-              {/* 새 할 일 입력 — 시간 그리드의 hover ghost와 톤/그림자를 맞춤.
-                    평상시엔 숨어있다가 컬럼 hover 시 "+ 새 할 일" 프리뷰가 나타나고,
-                    클릭하면 그 자리에 인라인 입력이 열림. Enter/Blur = 저장, Esc = 취소. */}
-              {editingDate === dateStr ? (
-                <input
-                  autoFocus
-                  value={drafts[dateStr] ?? ""}
-                  onChange={e => setDrafts(d => ({ ...d, [dateStr]: e.target.value }))}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") { commitDraft(dateStr); setEditingDate(null); }
-                    else if (e.key === "Escape") { setDrafts(d => ({ ...d, [dateStr]: "" })); setEditingDate(null); }
-                  }}
-                  onBlur={() => { commitDraft(dateStr); setEditingDate(null); }}
-                  placeholder="새 할 일"
-                  className="w-full min-h-[62px] px-2 rounded-lg text-[11px] bg-primary/5 ring-1 ring-primary/40 outline-none placeholder:text-primary/50"
-                  style={{ boxShadow: "0 6px 16px -6px rgba(90, 169, 230, 0.35), 0 2px 6px -2px rgba(90, 169, 230, 0.25)" }}
-                />
-              ) : hoverDate === dateStr && tplHoverDate !== dateStr ? (
+              {/* 새 할 일 프리뷰 — 시간 그리드의 hover ghost 와 톤/그림자를 맞춤.
+                    클릭하면 곧바로 빈 할 일이 만들어지고 상세 패널이 열리며 제목이 편집 상태로
+                    시작 — 그 자리에서 제목/카테고리/메모/색상까지 이어서 작성할 수 있게. */}
+              {hoverDate === dateStr && tplHoverDate !== dateStr && (
                 <button
-                  onClick={() => setEditingDate(dateStr)}
+                  onClick={() => onAdd({ title: "새 할 일", date: dateStr }, { openInline: true })}
                   className="w-full min-h-[62px] px-1.5 py-1.5 rounded-lg text-left bg-primary/5 ring-1 ring-primary/25 hover:ring-primary/40 transition-shadow"
                   style={{ boxShadow: "0 6px 16px -6px rgba(90, 169, 230, 0.35), 0 2px 6px -2px rgba(90, 169, 230, 0.25)" }}
                   title="새 할 일 추가"
                 >
                   <div className="text-[10px] text-primary/70 font-medium">+ 새 할 일</div>
                 </button>
-              ) : null}
+              )}
             </div>
           );
         })}
@@ -6178,10 +6182,12 @@ function NewChecklistItemForm({
 // 시간 블록의 BlockDetailPanel 과 같은 자리에 뜨는 라이트 버전. 시간 블록에 있는
 // 반복/자식 블록/습관 스태킹/체크리스트 같은 기능은 없이 제목·색상·메모·완료·삭제만.
 function TodoDetailPanel({
-  todo, paletteColors, onAddPaletteColor, onRemovePaletteColor,
+  todo, initialEditTitle, paletteColors, onAddPaletteColor, onRemovePaletteColor,
   onClose, onToggle, onDelete, onTitleSave, onColorSave, onMemoSave, onCategorySave, onCountInCompletionSave,
 }: {
   todo: Todo;
+  // 캘린더에서 방금 만들어진 할 일이면 상세 패널이 열리자마자 제목 편집 모드로 시작.
+  initialEditTitle?: boolean;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
@@ -6196,7 +6202,7 @@ function TodoDetailPanel({
 }) {
   const [memo, setMemo] = useState(todo.memo);
   const [category, setCategory] = useState(todo.category);
-  const [editingTitle, setEditingTitle] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
   const [titleDraft, setTitleDraft] = useState(todo.title);
   const [showCustomColor, setShowCustomColor] = useState(false);
   const commitTitle = () => {
