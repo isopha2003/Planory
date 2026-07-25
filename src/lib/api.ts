@@ -298,6 +298,15 @@ export async function deleteDeadlineRow(id: string) {
 }
 
 // ── todos (날짜별 할 일 — 시간 없이 체크박스) ────────────────────
+// 반복 규칙 — 시간 블록의 BlockRepeat 과 구조 동일(구조적 타이핑으로 호환).
+export interface RepeatRule {
+  type: "daily" | "weekly" | "monthly" | "yearly";
+  days: number[];        // 0–6 (Sun–Sat), weekly 에서만 사용
+  endType: "none" | "count" | "date";
+  endCount: number;
+  endDate: string;       // ISO date string
+}
+
 export interface Todo {
   id: string;
   title: string;
@@ -310,6 +319,9 @@ export interface Todo {
   // 오늘 달성률 계산에 이 할 일을 포함할지. 기본 true.
   countInCompletion: boolean;
   sortOrder: number;
+  // 반복 — 시간 블록과 동일하게 그룹 id + 규칙 JSON.
+  repeatGroupId?: string;
+  repeat?: RepeatRule;
 }
 
 const DEFAULT_TODO_COLOR = "#5AA9E6";
@@ -328,6 +340,8 @@ export async function fetchTodos(): Promise<Todo[]> {
     category: r.category ?? "",
     countInCompletion: r.count_in_completion === undefined || r.count_in_completion === null ? true : !!r.count_in_completion,
     sortOrder: r.sort_order ?? 0,
+    repeatGroupId: r.repeat_group_id ?? undefined,
+    repeat: jsonOrNull(r.repeat_rule) ?? undefined,
   }));
 }
 
@@ -345,7 +359,7 @@ export async function createTodo(t: { title: string; date: string; endDate?: str
   return { id, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, memo, category, countInCompletion, sortOrder: 0 };
 }
 
-export async function updateTodo(id: string, changes: { title?: string; date?: string; endDate?: string | null; color?: string; memo?: string; category?: string; countInCompletion?: boolean; sortOrder?: number }): Promise<void> {
+export async function updateTodo(id: string, changes: { title?: string; date?: string; endDate?: string | null; color?: string; memo?: string; category?: string; countInCompletion?: boolean; sortOrder?: number; repeatGroupId?: string | null; repeat?: RepeatRule | null }): Promise<void> {
   const db = await getDb();
   const sets: string[] = [];
   const vals: any[] = [];
@@ -357,9 +371,30 @@ export async function updateTodo(id: string, changes: { title?: string; date?: s
   if (changes.category !== undefined) { sets.push("category = ?"); vals.push(changes.category); }
   if (changes.countInCompletion !== undefined) { sets.push("count_in_completion = ?"); vals.push(changes.countInCompletion ? 1 : 0); }
   if (changes.sortOrder !== undefined) { sets.push("sort_order = ?"); vals.push(changes.sortOrder); }
+  if (changes.repeatGroupId !== undefined) { sets.push("repeat_group_id = ?"); vals.push(changes.repeatGroupId ?? null); }
+  if (changes.repeat !== undefined) { sets.push("repeat_rule = ?"); vals.push(changes.repeat ? JSON.stringify(changes.repeat) : null); }
   if (sets.length === 0) return;
   vals.push(id);
   await db.execute(`UPDATE todos SET ${sets.join(", ")} WHERE id = ?`, vals);
+}
+
+// 반복 인스턴스 일괄 삽입 — setTodoRepeat 이 만든 미래 날짜 todo 들을 저장.
+export async function insertTodosBulk(todos: Todo[]): Promise<void> {
+  if (todos.length === 0) return;
+  const db = await getDb();
+  for (const t of todos) {
+    await db.execute(
+      `INSERT INTO todos (id, title, date, end_date, color, completed, memo, category, count_in_completion, sort_order, repeat_group_id, repeat_rule)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [t.id, t.title, t.date, t.endDate ?? null, t.color, t.completed ? 1 : 0, t.memo, t.category, t.countInCompletion ? 1 : 0, t.sortOrder, t.repeatGroupId ?? null, t.repeat ? JSON.stringify(t.repeat) : null]
+    );
+  }
+}
+
+// 반복 규칙 재적용 시 이전 규칙으로 만든 인스턴스 정리 — 원본(origin)은 남김.
+export async function deleteTodoRepeatInstancesExceptOrigin(repeatGroupId: string, originId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM todos WHERE repeat_group_id = ? AND id != ?", [repeatGroupId, originId]);
 }
 
 // 다수 todo 의 date + sort_order 을 한 트랜잭션으로 갱신. 드래그로 순서 바꾸거나

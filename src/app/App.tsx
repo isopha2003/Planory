@@ -13,6 +13,7 @@ import {
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
   fetchDeadlines, createDeadline, toggleDeadlineRow, deleteDeadlineRow,
   fetchTodos, createTodo, updateTodo, toggleTodoRow, deleteTodoRow, bulkUpdateTodoOrder, type Todo,
+  insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin,
   fetchTodaySessions, startTimerSession, endTimerSession, deleteTodaySessions, fetchFocusSecByDate,
   fetchChecklistItems, createChecklistItem, toggleChecklistItemRow, deleteChecklistItemRow,
   fetchTodoChecklistItems, createTodoChecklistItem, toggleTodoChecklistItemRow, deleteTodoChecklistItemRow,
@@ -76,8 +77,8 @@ interface Template {
 }
 
 interface BlockRepeat {
-  type: "daily" | "weekly";
-  days: number[];        // 0–6 (Sun–Sat) for weekly
+  type: "daily" | "weekly" | "monthly" | "yearly";
+  days: number[];        // 0–6 (Sun–Sat), weekly 에서만 사용
   endType: "none" | "count" | "date";
   endCount: number;
   endDate: string;       // ISO date string
@@ -1020,64 +1021,73 @@ export default function App() {
     setSelectedBlock(null);
   };
 
-  // Generate repeat instances for a block.
-  // pushInstance는 endDate 초과 시 인스턴스만 스킵 → 이걸로 loop가 자동 멈추진 않으므로
-  // daily/weekly 루프도 endDate 초과를 감지해서 early break해야 함(안 하면 daily는 14일,
-  // weekly는 8주까지 무의미하게 loop만 돌아감).
-  const generateRepeatInstances = (block: Block, repeat: BlockRepeat): Block[] => {
-    const instances: Block[] = [];
-    const groupId = block.repeatGroupId || `rg-${block.id}`;
-    const origin = parseLocalDate(block.date);
-    const dur = (block.endH * 60 + block.endM) - (block.startH * 60 + block.startM);
-
-    const pushInstance = (d: Date, idx: number) => {
-      const dateStr = toDateStr(d);
-      if (repeat.endType === "date" && dateStr > repeat.endDate) return;
-      instances.push({
-        ...block, id: `b-${crypto.randomUUID()}`,
-        date: dateStr, completed: false,
-        repeatGroupId: groupId, repeat,
-      });
-    };
-
-    // 종료 조건별 상한:
-    //  - count: 요청한 횟수를 정확히 채우도록 상한 계산
-    //  - date : 종료 날짜까지 실제 커버할 수 있도록 상한 크게(내부 early break가 종료일에서 끊음)
-    //  - none : 앞으로 보여줄 기본 롤링 윈도우(daily 14일 / weekly 8주)
-    // 예전엔 daily/weekly 모두 상한이 14일 / 8주로 고정돼서, 사용자가 '30회 반복' 이나
-    // '3개월 후까지'를 골라도 그 안에서만 인스턴스가 만들어지고 나머지가 소리 없이 잘리는
-    // 문제가 있었음.
+  // 반복 규칙이 만들어내는 미래 날짜 목록(원본 날짜 제외) — 블록/할 일이 공유.
+  // 종료 조건별 상한:
+  //  - count: 요청한 횟수를 정확히 채우도록 (monthly/yearly 는 없는 날짜를 건너뛰므로 여유분 포함)
+  //  - date : 종료 날짜까지 실제 커버할 수 있도록 상한 크게(내부 early break가 종료일에서 끊음)
+  //  - none : 앞으로 보여줄 기본 롤링 윈도우(daily 14일 / weekly 8주 / monthly 12개월 / yearly 5년)
+  const generateRepeatDates = (originStr: string, repeat: BlockRepeat): string[] => {
+    const origin = parseLocalDate(originStr);
+    const dates: string[] = [];
+    const wantCount = repeat.endType === "count" ? repeat.endCount : Infinity;
+    const overEnd = (ds: string) => repeat.endType === "date" && ds > repeat.endDate;
     if (repeat.type === "daily") {
-      const maxDays = repeat.endType === "count"
-        ? repeat.endCount
-        : repeat.endType === "date"
-          ? 365
-          : 14;
-      for (let i = 1; i <= maxDays && (repeat.endType !== "count" || instances.length < repeat.endCount); i++) {
+      const maxDays = repeat.endType === "count" ? repeat.endCount : repeat.endType === "date" ? 365 : 14;
+      for (let i = 1; i <= maxDays && dates.length < wantCount; i++) {
         const d = new Date(origin); d.setDate(origin.getDate() + i);
-        if (repeat.endType === "date" && toDateStr(d) > repeat.endDate) break;
-        pushInstance(d, i);
+        const ds = toDateStr(d);
+        if (overEnd(ds)) break;
+        dates.push(ds);
       }
-    } else {
+    } else if (repeat.type === "weekly") {
       const daysPerWeek = Math.max(1, repeat.days.length);
       const maxWeeks = repeat.endType === "count"
         ? Math.ceil(repeat.endCount / daysPerWeek)
-        : repeat.endType === "date"
-          ? 53
-          : 8;
-      let count = 0;
+        : repeat.endType === "date" ? 53 : 8;
       for (let week = 1; week <= maxWeeks; week++) {
         for (const day of repeat.days.slice().sort()) {
-          if (repeat.endType === "count" && count >= repeat.endCount) break;
+          if (dates.length >= wantCount) return dates;
           const d = new Date(origin);
           const diff = (day - origin.getDay() + 7) % 7 || 7;
           d.setDate(origin.getDate() + diff + (week - 1) * 7);
-          if (repeat.endType === "date" && toDateStr(d) > repeat.endDate) return instances;
-          pushInstance(d, count++);
+          const ds = toDateStr(d);
+          if (overEnd(ds)) return dates;
+          dates.push(ds);
         }
       }
+    } else if (repeat.type === "monthly") {
+      // 매달 같은 일(day-of-month). 그 일이 없는 달(예: 31일 → 2월)은 건너뜀 —
+      // Date 가 자동 롤오버하면 getDate() 가 달라지는 것으로 감지.
+      const maxMonths = repeat.endType === "count" ? repeat.endCount * 2 + 12 : repeat.endType === "date" ? 120 : 12;
+      for (let i = 1; i <= maxMonths && dates.length < wantCount; i++) {
+        const d = new Date(origin.getFullYear(), origin.getMonth() + i, origin.getDate());
+        if (d.getDate() !== origin.getDate()) continue;
+        const ds = toDateStr(d);
+        if (overEnd(ds)) break;
+        dates.push(ds);
+      }
+    } else {
+      // yearly — 매년 같은 월/일. 2/29 는 윤년에만 생성.
+      const maxYears = repeat.endType === "count" ? repeat.endCount * 4 + 8 : repeat.endType === "date" ? 100 : 5;
+      for (let i = 1; i <= maxYears && dates.length < wantCount; i++) {
+        const d = new Date(origin.getFullYear() + i, origin.getMonth(), origin.getDate());
+        if (d.getDate() !== origin.getDate()) continue;
+        const ds = toDateStr(d);
+        if (overEnd(ds)) break;
+        dates.push(ds);
+      }
     }
-    return instances;
+    return dates;
+  };
+
+  // Generate repeat instances for a block.
+  const generateRepeatInstances = (block: Block, repeat: BlockRepeat): Block[] => {
+    const groupId = block.repeatGroupId || `rg-${block.id}`;
+    return generateRepeatDates(block.date, repeat).map(dateStr => ({
+      ...block, id: `b-${crypto.randomUUID()}`,
+      date: dateStr, completed: false,
+      repeatGroupId: groupId, repeat,
+    }));
   };
 
   const refetchBlocks = async () => {
@@ -1255,6 +1265,54 @@ export default function App() {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, countInCompletion } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, countInCompletion } : prev));
     updateTodo(id, { countInCompletion }).catch(notifyError("todo 달성률 설정 저장 실패"));
+  };
+
+  const refetchTodos = async () => {
+    try { setTodos(await fetchTodos()); } catch (e) { notifyError("할 일 새로고침 실패")(e); }
+  };
+
+  // 반복 인스턴스 생성 — 블록과 동일한 날짜 생성기(generateRepeatDates)를 공유.
+  // 멀티데이(endDate) todo 는 기간 길이를 유지한 채 각 인스턴스 날짜로 평행이동.
+  const generateTodoRepeatInstances = (todo: Todo, repeat: BlockRepeat): Todo[] => {
+    const groupId = todo.repeatGroupId || `trg-${todo.id}`;
+    const spanDays = todo.endDate
+      ? Math.round((parseLocalDate(todo.endDate).getTime() - parseLocalDate(todo.date).getTime()) / 86400000)
+      : 0;
+    return generateRepeatDates(todo.date, repeat).map(ds => {
+      let end: string | null = null;
+      if (spanDays > 0) {
+        const d = parseLocalDate(ds);
+        d.setDate(d.getDate() + spanDays);
+        end = toDateStr(d);
+      }
+      return { ...todo, id: crypto.randomUUID(), date: ds, endDate: end, completed: false, repeatGroupId: groupId, repeat };
+    });
+  };
+
+  // 할 일 반복 규칙 (재)적용 — setBlockRepeat 과 동일한 optimistic → DB reconcile 흐름.
+  const setTodoRepeat = (id: string, repeat: BlockRepeat) => {
+    const todo = todos.find(t => t.id === id);
+    if (!todo) return;
+    const groupId = `trg-${id}`;
+    const updated = { ...todo, repeat, repeatGroupId: groupId };
+    const instances = generateTodoRepeatInstances(updated, repeat);
+    setTodos(ts => {
+      const filtered = ts.filter(t => t.repeatGroupId !== groupId || t.id === id);
+      return [...filtered.map(t => (t.id === id ? updated : t)), ...instances];
+    });
+    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, repeat, repeatGroupId: groupId } : prev));
+    (async () => {
+      try {
+        await updateTodo(id, { repeat, repeatGroupId: groupId });
+        // 규칙 재적용 시 이전 규칙의 인스턴스가 남으면 새/구가 섞이므로 원본만 남기고 정리 후 재삽입.
+        await deleteTodoRepeatInstancesExceptOrigin(groupId, id);
+        if (instances.length) await insertTodosBulk(instances);
+        await refetchTodos();
+      } catch (e) {
+        notifyError("할 일 반복 저장 실패")(e);
+        refetchTodos();
+      }
+    })();
   };
 
   // ── todo checklist ────────────────────────────────────────────────
@@ -1600,6 +1658,7 @@ export default function App() {
             onCategorySave={(category) => updateTodoCategory(selectedTodo.id, category)}
             onCountInCompletionSave={(v) => updateTodoCountInCompletion(selectedTodo.id, v)}
             onAddTemplate={addTemplate}
+            onSetRepeat={(repeat) => setTodoRepeat(selectedTodo.id, repeat)}
             onAddChecklistItem={(text, parentItemId) => addTodoChecklistItem(selectedTodo.id, text, parentItemId)}
             onToggleChecklistItem={(id, completed) => toggleTodoChecklistItem(id, completed)}
             onDeleteChecklistItem={(id) => deleteTodoChecklistItem(id)}
@@ -3790,6 +3849,7 @@ function TodoPanel({
             />
           ) : (
             <div className="flex items-baseline gap-1.5 min-w-0">
+              {t.repeatGroupId && <span title="반복 할 일" className="text-xs text-muted-foreground flex-shrink-0">↻</span>}
               <span className={`min-w-0 truncate text-sm font-medium ${t.completed ? "line-through text-muted-foreground" : ""}`}>{t.title}</span>
               {opts.showCategory && t.category && (
                 <span
@@ -4152,14 +4212,14 @@ function MultiRepeatModal({
   onClose: () => void;
   onApply: (repeat: BlockRepeat) => void;
 }) {
-  const [type, setType] = useState<"daily" | "weekly">("daily");
+  const [type, setType] = useState<"daily" | "weekly" | "monthly" | "yearly">("daily");
   const [days, setDays] = useState<number[]>([]);
   const [endType, setEndType] = useState<"none" | "count" | "date">("none");
   const [endCount, setEndCount] = useState(10);
   const [endDate, setEndDate] = useState("");
   const DAYS_LABEL = ["일", "월", "화", "수", "목", "금", "토"];
   const toggleDay = (d: number) => setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
-  const canApply = type === "daily" || days.length > 0;
+  const canApply = type !== "weekly" || days.length > 0;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-80 bg-card border border-border rounded-xl p-4 shadow-lg" onClick={e => e.stopPropagation()}>
@@ -4170,10 +4230,10 @@ function MultiRepeatModal({
           <div>
             <div className="text-[11px] text-muted-foreground mb-1.5">반복 주기</div>
             <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
-              {(["daily", "weekly"] as const).map(v => (
+              {([["daily", "매일"], ["weekly", "매주"], ["monthly", "매달"], ["yearly", "매년"]] as const).map(([v, label]) => (
                 <button key={v} onClick={() => setType(v)}
-                  className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-all ${type === v ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}>
-                  {v === "daily" ? "매일" : "매주"}
+                  className={`flex-1 px-1 py-1.5 text-[11px] rounded-md transition-all ${type === v ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                  {label}
                 </button>
               ))}
             </div>
@@ -5777,21 +5837,32 @@ function SettingsSection({
 
 // ── Block Detail Panel — no timer (v3, todo 상세와 동일 레이아웃) ────────
 // 색상 팔레트/태그/하위 타임블록/반복 설정/습관 스태킹을 모두 걷어내고
-// 상세 패널 "반복" 섹션 — 계획 시간 아래에 위치. 현재 규칙 요약을 보여주고, 펼치면
-// MultiRepeatModal 과 동일한 구성(주기/요일/종료)의 인라인 폼으로 규칙을 (재)설정한다.
-function BlockRepeatSection({ block, onSetRepeat }: { block: Block; onSetRepeat: (r: BlockRepeat) => void }) {
+// 상세 패널 "반복" 섹션 — 계획 시간(블록)/날짜(할 일) 아래에 위치. 현재 규칙 요약을 보여주고,
+// 펼치면 주기(매일/매주/매달/매년)/요일/종료 인라인 폼으로 규칙을 (재)설정한다. 블록·할 일 공용.
+function RepeatSection({ originDate, repeat, hasGroup, onSetRepeat }: {
+  originDate: string;
+  repeat?: BlockRepeat;
+  hasGroup?: boolean;
+  onSetRepeat: (r: BlockRepeat) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [type, setType] = useState<"daily" | "weekly">(block.repeat?.type ?? "daily");
-  const [days, setDays] = useState<number[]>(block.repeat?.days ?? []);
-  const [endType, setEndType] = useState<"none" | "count" | "date">(block.repeat?.endType ?? "none");
-  const [endCount, setEndCount] = useState(block.repeat?.endCount ?? 10);
-  const [endDate, setEndDate] = useState(block.repeat?.endDate ?? "");
+  const [type, setType] = useState<"daily" | "weekly" | "monthly" | "yearly">(repeat?.type ?? "daily");
+  const [days, setDays] = useState<number[]>(repeat?.days ?? []);
+  const [endType, setEndType] = useState<"none" | "count" | "date">(repeat?.endType ?? "none");
+  const [endCount, setEndCount] = useState(repeat?.endCount ?? 10);
+  const [endDate, setEndDate] = useState(repeat?.endDate ?? "");
   const toggleDay = (d: number) => setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
-  const canApply = type === "daily" || days.length > 0;
-  const summary = block.repeat
-    ? `${block.repeat.type === "daily" ? "매일" : `매주 ${block.repeat.days.map(d => DAYS_KO[d]).join("·")}`}${
-        block.repeat.endType === "count" ? ` · ${block.repeat.endCount}회`
-        : block.repeat.endType === "date" ? ` · ${block.repeat.endDate}까지` : ""}`
+  const canApply = type !== "weekly" || days.length > 0;
+  const origin = parseLocalDate(originDate);
+  const typeLabel = (r: BlockRepeat) =>
+    r.type === "daily" ? "매일"
+      : r.type === "weekly" ? `매주 ${r.days.map(d => DAYS_KO[d]).join("·")}`
+      : r.type === "monthly" ? `매달 ${origin.getDate()}일`
+      : `매년 ${origin.getMonth() + 1}월 ${origin.getDate()}일`;
+  const summary = repeat
+    ? `${typeLabel(repeat)}${
+        repeat.endType === "count" ? ` · ${repeat.endCount}회`
+        : repeat.endType === "date" ? ` · ${repeat.endDate}까지` : ""}`
     : "반복 없음";
   return (
     <div>
@@ -5800,8 +5871,8 @@ function BlockRepeatSection({ block, onSetRepeat }: { block: Block; onSetRepeat:
         onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-muted hover:bg-muted/70 transition-colors text-left"
       >
-        <span className={`flex-1 text-xs truncate ${block.repeat ? "text-foreground" : "text-muted-foreground"}`}>
-          {block.repeatGroupId && "↻ "}{summary}
+        <span className={`flex-1 text-xs truncate ${repeat ? "text-foreground" : "text-muted-foreground"}`}>
+          {hasGroup && "↻ "}{summary}
         </span>
         <ChevronDown size={12} className={`text-muted-foreground flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -5810,10 +5881,10 @@ function BlockRepeatSection({ block, onSetRepeat }: { block: Block; onSetRepeat:
           <div>
             <div className="text-[11px] text-muted-foreground mb-1.5">반복 주기</div>
             <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
-              {(["daily", "weekly"] as const).map(v => (
+              {([["daily", "매일"], ["weekly", "매주"], ["monthly", "매달"], ["yearly", "매년"]] as const).map(([v, label]) => (
                 <button key={v} onClick={() => setType(v)}
-                  className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-all ${type === v ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}>
-                  {v === "daily" ? "매일" : "매주"}
+                  className={`flex-1 px-1 py-1.5 text-[11px] rounded-md transition-all ${type === v ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                  {label}
                 </button>
               ))}
             </div>
@@ -5992,43 +6063,10 @@ function BlockDetailPanel({
             className="flex-1 min-w-0 text-left text-sm font-medium truncate hover:bg-muted/40 rounded px-1 py-0.5 transition-colors"
           >{block.title}</button>
         )}
-        {/* 모든 필드는 변경 즉시 저장되므로 "저장" 은 패널 닫기 역할 — X 대신 명시적 저장 버튼. */}
-        <button
-          onClick={onClose}
-          className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 transition-opacity flex-shrink-0"
-        >저장</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* 오늘 달성률 포함 — 제목 아래 상단 (todo 와 동일). */}
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={block.countInCompletion !== false}
-            onChange={e => onCountInCompletionSave(e.target.checked)}
-            className="size-3.5 rounded border-border accent-primary cursor-pointer"
-          />
-          <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
-        </label>
-
-        {/* 계획 시간 — 블록 전용. todo 상세에는 "날짜" 카드가 이 자리에 옴. */}
-        <div>
-          <div className="text-[11px] font-medium text-muted-foreground mb-1.5">계획 시간</div>
-          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
-            <div className="text-[11px] text-muted-foreground">
-              {block.date} ({DAYS_KO[parseLocalDate(block.date).getDay()]})
-            </div>
-            <div className="text-sm font-medium mt-0.5">
-              {fmtTime(block.startH, block.startM)} – {fmtTime(block.endH, block.endM)}
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">{durMin(block)}분</div>
-          </div>
-        </div>
-
-        {/* 반복 — 계획 시간 바로 아래. 현재 규칙 요약 + 인라인 설정 폼. */}
-        <BlockRepeatSection block={block} onSetRepeat={onSetRepeat} />
-
-        {/* 카테고리 (todo 와 동일한 드롭다운). */}
+        {/* 카테고리 — 제목 바로 아래 (todo 와 동일한 드롭다운). */}
         <div className="relative">
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">카테고리</div>
           <button
@@ -6119,6 +6157,34 @@ function BlockDetailPanel({
           )}
         </div>
 
+        {/* 오늘 달성률 포함 (todo 와 동일). */}
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={block.countInCompletion !== false}
+            onChange={e => onCountInCompletionSave(e.target.checked)}
+            className="size-3.5 rounded border-border accent-primary cursor-pointer"
+          />
+          <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
+        </label>
+
+        {/* 계획 시간 — 블록 전용. todo 상세에는 "날짜" 카드가 이 자리에 옴. */}
+        <div>
+          <div className="text-[11px] font-medium text-muted-foreground mb-1.5">계획 시간</div>
+          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
+            <div className="text-[11px] text-muted-foreground">
+              {block.date} ({DAYS_KO[parseLocalDate(block.date).getDay()]})
+            </div>
+            <div className="text-sm font-medium mt-0.5">
+              {fmtTime(block.startH, block.startM)} – {fmtTime(block.endH, block.endM)}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">{durMin(block)}분</div>
+          </div>
+        </div>
+
+        {/* 반복 — 계획 시간 바로 아래. 현재 규칙 요약 + 인라인 설정 폼. */}
+        <RepeatSection originDate={block.date} repeat={block.repeat} hasGroup={!!block.repeatGroupId} onSetRepeat={onSetRepeat} />
+
         {/* Memo */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">메모</div>
@@ -6174,6 +6240,18 @@ function BlockDetailPanel({
         >
           블록 삭제
         </button>
+
+        {/* 저장/닫기 — 필드는 변경 즉시 저장되므로 둘 다 패널을 닫음. 저장이 주 버튼. */}
+        <div className="space-y-1.5">
+          <button
+            onClick={onClose}
+            className="w-full px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+          >저장</button>
+          <button
+            onClick={onClose}
+            className="w-full px-3 py-2 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted transition-colors"
+          >닫기</button>
+        </div>
       </div>
     </div>
   );
@@ -6274,7 +6352,7 @@ function NewChecklistItemForm({
 // 색상은 카테고리에서 자동 상속하므로 팔레트 UI 는 없음.
 function TodoDetailPanel({
   todo, templates, initialEditTitle, paletteColors, checklistItems,
-  onClose, onToggle, onDelete, onTitleSave, onMemoSave, onCategorySave, onCountInCompletionSave, onAddTemplate,
+  onClose, onToggle, onDelete, onTitleSave, onMemoSave, onCategorySave, onCountInCompletionSave, onAddTemplate, onSetRepeat,
   onAddChecklistItem, onToggleChecklistItem, onDeleteChecklistItem,
 }: {
   todo: Todo;
@@ -6292,6 +6370,8 @@ function TodoDetailPanel({
   onCategorySave: (category: string) => void;
   onCountInCompletionSave: (v: boolean) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
+  // 반복 규칙 적용 — setTodoRepeat 으로 반복 그룹을 (재)생성.
+  onSetRepeat: (repeat: BlockRepeat) => void;
   onAddChecklistItem: (text: string, parentItemId?: string) => void;
   onToggleChecklistItem: (id: string, completed: boolean) => void;
   onDeleteChecklistItem: (id: string) => void;
@@ -6372,39 +6452,10 @@ function TodoDetailPanel({
             {todo.title}
           </button>
         )}
-        {/* 모든 필드는 변경 즉시 저장되므로 "저장" 은 패널 닫기 역할 — 블록 상세와 동일. */}
-        <button
-          onClick={onClose}
-          className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 transition-opacity flex-shrink-0"
-        >저장</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* 오늘 달성률 포함 여부 토글 — 제목 바로 아래 상단에 배치. 시간 블록과 동일한 옵션. */}
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={todo.countInCompletion !== false}
-            onChange={e => onCountInCompletionSave(e.target.checked)}
-            className="size-3.5 rounded border-border accent-primary cursor-pointer"
-          />
-          <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
-        </label>
-
-        {/* 날짜 */}
-        <div>
-          <div className="text-[11px] font-medium text-muted-foreground mb-1.5">날짜</div>
-          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
-            <div className="text-sm font-medium">
-              {todo.date} ({DAYS_KO[parseLocalDate(todo.date).getDay()]})
-              {todo.endDate && todo.endDate !== todo.date && (
-                <span className="text-muted-foreground"> ~ {todo.endDate}</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 카테고리 — 기존 목록에서 선택하거나 이 자리에서 새로 만들기.
+        {/* 카테고리 — 제목 바로 아래. 기존 목록에서 선택하거나 이 자리에서 새로 만들기.
              할 일 색상은 선택한 카테고리 색을 자동 상속하므로 색상 편집 UI 는 없음. */}
         <div className="relative">
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">카테고리</div>
@@ -6496,6 +6547,33 @@ function TodoDetailPanel({
           )}
         </div>
 
+        {/* 오늘 달성률 포함 여부 토글 — 시간 블록과 동일한 옵션. */}
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={todo.countInCompletion !== false}
+            onChange={e => onCountInCompletionSave(e.target.checked)}
+            className="size-3.5 rounded border-border accent-primary cursor-pointer"
+          />
+          <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
+        </label>
+
+        {/* 날짜 */}
+        <div>
+          <div className="text-[11px] font-medium text-muted-foreground mb-1.5">날짜</div>
+          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
+            <div className="text-sm font-medium">
+              {todo.date} ({DAYS_KO[parseLocalDate(todo.date).getDay()]})
+              {todo.endDate && todo.endDate !== todo.date && (
+                <span className="text-muted-foreground"> ~ {todo.endDate}</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 반복 — 날짜 바로 아래. 시간 블록과 동일한 규칙/폼(RepeatSection 공용). */}
+        <RepeatSection originDate={todo.date} repeat={todo.repeat} hasGroup={!!todo.repeatGroupId} onSetRepeat={onSetRepeat} />
+
         {/* Memo */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">메모</div>
@@ -6551,6 +6629,18 @@ function TodoDetailPanel({
         >
           할 일 삭제
         </button>
+
+        {/* 저장/닫기 — 필드는 변경 즉시 저장되므로 둘 다 패널을 닫음. 저장이 주 버튼. */}
+        <div className="space-y-1.5">
+          <button
+            onClick={onClose}
+            className="w-full px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+          >저장</button>
+          <button
+            onClick={onClose}
+            className="w-full px-3 py-2 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted transition-colors"
+          >닫기</button>
+        </div>
       </div>
     </div>
   );
