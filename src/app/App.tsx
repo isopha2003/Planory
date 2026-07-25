@@ -317,6 +317,9 @@ export default function App() {
   const [justCreatedBlockId, setJustCreatedBlockId] = useState<string | null>(null);
   // Todo 도 동일 — 캘린더에서 새 할 일 프리뷰를 눌러 만든 직후엔 상세 패널이 제목 편집 모드로.
   const [justCreatedTodoId, setJustCreatedTodoId] = useState<string | null>(null);
+  // 반복 블록 삭제 요청 — 이 블록만 지울지 / 이 블록 이후 전체를 지울지 사용자에게 물어보는 모달.
+  // 반복 그룹에 속하지 않은 블록은 곧바로 삭제하고 이 state 는 건너뜀.
+  const [repeatDeletePrompt, setRepeatDeletePrompt] = useState<{ id: string; date: string; title: string } | null>(null);
 
   // 다중 블록 UX용 — 클립보드(Ctrl+C/V), 실행 취소 스택(Ctrl+Z), 다시 실행 스택(Ctrl+Y).
   // 클립보드는 블록의 얕은 스냅샷: 원본과 무관한 새 블록으로 붙여넣기 위해 date/id 만 재계산.
@@ -986,6 +989,19 @@ export default function App() {
     for (const id of ids) setBlockRepeat(id, repeat);
   };
 
+  // UI 진입점에서 호출하는 삭제 래퍼 — 반복 그룹 소속이면 모달로 범위(단건/이후 전체) 를 물어보고,
+  // 아니면 곧바로 단건 삭제. 반복 블록을 무심코 삭제해 그룹 전체가 사라지거나(반대로) 하나만
+  // 남는 걸 막기 위해 모든 UI 삭제 버튼은 이 함수를 통해 흐르게 함.
+  const requestDeleteBlock = (id: string) => {
+    const block = blocksRefTop.current.find(b => b.id === id) ?? blocks.find(b => b.id === id);
+    if (!block) return;
+    if (block.repeatGroupId) {
+      setRepeatDeletePrompt({ id, date: block.date, title: block.title });
+    } else {
+      deleteBlock(id);
+    }
+  };
+
   const deleteRepeatGroup = (id: string, fromDate: string) => {
     const block = blocks.find(b => b.id === id);
     const groupId = block?.repeatGroupId;
@@ -1544,7 +1560,7 @@ export default function App() {
               onAddBlock={addBlock}
               onUpdateBlock={updateBlock}
               onUpdateBlockLocal={updateBlockLocal}
-              onDeleteBlock={deleteBlock}
+              onDeleteBlock={requestDeleteBlock}
               onAddTemplate={addTemplate}
               onDeleteBlockTemplate={deleteTemplate}
               paletteColors={paletteColors}
@@ -1607,7 +1623,7 @@ export default function App() {
               toggleBlock(selectedBlock.id);
               setSelectedBlock({ ...selectedBlock, completed: !selectedBlock.completed });
             }}
-            onDelete={() => deleteBlock(selectedBlock.id)}
+            onDelete={() => requestDeleteBlock(selectedBlock.id)}
             onMemoSave={(memo) => {
               updateBlock(selectedBlock.id, { memo });
               setSelectedBlock({ ...selectedBlock, memo });
@@ -1631,6 +1647,25 @@ export default function App() {
             onSetRepeat={(repeat) => {
               setBlockRepeat(selectedBlock.id, repeat);
               setSelectedBlock({ ...selectedBlock, repeat, repeatGroupId: `rg-${selectedBlock.id}` });
+            }}
+          />
+        )}
+
+        {/* 반복 블록 삭제 범위 확인 모달 — requestDeleteBlock 이 반복 그룹 소속을 감지했을 때만 뜸.
+             '이 블록만' → 단건 삭제(반복 그룹은 유지) / '이후 전체' → 이 날짜부터 그룹 전체 삭제. */}
+        {repeatDeletePrompt && (
+          <RepeatDeleteModal
+            title={repeatDeletePrompt.title}
+            onClose={() => setRepeatDeletePrompt(null)}
+            onDeleteOne={() => {
+              const { id } = repeatDeletePrompt;
+              setRepeatDeletePrompt(null);
+              deleteBlock(id);
+            }}
+            onDeleteFollowing={() => {
+              const { id, date } = repeatDeletePrompt;
+              setRepeatDeletePrompt(null);
+              deleteRepeatGroup(id, date);
             }}
           />
         )}
@@ -4283,6 +4318,44 @@ function TodoPanel({
           })}
           </>}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 반복 블록 삭제 시 범위(단건/이후 전체) 를 물어보는 확인 모달. 스타일은 MultiRepeatModal 과 통일.
+function RepeatDeleteModal({
+  title, onClose, onDeleteOne, onDeleteFollowing,
+}: {
+  title: string;
+  onClose: () => void;
+  onDeleteOne: () => void;
+  onDeleteFollowing: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="w-80 bg-card border border-border rounded-xl p-4 shadow-lg" onClick={e => e.stopPropagation()}>
+        <div className="text-sm font-semibold mb-1">반복 블록 삭제</div>
+        <div className="text-[11px] text-muted-foreground mb-4 truncate">"{title || "제목 없음"}"</div>
+        <div className="space-y-2">
+          <button
+            onClick={onDeleteOne}
+            className="w-full text-left px-3 py-2.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors"
+          >
+            <div className="font-medium">이 블록만 삭제</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">나머지 반복 일정은 그대로 유지</div>
+          </button>
+          <button
+            onClick={onDeleteFollowing}
+            className="w-full text-left px-3 py-2.5 rounded-lg border border-destructive/40 text-xs hover:bg-destructive/10 text-destructive transition-colors"
+          >
+            <div className="font-medium">이후 모든 블록 삭제</div>
+            <div className="text-[10px] text-destructive/70 mt-0.5">오늘 이후의 반복 인스턴스가 함께 사라져요</div>
+          </button>
+        </div>
+        <div className="flex items-center gap-2 mt-4">
+          <button onClick={onClose} className="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors">취소</button>
         </div>
       </div>
     </div>
