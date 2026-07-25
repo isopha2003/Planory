@@ -1570,6 +1570,10 @@ export default function App() {
               }
             }}
             onAddTemplate={addTemplate}
+            onSetRepeat={(repeat) => {
+              setBlockRepeat(selectedBlock.id, repeat);
+              setSelectedBlock({ ...selectedBlock, repeat, repeatGroupId: `rg-${selectedBlock.id}` });
+            }}
           />
         )}
 
@@ -2357,7 +2361,9 @@ function CalendarSection({
     const toContent = (cx: number, cy: number) => {
       if (!timeGridRef.current) return { x: cx, y: cy };
       const r = timeGridRef.current.getBoundingClientRect();
-      return { x: cx - r.left, y: cy - r.top };
+      // 시각 px → 콘텐츠(레이아웃) px 변환 — CSS zoom(글씨 크기) 보정.
+      const z = getRootZoom();
+      return { x: (cx - r.left) / z, y: (cy - r.top) / z };
     };
     const onMove = (e: MouseEvent) => {
       lastClientX = e.clientX; lastClientY = e.clientY;
@@ -2384,11 +2390,12 @@ function CalendarSection({
         const additive = e.ctrlKey || e.metaKey || e.shiftKey;
         const hits = new Set<string>();
         if (additive) selectedIdsRef.current.forEach(id => hits.add(id));
+        const zoom = getRootZoom();
         const cols = grid.querySelectorAll<HTMLElement>("[data-marquee-column]");
         cols.forEach(col => {
           const cRect = col.getBoundingClientRect();
-          const cX0 = cRect.left - gridRect.left;
-          const cX1 = cRect.right - gridRect.left;
+          const cX0 = (cRect.left - gridRect.left) / zoom;
+          const cX1 = (cRect.right - gridRect.left) / zoom;
           if (mX1 <= cX0 || mX0 >= cX1) return;
           const dateStr = col.dataset.date;
           if (!dateStr) return;
@@ -2506,7 +2513,8 @@ function CalendarSection({
   useEffect(() => {
     if (!resizing) return;
     const onMove = (e: MouseEvent) => {
-      const deltaMin = Math.round(((e.clientY - resizing.startY) / HOUR_H) * 60 / 15) * 15;
+      // clientY 는 CSS zoom(글씨 크기)이 반영된 시각 px — HOUR_H(레이아웃 px)와 맞추려면 zoom 으로 나눔.
+      const deltaMin = Math.round(((e.clientY - resizing.startY) / getRootZoom() / HOUR_H) * 60 / 15) * 15;
       const peers = blocksRef.current.filter(b => b.id !== resizing.blockId && b.date === resizing.blockDate);
       const clash = (sMin: number, eMin: number) =>
         peers.some(b => sMin < b.endH * 60 + b.endM && eMin > b.startH * 60 + b.startM);
@@ -2723,11 +2731,13 @@ function CalendarSection({
                       const grid = timeGridRef.current;
                       if (grid) {
                         const gRect = grid.getBoundingClientRect();
+                        // 시각 px → 콘텐츠 px — CSS zoom(글씨 크기) 보정.
+                        const z = getRootZoom();
                         setMarquee({
-                          startX: startAbsX - gRect.left,
-                          startY: startAbsY - gRect.top,
-                          curX: mv.clientX - gRect.left,
-                          curY: mv.clientY - gRect.top,
+                          startX: (startAbsX - gRect.left) / z,
+                          startY: (startAbsY - gRect.top) / z,
+                          curX: (mv.clientX - gRect.left) / z,
+                          curY: (mv.clientY - gRect.top) / z,
                         });
                       }
                       document.removeEventListener("mousemove", onMove);
@@ -2741,7 +2751,7 @@ function CalendarSection({
                     if (up.ctrlKey || up.metaKey || up.shiftKey) return;
                     if (Date.now() - startClickTs > 400) return; // 오래 누른 건 클릭 아님
                     const durMin = 60;
-                    const rawMin = Math.max(0, Math.round(((up.clientY - rect.top) / HOUR_H) * 60 / 15) * 15);
+                    const rawMin = Math.max(0, Math.round(((up.clientY - rect.top) / getRootZoom() / HOUR_H) * 60 / 15) * 15);
                     const startMin = Math.min(TOTAL_H * 60 - durMin, rawMin);
                     const endMin = startMin + durMin;
                     if (hasOverlapForDate(dateStr, startMin, endMin)) return;
@@ -2757,7 +2767,8 @@ function CalendarSection({
                       tags: [],
                       memo: "",
                       date: dateStr,
-                      countInCompletion: true,
+                      // 시간표 블록은 기본으로 오늘 달성률에 포함하지 않음 (필요 시 상세 패널에서 켬).
+                      countInCompletion: false,
                     };
                     setHoverSlot(null);
                     // 빈 영역 클릭은 선택 해제와 함께 새 블록 만들기
@@ -2789,7 +2800,8 @@ function CalendarSection({
                   e.preventDefault();
                   e.dataTransfer.dropEffect = dragBlockId ? "move" : "copy";
                   const rect = e.currentTarget.getBoundingClientRect();
-                  const rawMin = Math.round((Math.max(0, e.clientY - rect.top) / HOUR_H) * 60 / 15) * 15;
+                  // clientY/rect 는 CSS zoom(글씨 크기)이 반영된 시각 px — HOUR_H 와 맞추려면 zoom 으로 나눔.
+                  const rawMin = Math.round((Math.max(0, e.clientY - rect.top) / getRootZoom() / HOUR_H) * 60 / 15) * 15;
                   // For block moves: anchor by offset so block follows mouse position
                   const anchoredMin = dragBlockId ? Math.max(0, rawMin - dragBlockOffsetMin) : rawMin;
                   const snapped = Math.round(anchoredMin / 15) * 15;
@@ -2868,7 +2880,7 @@ function CalendarSection({
                     onAddBlock({ id: `b-${Date.now()}`, title: "새 블록", color: tpl.color, category: tpl.title,
                       startH: dropTarget.startH, startM: dropTarget.startM,
                       endH: Math.floor(eMin / 60), endM: eMin % 60,
-                      completed: false, tags: [], memo: "", date: dateStr, countInCompletion: true },
+                      completed: false, tags: [], memo: "", date: dateStr, countInCompletion: false },
                       { openInline: true });
                   }
                   setDropTarget(null); setDragTplId(null);
@@ -2986,7 +2998,8 @@ function CalendarSection({
                       draggable
                       onDragStart={e => {
                         const rect = e.currentTarget.getBoundingClientRect();
-                        const offsetPx = e.clientY - rect.top;
+                        // 블록 안에서 잡은 지점(분) — CSS zoom(글씨 크기) 보정해야 드랍 시 앵커가 안 어긋남.
+                        const offsetPx = (e.clientY - rect.top) / getRootZoom();
                         const offsetMin = Math.round((offsetPx / HOUR_H) * 60 / 15) * 15;
                         e.dataTransfer.setData("blockId", block.id);
                         e.dataTransfer.setData("blockOffsetMin", String(offsetMin));
@@ -3748,13 +3761,18 @@ function TodoPanel({
         }`}
         title="클릭: 상세 열기 · 더블클릭: 제목 편집"
       >
-        <button
-          onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }}
-          className="flex-shrink-0"
-          title={t.completed ? "완료 해제" : "완료 처리"}
-        >
-          {t.completed ? <CheckCircle2 size={18} style={{ color }} /> : <Circle size={18} className="text-muted-foreground" />}
-        </button>
+        {t.countInCompletion !== false ? (
+          <button
+            onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }}
+            className="flex-shrink-0"
+            title={t.completed ? "완료 해제" : "완료 처리"}
+          >
+            {t.completed ? <CheckCircle2 size={18} style={{ color }} /> : <Circle size={18} className="text-muted-foreground" />}
+          </button>
+        ) : (
+          /* 달성률 미포함 항목은 완료 개념이 없음 — 체크박스 자리만 유지해 카드 정렬을 맞춤. */
+          <span className="w-[18px] flex-shrink-0" />
+        )}
         <span className="w-0.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
         <div className="flex-1 min-w-0">
           {editingId === t.id ? (
@@ -5759,11 +5777,95 @@ function SettingsSection({
 
 // ── Block Detail Panel — no timer (v3, todo 상세와 동일 레이아웃) ────────
 // 색상 팔레트/태그/하위 타임블록/반복 설정/습관 스태킹을 모두 걷어내고
+// 상세 패널 "반복" 섹션 — 계획 시간 아래에 위치. 현재 규칙 요약을 보여주고, 펼치면
+// MultiRepeatModal 과 동일한 구성(주기/요일/종료)의 인라인 폼으로 규칙을 (재)설정한다.
+function BlockRepeatSection({ block, onSetRepeat }: { block: Block; onSetRepeat: (r: BlockRepeat) => void }) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState<"daily" | "weekly">(block.repeat?.type ?? "daily");
+  const [days, setDays] = useState<number[]>(block.repeat?.days ?? []);
+  const [endType, setEndType] = useState<"none" | "count" | "date">(block.repeat?.endType ?? "none");
+  const [endCount, setEndCount] = useState(block.repeat?.endCount ?? 10);
+  const [endDate, setEndDate] = useState(block.repeat?.endDate ?? "");
+  const toggleDay = (d: number) => setDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort());
+  const canApply = type === "daily" || days.length > 0;
+  const summary = block.repeat
+    ? `${block.repeat.type === "daily" ? "매일" : `매주 ${block.repeat.days.map(d => DAYS_KO[d]).join("·")}`}${
+        block.repeat.endType === "count" ? ` · ${block.repeat.endCount}회`
+        : block.repeat.endType === "date" ? ` · ${block.repeat.endDate}까지` : ""}`
+    : "반복 없음";
+  return (
+    <div>
+      <div className="text-[11px] font-medium text-muted-foreground mb-1.5">반복</div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-muted hover:bg-muted/70 transition-colors text-left"
+      >
+        <span className={`flex-1 text-xs truncate ${block.repeat ? "text-foreground" : "text-muted-foreground"}`}>
+          {block.repeatGroupId && "↻ "}{summary}
+        </span>
+        <ChevronDown size={12} className={`text-muted-foreground flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="mt-2 p-2.5 rounded-lg border border-border space-y-3">
+          <div>
+            <div className="text-[11px] text-muted-foreground mb-1.5">반복 주기</div>
+            <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
+              {(["daily", "weekly"] as const).map(v => (
+                <button key={v} onClick={() => setType(v)}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-all ${type === v ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                  {v === "daily" ? "매일" : "매주"}
+                </button>
+              ))}
+            </div>
+          </div>
+          {type === "weekly" && (
+            <div>
+              <div className="text-[11px] text-muted-foreground mb-1.5">요일</div>
+              <div className="flex gap-1">
+                {DAYS_KO.map((label, i) => (
+                  <button key={i} onClick={() => toggleDay(i)}
+                    className={`flex-1 py-1.5 text-[11px] rounded-md border transition-colors ${days.includes(i) ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:text-foreground"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <div className="text-[11px] text-muted-foreground mb-1.5">종료</div>
+            <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5 mb-2">
+              {([{ v: "none", label: "제한 없음" }, { v: "count", label: "N회" }, { v: "date", label: "날짜까지" }] as const).map(o => (
+                <button key={o.v} onClick={() => setEndType(o.v)}
+                  className={`flex-1 px-2 py-1.5 text-[11px] rounded-md transition-all ${endType === o.v ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {endType === "count" && (
+              <input type="number" min={1} value={endCount} onChange={e => setEndCount(Math.max(1, Number(e.target.value) || 1))}
+                className="w-full px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring" />
+            )}
+            {endType === "date" && (
+              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+                className="w-full px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring" />
+            )}
+          </div>
+          <button
+            onClick={() => { onSetRepeat({ type, days, endType, endCount, endDate }); setOpen(false); }}
+            disabled={!canApply || (endType === "date" && !endDate)}
+            className="w-full px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-40 transition-opacity"
+          >적용</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // TodoDetailPanel 과 같은 순서/구성으로 통일. 블록에만 있는 항목은 "계획 시간"
 // 하나뿐이며, 그 외 오늘 달성률·완료·카테고리·메모·체크리스트·삭제는 동일 UI/UX.
 function BlockDetailPanel({
   block, templates, initialEditTitle, paletteColors,
-  onClose, onToggle, onDelete, onTitleSave, onMemoSave, onCategorySave, onCountInCompletionSave, onAddTemplate,
+  onClose, onToggle, onDelete, onTitleSave, onMemoSave, onCategorySave, onCountInCompletionSave, onAddTemplate, onSetRepeat,
 }: {
   block: Block;
   templates: Template[];
@@ -5777,6 +5879,8 @@ function BlockDetailPanel({
   onCategorySave: (category: string) => void;
   onCountInCompletionSave: (v: boolean) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
+  // 반복 규칙 적용 — setBlockRepeat 으로 반복 그룹을 (재)생성.
+  onSetRepeat: (repeat: BlockRepeat) => void;
 }) {
   const [memo, setMemo] = useState(block.memo);
   const [category, setCategory] = useState(block.category);
@@ -5888,9 +5992,11 @@ function BlockDetailPanel({
             className="flex-1 min-w-0 text-left text-sm font-medium truncate hover:bg-muted/40 rounded px-1 py-0.5 transition-colors"
           >{block.title}</button>
         )}
-        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors flex-shrink-0">
-          <X size={13} className="text-muted-foreground" />
-        </button>
+        {/* 모든 필드는 변경 즉시 저장되므로 "저장" 은 패널 닫기 역할 — X 대신 명시적 저장 버튼. */}
+        <button
+          onClick={onClose}
+          className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 transition-opacity flex-shrink-0"
+        >저장</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
@@ -5919,20 +6025,8 @@ function BlockDetailPanel({
           </div>
         </div>
 
-        {/* 완료 토글 */}
-        <button
-          onClick={onToggle}
-          className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors ${
-            block.completed ? "bg-muted/40 border-transparent" : "bg-card border-border hover:border-primary/40"
-          }`}
-        >
-          {block.completed
-            ? <CheckCircle2 size={16} style={{ color }} />
-            : <Circle size={16} className="text-muted-foreground" />}
-          <span className={`text-xs ${block.completed ? "text-muted-foreground line-through" : ""}`}>
-            {block.completed ? "완료됨 — 다시 열기" : "완료 처리"}
-          </span>
-        </button>
+        {/* 반복 — 계획 시간 바로 아래. 현재 규칙 요약 + 인라인 설정 폼. */}
+        <BlockRepeatSection block={block} onSetRepeat={onSetRepeat} />
 
         {/* 카테고리 (todo 와 동일한 드롭다운). */}
         <div className="relative">
@@ -6055,6 +6149,23 @@ function BlockDetailPanel({
             <NewChecklistItemForm onAdd={text => addChecklistItem(text)} />
           </div>
         </div>
+
+        {/* 완료 토글 — 삭제 버튼 바로 위. 달성률에 포함되지 않는 블록은 완료 개념이 없으므로 숨김. */}
+        {block.countInCompletion !== false && (
+          <button
+            onClick={onToggle}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors ${
+              block.completed ? "bg-muted/40 border-transparent" : "bg-card border-border hover:border-primary/40"
+            }`}
+          >
+            {block.completed
+              ? <CheckCircle2 size={16} style={{ color }} />
+              : <Circle size={16} className="text-muted-foreground" />}
+            <span className={`text-xs ${block.completed ? "text-muted-foreground line-through" : ""}`}>
+              {block.completed ? "완료됨 — 다시 열기" : "완료 처리"}
+            </span>
+          </button>
+        )}
 
         {/* 삭제 */}
         <button
@@ -6261,9 +6372,11 @@ function TodoDetailPanel({
             {todo.title}
           </button>
         )}
-        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors flex-shrink-0">
-          <X size={13} className="text-muted-foreground" />
-        </button>
+        {/* 모든 필드는 변경 즉시 저장되므로 "저장" 은 패널 닫기 역할 — 블록 상세와 동일. */}
+        <button
+          onClick={onClose}
+          className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground text-[11px] font-medium hover:opacity-90 transition-opacity flex-shrink-0"
+        >저장</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
@@ -6290,21 +6403,6 @@ function TodoDetailPanel({
             </div>
           </div>
         </div>
-
-        {/* 완료 토글 */}
-        <button
-          onClick={onToggle}
-          className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors ${
-            todo.completed ? "bg-muted/40 border-transparent" : "bg-card border-border hover:border-primary/40"
-          }`}
-        >
-          {todo.completed
-            ? <CheckCircle2 size={16} style={{ color }} />
-            : <Circle size={16} className="text-muted-foreground" />}
-          <span className={`text-xs ${todo.completed ? "text-muted-foreground line-through" : ""}`}>
-            {todo.completed ? "완료됨 — 다시 열기" : "완료 처리"}
-          </span>
-        </button>
 
         {/* 카테고리 — 기존 목록에서 선택하거나 이 자리에서 새로 만들기.
              할 일 색상은 선택한 카테고리 색을 자동 상속하므로 색상 편집 UI 는 없음. */}
@@ -6428,6 +6526,23 @@ function TodoDetailPanel({
             <NewChecklistItemForm onAdd={text => onAddChecklistItem(text)} />
           </div>
         </div>
+
+        {/* 완료 토글 — 삭제 버튼 바로 위. 달성률에 포함되지 않는 할 일은 완료 개념이 없으므로 숨김. */}
+        {todo.countInCompletion !== false && (
+          <button
+            onClick={onToggle}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors ${
+              todo.completed ? "bg-muted/40 border-transparent" : "bg-card border-border hover:border-primary/40"
+            }`}
+          >
+            {todo.completed
+              ? <CheckCircle2 size={16} style={{ color }} />
+              : <Circle size={16} className="text-muted-foreground" />}
+            <span className={`text-xs ${todo.completed ? "text-muted-foreground line-through" : ""}`}>
+              {todo.completed ? "완료됨 — 다시 열기" : "완료 처리"}
+            </span>
+          </button>
+        )}
 
         {/* Delete */}
         <button
