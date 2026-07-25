@@ -3738,10 +3738,6 @@ function TodoPanel({
   const viewDateStrs = viewDays.map(toDateStr);
   const firstDs = viewDateStrs[0];
   const lastDs = viewDateStrs[viewDateStrs.length - 1];
-  // 마감 — 할 일 단독 모드에서 상단 섹션으로 노출. 할 일 카드와 같은 카드 디자인.
-  const rangeDeadlines = deadlines
-    .filter(d => viewDateStrs.includes(d.dueDate))
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   // 카테고리별 그룹 — 기간에 걸치는 todo 전체를 카테고리 섹션으로. 빈 카테고리도 섹션을 만들어
   // 드랍/추가 대상이 되게 하고, 미분류는 항상 마지막.
   const rangeTodos = todos.filter(t => t.date <= lastDs && (t.endDate ?? t.date) >= firstDs);
@@ -4020,42 +4016,44 @@ function TodoPanel({
           )}
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-lg w-full mx-auto space-y-6">
-          {/* 마감 — 할 일 단독 모드에서만 상단 섹션으로 노출. 시간 그리드가 함께 보일 땐
-               그쪽 상단의 마감 행이 유일한 소스 (중복 표시 방지). */}
-          {showDayHeader && rangeDeadlines.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[11px] font-semibold tracking-wide text-muted-foreground">마감</span>
-                <div className="flex-1 h-px bg-border/60" />
-              </div>
-              <div className="space-y-2">
-                {rangeDeadlines.map(d => {
+      {/* 고정 마감 행 — 할 일만 보는 모드에선 시간 그리드가 없으니 여기서 마감을 대신 노출.
+           시간 그리드 상단의 마감 행과 동일한 톤/포맷(남은 일수별 색). 요일 헤더 컬럼과 정렬. */}
+      {showDayHeader && (
+        <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden">
+          <div className="w-12 flex-shrink-0 flex items-start justify-end pt-1 pr-2 text-[9px] text-muted-foreground select-none">마감</div>
+          {viewDays.map((day, i) => {
+            const ds = toDateStr(day);
+            const cellDeadlines = deadlines.filter(d => d.dueDate === ds);
+            return (
+              <div key={i} className="flex-1 min-w-0 border-l border-border/40 px-1 py-1 space-y-0.5">
+                {cellDeadlines.map(d => {
                   const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
                   const color = deadlineToneHex(daysLeft);
                   return (
                     <div
                       key={d.id}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer hover:shadow-sm transition-all ${d.completed ? "bg-card opacity-60" : ""}`}
-                      style={d.completed ? undefined : { backgroundColor: color + "18", borderColor: color + "55" }}
                       onClick={() => onToggleDeadline(d.id)}
+                      className={`rounded overflow-hidden text-[10px] cursor-pointer transition-all flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
+                      style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
                       title={d.completed ? "완료됨 — 다시 열기" : "완료 처리"}
                     >
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-sm font-medium ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</div>
-                        <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>
-                      </div>
                       <span
-                        className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: color + "22", color }}
-                      >{formatDDay(daysLeft)}</span>
+                        className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
+                        style={{ color }}
+                      >{d.title}</span>
+                      <span className="text-[9px] font-semibold leading-none flex-shrink-0" style={{ color }}>
+                        {formatDDay(daysLeft)}
+                      </span>
                     </div>
                   );
                 })}
               </div>
-            </div>
-          )}
+            );
+          })}
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-lg w-full mx-auto space-y-6">
           {groupMode === "date" ? <>
           {/* 할 일이 없는 날짜 섹션은 숨김 — 할 일이 있는 날만 날짜 헤더 + 카드 노출. */}
           {viewDays.filter(d => todos.some(t => coversDate(t, toDateStr(d)))).map((day) => {
