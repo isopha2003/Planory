@@ -32,6 +32,7 @@ import { type TimerState, fmtSec } from "../lib/timer";
 import { runAutoBackupIfNeeded, createBackupNow, getLastBackupTimestamp } from "../lib/backup";
 import { checkForUpdate, installUpdate, type UpdateCheckResult } from "../lib/updater";
 import { notifyError } from "../lib/notify";
+import { getHoliday, isHoliday } from "../lib/holidays";
 import { Toaster } from "./components/ui/sonner";
 import { emit, listen } from "@tauri-apps/api/event";
 import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
@@ -2797,19 +2798,21 @@ function CalendarSection({
           title="이전"
         ><ChevronLeft size={16} /></button>
         {days.map((day, i) => {
-          const isToday = toDateStr(day) === TODAY_STR;
+          const ds = toDateStr(day);
+          const isToday = ds === TODAY_STR;
           const dow = day.getDay();
+          const holiday = getHoliday(ds);
           return (
             <div
               key={i}
               className="flex-1 text-center py-2 min-w-0 cursor-pointer hover:bg-muted/40 transition-colors rounded-lg"
               onClick={() => { setViewDate(day); setCalView("day"); }}
-              title="이 날짜 일 캘린더로 이동"
+              title={holiday ? `${holiday} — 이 날짜 일 캘린더로 이동` : "이 날짜 일 캘린더로 이동"}
             >
-              <div className={`text-[10px] ${days.length > 1 && dow === 0 ? "text-red-400" : days.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
+              <div className={`text-[10px] ${holiday || (days.length > 1 && dow === 0) ? "text-red-400" : days.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
                 {DAYS_KO[dow]}
               </div>
-              <div className={`inline-flex items-center justify-center w-7 h-7 mt-0.5 rounded-full text-xs font-medium ${isToday ? "bg-primary text-primary-foreground" : "text-foreground"}`}>
+              <div className={`inline-flex items-center justify-center w-7 h-7 mt-0.5 rounded-full text-xs font-medium ${isToday ? "bg-primary text-primary-foreground" : holiday ? "text-red-400" : "text-foreground"}`}>
                 {day.getDate()}
               </div>
             </div>
@@ -3355,14 +3358,20 @@ function CalendarSection({
                   setMonthEditing(dateStr);
                 }}
               >
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-1 gap-1 min-w-0">
                   <span
                     onClick={e => { e.stopPropagation(); setViewDate(day); setCalView("day"); }}
-                    className={`text-xs font-medium inline-flex items-center justify-center leading-none cursor-pointer hover:opacity-70 transition-opacity ${isToday?"size-5 rounded-full bg-primary text-primary-foreground text-[10px]":col===0?"text-red-400":col===6?"text-blue-400":"text-muted-foreground"}`}
-                    title="이 날짜 일 캘린더로 이동"
+                    className={`text-xs font-medium inline-flex items-center justify-center leading-none cursor-pointer hover:opacity-70 transition-opacity flex-shrink-0 ${isToday?"size-5 rounded-full bg-primary text-primary-foreground text-[10px]":isHoliday(dateStr)||col===0?"text-red-400":col===6?"text-blue-400":"text-muted-foreground"}`}
+                    title={getHoliday(dateStr) ? `${getHoliday(dateStr)} — 이 날짜 일 캘린더로 이동` : "이 날짜 일 캘린더로 이동"}
                   >
                     {day.getDate()}
                   </span>
+                  {/* 공휴일이면 이름을 날짜 옆에 작게 표시 — 좁은 셀이라 truncate 로 넘침 방지. */}
+                  {getHoliday(dateStr) && (
+                    <span className="text-[9px] text-red-400 font-medium truncate min-w-0" title={getHoliday(dateStr) ?? ""}>
+                      {getHoliday(dateStr)}
+                    </span>
+                  )}
                 </div>
                 {/* 마감(최상단) — 남은 일수 톤 + D-day 배지. 왼쪽 스트라이프 형태는 시간 블록과 동일. */}
                 {dayDeadlines.length > 0 && (
@@ -4220,14 +4229,16 @@ function TodoPanel({
             ><ChevronLeft size={16} /></button>
           ) : <div className="w-12 flex-shrink-0" />}
           {viewDays.map((day, i) => {
-            const isToday = toDateStr(day) === TODAY_STR;
+            const ds = toDateStr(day);
+            const isToday = ds === TODAY_STR;
             const dow = day.getDay();
+            const holiday = getHoliday(ds);
             return (
-              <div key={i} className="flex-1 text-center py-2 min-w-0">
-                <div className={`text-[10px] ${viewDays.length > 1 && dow === 0 ? "text-red-400" : viewDays.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
+              <div key={i} className="flex-1 text-center py-2 min-w-0" title={holiday ?? undefined}>
+                <div className={`text-[10px] ${holiday || (viewDays.length > 1 && dow === 0) ? "text-red-400" : viewDays.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
                   {DAYS_KO[dow]}
                 </div>
-                <div className={`inline-flex items-center justify-center w-7 h-7 mt-0.5 rounded-full text-xs font-medium ${isToday ? "bg-primary text-primary-foreground" : "text-foreground"}`}>
+                <div className={`inline-flex items-center justify-center w-7 h-7 mt-0.5 rounded-full text-xs font-medium ${isToday ? "bg-primary text-primary-foreground" : holiday ? "text-red-400" : "text-foreground"}`}>
                   {day.getDate()}
                 </div>
               </div>
@@ -4329,9 +4340,12 @@ function TodoPanel({
               >
                 {/* 섹션 헤더 — 날짜 + (오늘) 배지 + 라인 */}
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-[11px] font-semibold tracking-wide ${isToday ? "text-primary" : dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
+                  <span className={`text-[11px] font-semibold tracking-wide ${isToday ? "text-primary" : isHoliday(dateStr) || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
                     {day.getMonth() + 1}월 {day.getDate()}일 ({DAYS_KO[dow]})
                   </span>
+                  {getHoliday(dateStr) && (
+                    <span className="text-[10px] font-medium text-red-400">{getHoliday(dateStr)}</span>
+                  )}
                   {isToday && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground">오늘</span>}
                   <div className="flex-1 h-px bg-border/60" />
                 </div>
@@ -5500,8 +5514,9 @@ function GrassSection({
                       className={`text-xs font-medium inline-flex items-center justify-center ${
                         isToday
                           ? "size-5 rounded-full bg-primary text-primary-foreground text-[10px]"
-                          : dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"
+                          : isHoliday(dateStr) || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"
                       }`}
+                      title={getHoliday(dateStr) ?? undefined}
                     >
                       {dayNum}
                     </span>
