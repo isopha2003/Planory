@@ -5427,6 +5427,7 @@ function KanbanBoard({
                 className="mt-0.5 text-[11px] text-muted-foreground bg-transparent outline-none hover:text-foreground focus:text-foreground transition-colors cursor-pointer"
                 title="마감일 변경"
               />
+              <div className="relative">
               <button
                 type="button"
                 onClick={() => { setShowPalette(v => !v); setShowDeadlineCustomColor(false); }}
@@ -5435,18 +5436,11 @@ function KanbanBoard({
               >
                 <Palette size={13} />
               </button>
-            </div>
-          </div>
-          <span
-            className="text-[11px] px-2.5 py-1 rounded-full font-medium flex-shrink-0"
-            style={{ backgroundColor: color + "22", color }}
-          >
-            {formatDDay(dl)}
-          </span>
-          {/* 팔레트 팝오버 — 카드 편집 폼과 같은 스와치 UI 를 재사용.
-               "기본" 스와치는 색을 비우고 D-day 톤을 자동으로 따라가게 함. */}
-          {showPalette && (
-            <div className="absolute right-0 top-full mt-2 z-20 p-3 rounded-lg border bg-card shadow-lg w-64 space-y-2">
+              {/* 팔레트 팝오버 — 카드 편집 폼과 같은 스와치 UI 를 재사용.
+                   "기본" 스와치는 색을 비우고 D-day 톤을 자동으로 따라가게 함.
+                   버튼 바로 아래에 뜨도록 이 팔레트 버튼을 감싸는 relative 컨테이너 안에 배치. */}
+              {showPalette && (
+                <div className="absolute left-0 top-full mt-2 z-20 p-3 rounded-lg border bg-card shadow-lg w-64 space-y-2">
               <div className="text-[11px] font-medium text-muted-foreground">마감 색상</div>
               <div className="flex flex-wrap gap-1.5 items-center py-0.5">
                 <button
@@ -5496,8 +5490,17 @@ function KanbanBoard({
                 onClick={() => { setShowPalette(false); setShowDeadlineCustomColor(false); }}
                 className="w-full text-[11px] py-1.5 rounded-md bg-muted hover:bg-muted/70 transition-colors"
               >닫기</button>
+                </div>
+              )}
+              </div>
             </div>
-          )}
+          </div>
+          <span
+            className="text-[11px] px-2.5 py-1 rounded-full font-medium flex-shrink-0"
+            style={{ backgroundColor: color + "22", color }}
+          >
+            {formatDDay(dl)}
+          </span>
         </div>
 
         <div className="grid grid-cols-3 gap-4 items-start">
