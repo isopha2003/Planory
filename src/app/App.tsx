@@ -8141,8 +8141,12 @@ function BlockDetailPanel({
   // 반복 규칙 적용 — setBlockRepeat 으로 반복 그룹을 (재)생성.
   onSetRepeat: (repeat: BlockRepeat) => void;
 }) {
+  // draft 모델 — 아래 필드는 편집 도중 로컬에만 반영되고, "저장" 버튼을 눌러야만 DB/부모에 커밋됨.
+  // "닫기" 는 draft 를 폐기하며 실제 저장된 값은 그대로 유지. 완료 토글·삭제·체크리스트·새 카테고리
+  // 생성·반복 적용은 개별 명시적 액션이라 기존처럼 즉시 저장.
   const [memo, setMemo] = useState(block.memo);
   const [category, setCategory] = useState(block.category);
+  const [countInCompletion, setCountInCompletion] = useState(block.countInCompletion !== false);
   // 헤더 제목 인라인 편집 — 캘린더 직접 생성 블록은 initialEditTitle=true로 넘어와서
   // 패널이 뜨자마자 편집 모드로 진입하고 input에 포커스가 잡힘.
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
@@ -8172,17 +8176,20 @@ function BlockDetailPanel({
   }, [catOpen]);
   const categories = templates.filter(t => t.kind === "todo");
   const color = getCategoryColor(templates, category);
+  // 제목 인라인 편집 종료 — draft 만 확정하고 실제 저장은 "저장" 버튼에서 일괄 처리.
+  // 트리밍한 값이 비면 원본으로 되돌림(빈 제목 draft 상태로 방치 방지).
   const commitTitle = () => {
     const trimmed = titleDraft.trim();
-    if (trimmed && trimmed !== block.title) onTitleSave(trimmed);
-    else setTitleDraft(block.title);
+    if (!trimmed) setTitleDraft(block.title);
+    else setTitleDraft(trimmed);
     setEditingTitle(false);
   };
   const chooseCategory = (name: string) => {
     setCategory(name);
-    if (name !== block.category) onCategorySave(name);
     setCatOpen(false); setNewCatMode(false);
   };
+  // 새 카테고리 생성은 즉시 저장(템플릿을 새로 만드는 액션은 draft 로 잡기 어색).
+  // 생성 후 이 블록의 카테고리 selection 은 draft 로만 반영됨.
   const commitNewCategory = () => {
     const name = newCatTitle.trim();
     if (!name) return;
@@ -8190,6 +8197,16 @@ function BlockDetailPanel({
     if (!existing) onAddTemplate({ title: name, color: newCatColor, tags: [], kind: "todo" });
     setNewCatTitle(""); setNewCatMode(false);
     chooseCategory(name);
+  };
+
+  // 저장 — 바뀐 draft 만 부모에 통보하고 패널 닫음. 닫기는 draft 폐기(호출자 onClose 만 실행).
+  const handleSaveAndClose = () => {
+    const t = titleDraft.trim() || block.title;
+    if (t !== block.title) onTitleSave(t);
+    if (category !== block.category) onCategorySave(category);
+    if (memo !== block.memo) onMemoSave(memo);
+    if (countInCompletion !== (block.countInCompletion !== false)) onCountInCompletionSave(countInCompletion);
+    onClose();
   };
 
   // 체크리스트 — 이 블록에 소속된 항목만 불러와 관리. 상세 패널이 블록별로 리마운트되므로 로컬 상태.
@@ -8246,10 +8263,10 @@ function BlockDetailPanel({
           />
         ) : (
           <button
-            onClick={() => { setTitleDraft(block.title); setEditingTitle(true); }}
+            onClick={() => setEditingTitle(true)}
             title="제목 편집"
             className="flex-1 min-w-0 text-left text-sm font-medium truncate hover:bg-muted/40 rounded px-1 py-0.5 transition-colors"
-          >{block.title}</button>
+          >{titleDraft || block.title}</button>
         )}
       </div>
 
@@ -8345,12 +8362,12 @@ function BlockDetailPanel({
           )}
         </div>
 
-        {/* 오늘 달성률 포함 (todo 와 동일). */}
+        {/* 오늘 달성률 포함 (todo 와 동일) — draft 로만 반영, 저장 시 커밋. */}
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <input
             type="checkbox"
-            checked={block.countInCompletion !== false}
-            onChange={e => onCountInCompletionSave(e.target.checked)}
+            checked={countInCompletion}
+            onChange={e => setCountInCompletion(e.target.checked)}
             className="size-3.5 rounded border-border accent-primary cursor-pointer"
           />
           <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
@@ -8379,7 +8396,6 @@ function BlockDetailPanel({
           <textarea
             value={memo}
             onChange={e => setMemo(e.target.value)}
-            onBlur={() => { if (memo !== block.memo) onMemoSave(memo); }}
             placeholder="자유롭게 메모하세요..."
             className="w-full h-24 px-3 py-2 text-xs bg-muted rounded-lg resize-none outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground"
           />
@@ -8403,8 +8419,9 @@ function BlockDetailPanel({
           </div>
         </div>
 
-        {/* 완료 토글 — 삭제 버튼 바로 위. 달성률에 포함되지 않는 블록은 완료 개념이 없으므로 숨김. */}
-        {block.countInCompletion !== false && (
+        {/* 완료 토글 — 삭제 버튼 바로 위. 달성률 포함(draft) 상태에서만 노출.
+             즉시 저장되는 명시적 액션이므로 draft/저장 모델 밖에서 동작. */}
+        {countInCompletion && (
           <button
             onClick={onToggle}
             className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors ${
@@ -8428,10 +8445,10 @@ function BlockDetailPanel({
           블록 삭제
         </button>
 
-        {/* 저장/닫기 — 필드는 변경 즉시 저장되므로 둘 다 패널을 닫음. 저장이 주 버튼. */}
+        {/* 저장 — draft 커밋 후 닫기 / 닫기 — draft 폐기하고 실제 저장된 값 유지. */}
         <div className="space-y-1.5">
           <button
-            onClick={onClose}
+            onClick={handleSaveAndClose}
             className="w-full px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
           >저장</button>
           <button
