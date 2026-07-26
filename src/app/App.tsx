@@ -3358,7 +3358,7 @@ function CalendarSection({
                   setMonthEditing(dateStr);
                 }}
               >
-                <div className="flex items-center justify-between mb-1 gap-1 min-w-0">
+                <div className="flex items-center justify-start mb-1 gap-1.5 min-w-0">
                   <span
                     onClick={e => { e.stopPropagation(); setViewDate(day); setCalView("day"); }}
                     className={`text-xs font-medium inline-flex items-center justify-center leading-none cursor-pointer hover:opacity-70 transition-opacity flex-shrink-0 ${isToday?"size-5 rounded-full bg-primary text-primary-foreground text-[10px]":isHoliday(dateStr)||col===0?"text-red-400":col===6?"text-blue-400":"text-muted-foreground"}`}
