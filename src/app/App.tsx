@@ -3336,6 +3336,11 @@ function CalendarSection({
             const dayTodos = sortTodosByCategory(
               todos.filter(t => t.date === dateStr || (t.endDate && dateStr >= t.date && dateStr <= t.endDate))
             );
+            // 시간표 블록 — 좁은 월 셀이 도배되지 않도록 달성률 포함(countInCompletion=true) 블록만 표시.
+            // 자유시간/이동 같은 통계 제외 블록은 월 뷰에서도 감춤. 시작 시각 기준 정렬.
+            const dayBlocks = blocks
+              .filter(b => b.date === dateStr && b.countInCompletion !== false)
+              .sort((a, b) => (a.startH * 60 + a.startM) - (b.startH * 60 + b.startM));
             const monthAddDraft = monthDrafts[dateStr] ?? "";
 
             const showHoverGhost = monthHoverDate === dateStr && monthEditing !== dateStr;
@@ -3379,6 +3384,33 @@ function CalendarSection({
                           >{d.title}</span>
                           <span className="text-[8px] font-semibold leading-none flex-shrink-0" style={{ color }}>
                             {formatDDay(daysLeft)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* 시간표 블록 — 마감 아래, 할 일 위. 좁은 셀이 도배되지 않도록 달성률 포함 블록만.
+                     시작 시각 prefix (HH:MM) 로 할 일과 시각적으로 구분. 카테고리 색으로 좌측 스트라이프. */}
+                {dayBlocks.length > 0 && (
+                  <div className="space-y-0.5 mb-0.5">
+                    {dayBlocks.map(b => {
+                      const color = getCategoryColor(templates, b.category);
+                      const hh = String(b.startH).padStart(2, "0");
+                      const mm = String(b.startM).padStart(2, "0");
+                      return (
+                        <div key={b.id}
+                          onClick={e => { e.stopPropagation(); onSelect(b); }}
+                          className={`rounded overflow-hidden text-[9px] cursor-pointer transition-all ${b.completed ? "opacity-60" : "hover:brightness-95"}`}
+                          style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
+                          title={`${hh}:${mm} ${b.title || "제목 없음"}`}
+                        >
+                          <span
+                            className={`truncate leading-tight block px-1 py-0.5 font-medium ${b.completed ? "line-through" : ""}`}
+                            style={{ color }}
+                          >
+                            <span className="opacity-70 mr-1">{hh}:{mm}</span>
+                            {b.title}
                           </span>
                         </div>
                       );
