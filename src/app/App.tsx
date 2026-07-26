@@ -2532,11 +2532,12 @@ function CalendarSection({
   const [showTplCustomColor, setShowTplCustomColor] = useState(false);
   const [newTplTitle, setNewTplTitle] = useState("");
   const [newTplColor, setNewTplColor] = useState("#5AA9E6");
-  // 기존 카테고리 색 편집 — 색 스와치를 클릭하면 그 행 아래에 팔레트 팝오버가 열림.
-  // 한 번에 한 카테고리만 편집 상태이므로 단일 id 로 관리, showEditRowCustomColor 는 그 팝오버
-  // 내부의 사용자 지정 색 추가 폼 오픈 여부.
-  const [editingTplColorId, setEditingTplColorId] = useState<string | null>(null);
+  // 기존 카테고리 이름·색 편집 — 색 스와치를 클릭하면 그 행 아래에 편집 팝오버가 열림.
+  // 한 번에 한 카테고리만 편집 상태이므로 단일 id 로 관리. showEditRowCustomColor 는
+  // 팝오버 내부의 사용자 지정 색 추가 폼 오픈 여부, editingTplNameDraft 는 이름 입력 임시값.
+  const [editingTplId, setEditingTplId] = useState<string | null>(null);
   const [showEditRowCustomColor, setShowEditRowCustomColor] = useState(false);
+  const [editingTplNameDraft, setEditingTplNameDraft] = useState("");
   const [dragTplId, setDragTplId] = useState<string | null>(null);
   const [dragBlockId, setDragBlockId] = useState<string | null>(null);
   const [dragBlockOffsetMin, setDragBlockOffsetMin] = useState(0); // minutes from block top to mouse
@@ -3811,7 +3812,16 @@ function CalendarSection({
                 <div>
                   <div className="text-[10px] font-medium text-muted-foreground px-2 py-1 uppercase tracking-wide">카테고리</div>
                   {templates.map(t => {
-                    const editingColor = editingTplColorId === t.id;
+                    const editing = editingTplId === t.id;
+                    // 이름 임시 입력 확정 — 트리밍한 값이 비어있으면 무시(원본 유지), 다른 값이면 저장.
+                    // 이름 중복은 저장 후 렌더에서만 문제 되므로(카테고리 매칭이 문자열 기반), 여기서
+                    // 미리 중복이면 저장 취소하고 팝오버 유지.
+                    const commitName = () => {
+                      const trimmed = editingTplNameDraft.trim();
+                      if (!trimmed || trimmed === t.title) return;
+                      if (templates.some(x => x.id !== t.id && x.kind === "todo" && x.title === trimmed)) return;
+                      onUpdateBlockTemplate(t.id, { title: trimmed });
+                    };
                     return (
                     <div key={t.id}>
                       <div draggable
@@ -3829,19 +3839,25 @@ function CalendarSection({
                         onDragEnd={() => { setDragTplId(null); setDropTarget(null); }}
                         className="group/tpl flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-sidebar-accent cursor-grab active:cursor-grabbing transition-colors text-xs select-none">
                         {/* 색 스와치 자체를 클릭 대상으로 — 드래그 이벤트를 막고 편집 팝오버 토글.
-                             편집 중인 행은 링으로 강조해서 지금 색 바꾸는 대상이 명확히 보이게 함. */}
+                             편집 중인 행은 링으로 강조해서 지금 편집 대상이 명확히 보이게 함. */}
                         <button
                           type="button"
                           onClick={e => {
                             e.stopPropagation();
-                            setEditingTplColorId(editingColor ? null : t.id);
-                            setShowEditRowCustomColor(false);
+                            if (editing) {
+                              setEditingTplId(null);
+                              setShowEditRowCustomColor(false);
+                            } else {
+                              setEditingTplId(t.id);
+                              setEditingTplNameDraft(t.title);
+                              setShowEditRowCustomColor(false);
+                            }
                           }}
                           onMouseDown={e => e.stopPropagation()}
                           onDragStart={e => { e.stopPropagation(); e.preventDefault(); }}
                           draggable={false}
-                          title="색상 변경"
-                          className={`size-3.5 rounded-sm flex-shrink-0 transition-transform hover:scale-110 ${editingColor ? "ring-2 ring-offset-1 ring-offset-sidebar ring-foreground/40" : ""}`}
+                          title="이름·색상 변경"
+                          className={`size-3.5 rounded-sm flex-shrink-0 transition-transform hover:scale-110 ${editing ? "ring-2 ring-offset-1 ring-offset-sidebar ring-foreground/40" : ""}`}
                           style={{ backgroundColor: t.color }}
                         />
                         <span className="flex-1 truncate text-foreground/80">{t.title}</span>
@@ -3854,18 +3870,31 @@ function CalendarSection({
                           className="opacity-0 group-hover/tpl:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-destructive flex-shrink-0"
                         ><X size={11} /></button>
                       </div>
-                      {/* 색 편집 팝오버 — 팔레트에서 선택 시 즉시 저장 후 자동 닫힘.
-                           팔레트 각 스와치는 hover 시 X 로 팔레트에서 제거 가능(공용 팔레트 규칙과 동일). */}
-                      {editingColor && (
+                      {/* 편집 팝오버 — 이름(위) + 팔레트(아래). 이름은 Enter/blur 시 저장,
+                           색은 클릭 즉시 저장 + 팝오버 자동 닫힘. */}
+                      {editing && (
                         <div className="mx-1 my-1 p-2 rounded-lg bg-sidebar-accent space-y-1.5">
+                          <input
+                            autoFocus
+                            value={editingTplNameDraft}
+                            onChange={e => setEditingTplNameDraft(e.target.value)}
+                            onBlur={commitName}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") { e.preventDefault(); commitName(); setEditingTplId(null); }
+                              else if (e.key === "Escape") { e.preventDefault(); setEditingTplId(null); }
+                            }}
+                            placeholder="카테고리 이름..."
+                            className="w-full text-xs px-2 py-1 rounded bg-card border border-border outline-none focus:ring-1 focus:ring-ring"
+                          />
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {paletteColors.map(c => (
                               <div key={c} className="relative group/color size-5 flex-shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    commitName();
                                     onUpdateBlockTemplate(t.id, { color: c });
-                                    setEditingTplColorId(null);
+                                    setEditingTplId(null);
                                     setShowEditRowCustomColor(false);
                                   }}
                                   className={`size-5 rounded-full transition-transform ${t.color.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-sidebar-accent ring-foreground/40 scale-110" : ""}`}
@@ -3895,9 +3924,10 @@ function CalendarSection({
                             <CustomColorPickerInline
                               initial={t.color}
                               onAdd={(color) => {
+                                commitName();
                                 onAddPaletteColor(color);
                                 onUpdateBlockTemplate(t.id, { color });
-                                setEditingTplColorId(null);
+                                setEditingTplId(null);
                                 setShowEditRowCustomColor(false);
                               }}
                               onClose={() => setShowEditRowCustomColor(false)}
