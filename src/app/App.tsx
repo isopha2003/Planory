@@ -7257,6 +7257,9 @@ function NoteEditor({
   // 액션(버튼)이 있는 편이 더 안심됨. 자동 저장(debounce)은 안전망으로 유지하고 상단엔
   // 저장 버튼을 대신 배치 — 버튼을 누르면 pending debounce를 즉시 flush하고 목록으로 복귀.
   const [saving, setSaving] = useState(false);
+  // 편집기 세션 로컬 상태 — 마크다운 문법을 모르는 사용자를 위한 기본값은 일반 메모장 뷰.
+  // 켜면 우측에 실시간 프리뷰 패널이 붙고, 꺼도 content state는 그대로라 입력 내용은 보존됨.
+  const [markdownMode, setMarkdownMode] = useState(false);
   const first = useRef(true);
   // 아직 debounce 대기 중인 미저장 변경을 추적. 사용자가 debounce 안 끝난 상태에서
   // 뒤로가기를 누르면 아래 unmount cleanup이 이걸 즉시 flush해서 데이터 유실을 막음.
@@ -7330,13 +7333,29 @@ function NoteEditor({
           placeholder="제목 없음"
           className="flex-1 text-2xl font-medium bg-transparent outline-none placeholder:text-muted-foreground/50"
         />
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity flex-shrink-0"
-        >
-          <Check size={13} /> 저장
-        </button>
+        {/* 저장 + 그 아래 마크다운 토글을 세로 정렬. 토글은 편집기 세션 로컬 상태이며,
+             기본 OFF(일반 메모장). 켜면 우측 프리뷰 패널이 나오고, 꺼도 입력 내용은 유지됨. */}
+        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity"
+          >
+            <Check size={13} /> 저장
+          </button>
+          <button
+            onClick={() => setMarkdownMode(v => !v)}
+            title={markdownMode ? "마크다운 모드 끄기" : "마크다운 문서로 작성"}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] transition-colors ${
+              markdownMode
+                ? "border-primary/60 bg-primary/10 text-primary"
+                : "border-border bg-card text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            <span className={`inline-block size-2 rounded-full ${markdownMode ? "bg-primary" : "bg-muted-foreground/40"}`} />
+            마크다운
+          </button>
+        </div>
       </div>
 
       {/* 메타: 카테고리 + 폴더 */}
@@ -7361,23 +7380,29 @@ function NoteEditor({
         </select>
       </div>
 
-      {/* 편집 + 프리뷰 */}
-      <div className="flex-1 overflow-hidden grid grid-cols-2 gap-4 px-8 pb-8 min-h-0">
+      {/* 편집(항상) + 프리뷰(마크다운 모드일 때만).
+           마크다운 모드는 편집기 세션 로컬 상태이고 텍스트는 같은 content state를 공유하므로,
+           도중에 토글해도 입력 내용은 그대로 유지됨. */}
+      <div className={`flex-1 overflow-hidden gap-4 px-8 pb-8 min-h-0 ${markdownMode ? "grid grid-cols-2" : "flex"}`}>
         <textarea
           value={content}
           onChange={e => setContent(e.target.value)}
-          placeholder="여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
+          placeholder={markdownMode
+            ? "여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
+            : "여기에 자유롭게 적어보세요."}
           className="w-full h-full resize-none rounded-xl border bg-card p-4 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring leading-relaxed"
           spellCheck={false}
           autoFocus
         />
-        <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
-          {content.trim() ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-          ) : (
-            <p className="text-muted-foreground text-sm italic">미리보기가 여기에 표시돼요</p>
-          )}
-        </div>
+        {markdownMode && (
+          <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
+            {content.trim() ? (
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            ) : (
+              <p className="text-muted-foreground text-sm italic">미리보기가 여기에 표시돼요</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
