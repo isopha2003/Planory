@@ -5390,7 +5390,7 @@ function KanbanBoard({
                         style={{
                           backgroundColor: cardColor + "28",
                           borderLeft: `3px solid ${cardColor}`,
-                          opacity: dragCardId === card.id ? 0.3 : status === "done" ? 0.55 : 1,
+                          opacity: dragCardId === card.id ? 0.3 : 1,
                         }}
                       >
                         <div className="px-2.5 py-2">
