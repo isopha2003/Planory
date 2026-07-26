@@ -6336,6 +6336,8 @@ function NoteList({
   const [showNewFolderCustomColor, setShowNewFolderCustomColor] = useState(false);
   // 편집 중인 폴더 id — 폴더 카드의 3-dot 메뉴에서 "이름·색상 편집" 클릭 시 세팅.
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  // 삭제 확인 모달에 띄울 폴더 id — 확인 버튼을 눌러야 실제 삭제가 실행됨.
+  const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
   // 드래그 오버 중인 대상: 특정 폴더 id, "back"(뒤로가기 = 루트로 이동), null(없음)
   const [dropFolderId, setDropFolderId] = useState<string | "back" | null>(null);
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
@@ -6386,10 +6388,25 @@ function NoteList({
     setNewFolderName(""); setNewFolderColor(paletteColors[0] ?? FOLDER_COLORS[0]); setShowNewFolder(false); setShowNewFolderCustomColor(false);
   };
 
-  const handleDeleteFolder = async (folderId: string) => {
+  // 실제 삭제 실행 — 확인 모달의 "삭제" 버튼이나 확인이 필요없는 경로에서 호출.
+  // deleteFolder 는 이제 내부 노트도 함께 삭제하므로 UI 상 노트 목록도 즉시 정리.
+  const confirmDeleteFolder = async (folderId: string) => {
     if (viewFolderId === folderId) setViewFolderId(null);
     if (editingFolderId === folderId) setEditingFolderId(null);
-    try { await deleteFolder(folderId); await Promise.all([refreshFolders(), refreshNotes()]); } catch (e) { notifyError("폴더 삭제 실패")(e); }
+    // 낙관적으로 UI 에서 폴더와 소속 노트를 먼저 제거 — 서버 재로딩 지연 없이 즉시 반영.
+    setFolders(fs => fs.filter(f => f.id !== folderId));
+    setNotes(ns => ns.filter(n => n.folderId !== folderId));
+    try { await deleteFolder(folderId); } catch (e) {
+      notifyError("폴더 삭제 실패")(e);
+      // 실패 시 서버 상태로 되돌림.
+      await Promise.all([refreshFolders(), refreshNotes()]);
+    }
+  };
+
+  // 3-dot 메뉴/편집 폼의 "폴더 삭제" 버튼이 호출 — 실제 삭제 대신 확인 모달만 띄움.
+  // 내부에 메모가 있든 없든 항상 경고를 노출해 사용자가 파괴적 동작임을 인지하게 함.
+  const handleDeleteFolder = (folderId: string) => {
+    setDeletingFolderId(folderId);
   };
 
   // 폴더 이름·색상 편집 저장 — 낙관적 업데이트 후 DB, 실패 시 서버 상태로 되돌림.
@@ -6621,8 +6638,8 @@ function NoteList({
                 key={n.id}
                 note={n}
                 folder={folders.find(f => f.id === n.folderId) ?? null}
-                menuOpen={menuNoteId === n.id}
                 folders={folders}
+                menuOpen={menuNoteId === n.id}
                 onOpen={() => onOpen(n.id)}
                 onToggleMenu={e => { e.stopPropagation(); setMenuNoteId(menuNoteId === n.id ? null : n.id); }}
                 onMove={folderId => handleMoveNote(n.id, folderId)}
@@ -6635,6 +6652,59 @@ function NoteList({
             ))}
           </div>
         )}
+      </div>
+      {/* 폴더 삭제 확인 — 내부 메모까지 함께 삭제되므로 항상 경고 후 진행. */}
+      {deletingFolderId && (() => {
+        const target = folders.find(f => f.id === deletingFolderId);
+        if (!target) { setDeletingFolderId(null); return null; }
+        const noteCount = notes.filter(n => n.folderId === deletingFolderId).length;
+        return (
+          <FolderDeleteConfirmModal
+            folderName={target.name}
+            noteCount={noteCount}
+            onCancel={() => setDeletingFolderId(null)}
+            onConfirm={() => {
+              const id = deletingFolderId;
+              setDeletingFolderId(null);
+              confirmDeleteFolder(id);
+            }}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+// 폴더 삭제 확인 모달 — 폴더와 내부 메모가 모두 지워짐을 경고하고, 삭제 대상 메모 수를 함께 표시.
+// 스타일은 RepeatDeleteModal 과 통일(fixed inset overlay + 카드형 다이얼로그).
+function FolderDeleteConfirmModal({
+  folderName, noteCount, onCancel, onConfirm,
+}: {
+  folderName: string;
+  noteCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
+      <div className="w-80 bg-card border border-border rounded-xl p-4 shadow-lg" onClick={e => e.stopPropagation()}>
+        <div className="text-sm font-semibold mb-1">폴더 삭제</div>
+        <div className="text-[11px] text-muted-foreground mb-3 truncate">"{folderName || "이름 없음"}"</div>
+        <div className="text-xs text-foreground mb-4 leading-relaxed">
+          {noteCount > 0
+            ? <>이 폴더 안의 <span className="font-semibold text-destructive">메모 {noteCount}개</span>도 함께 삭제됩니다. 이 동작은 되돌릴 수 없습니다.</>
+            : <>이 폴더를 삭제합니다. 폴더 안에 메모는 없습니다.</>}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors"
+          >취소</button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 px-3 py-1.5 rounded-lg border border-destructive/40 text-xs hover:bg-destructive/10 text-destructive font-medium transition-colors"
+          >삭제</button>
+        </div>
       </div>
     </div>
   );

@@ -844,10 +844,10 @@ export async function updateFolder(id: string, changes: { name?: string; color?:
 
 export async function deleteFolder(id: string): Promise<void> {
   const db = await getDb();
-  // ON DELETE SET NULL로 소속 노트는 루트(폴더 없음)로 빠짐.
-  // FK 방어 — set-null 이 안 걸린 커넥션이면 노트가 죽은 folder_id 를 물고 어느 목록에도
-  // 안 보이게 될 수 있어 명시적으로 먼저 해제.
-  await db.execute("UPDATE notes SET folder_id = NULL WHERE folder_id = ?", [id]);
+  // 폴더 삭제 = 내부 메모까지 전부 삭제(UI 에서 확인 모달을 거친 뒤에만 호출).
+  // 예전엔 SET NULL 로 노트를 루트로 빼줬는데, UX 상 "폴더째 정리" 를 원하는 흐름이라
+  // 노트도 함께 지우는 쪽으로 바꿈. 순서: 노트 → 폴더(FK 순서 무해하지만 명시적으로).
+  await db.execute("DELETE FROM notes WHERE folder_id = ?", [id]);
   await db.execute("DELETE FROM note_folders WHERE id = ?", [id]);
 }
 
