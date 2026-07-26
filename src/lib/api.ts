@@ -329,6 +329,18 @@ export async function toggleDeadlineRow(id: string, completed: boolean) {
   );
 }
 
+// 상세 패널에서 제목/마감일을 수정할 때 호출. 넘어온 필드만 UPDATE.
+export async function updateDeadlineRow(id: string, changes: { title?: string; dueDate?: string }) {
+  const db = await getDb();
+  const set: string[] = [];
+  const args: any[] = [];
+  if (changes.title !== undefined) { set.push("title = ?"); args.push(changes.title); }
+  if (changes.dueDate !== undefined) { set.push("due_date = ?"); args.push(changes.dueDate); }
+  if (set.length === 0) return;
+  args.push(id);
+  await db.execute(`UPDATE deadlines SET ${set.join(", ")} WHERE id = ?`, args);
+}
+
 export async function deleteDeadlineRow(id: string) {
   const db = await getDb();
   // FK 방어 — 이 마감에 딸린 칸반 체크리스트 → 칸반 카드 → 마감 순으로 명시적 삭제.

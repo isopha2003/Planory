@@ -12,7 +12,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   fetchTemplates, createTemplate, deleteTemplateRow, fetchBlocks, insertBlock, patchBlock, deleteBlockRow,
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
-  fetchDeadlines, createDeadline, toggleDeadlineRow, deleteDeadlineRow,
+  fetchDeadlines, createDeadline, toggleDeadlineRow, updateDeadlineRow, deleteDeadlineRow,
   fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow, bulkUpdateKanbanCardOrder,
   fetchKanbanChecklistItemsByDeadline, createKanbanChecklistItem, toggleKanbanChecklistItemRow, deleteKanbanChecklistItemRow,
   type KanbanCard, type KanbanStatus, type KanbanChecklistItem,
@@ -315,8 +315,12 @@ export default function App() {
   // 할 일도 시간 블록처럼 상세 패널로 색상/메모 편집 가능. selectedBlock 과 상호배타 —
   // 하나가 열리면 다른 하나는 닫힘 (같은 오른쪽 패널 자리를 씀).
   const [selectedTodo, setSelectedTodo] = useState<Todo | null>(null);
-  const openBlockDetail = (b: Block | null) => { setSelectedBlock(b); if (b) setSelectedTodo(null); };
-  const openTodoDetail = (t: Todo | null) => { setSelectedTodo(t); if (t) setSelectedBlock(null); };
+  // 마감 작업도 시간 블록·할 일과 마찬가지로 상세 패널에서 제목/마감일 편집. 세 selected 상태는 상호배타 —
+  // 하나가 열리면 다른 둘은 닫힘 (같은 오른쪽 패널 자리를 공유).
+  const [selectedDeadline, setSelectedDeadline] = useState<Deadline | null>(null);
+  const openBlockDetail = (b: Block | null) => { setSelectedBlock(b); if (b) { setSelectedTodo(null); setSelectedDeadline(null); } };
+  const openTodoDetail = (t: Todo | null) => { setSelectedTodo(t); if (t) { setSelectedBlock(null); setSelectedDeadline(null); } };
+  const openDeadlineDetail = (d: Deadline | null) => { setSelectedDeadline(d); if (d) { setSelectedBlock(null); setSelectedTodo(null); } };
   // 캘린더 클릭으로 방금 만들어진 블록 id — 상세 패널이 제목 편집 모드로 자동 진입하고,
   // 이 블록의 제목이 처음 저장될 때 매칭 템플릿을 좌측 사이드바에 자동 추가하는 트리거로 씀.
   const [justCreatedBlockId, setJustCreatedBlockId] = useState<string | null>(null);
@@ -1179,6 +1183,12 @@ export default function App() {
     deleteDeadlineRow(id).catch(notifyError("마감 삭제 실패"));
   };
 
+  // 상세 패널에서 제목/마감일 변경 시 호출 — 낙관적 업데이트 후 DB 저장.
+  const updateDeadline = (id: string, changes: { title?: string; dueDate?: string }) => {
+    setDeadlines(ds => ds.map(d => d.id === id ? { ...d, ...changes } : d));
+    updateDeadlineRow(id, changes).catch(notifyError("마감 저장 실패"));
+  };
+
   const addTemplate = (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => {
     // 밀리초가 같은 프레임에 두 번 클릭이 들어오면 Date.now() 만으론 tempId가 충돌해서
      // 두 번째 낙관적 로우가 첫 번째 real 로우로 통째로 덮어씌워지고, DB엔 두 건이지만 화면엔
@@ -1589,6 +1599,7 @@ export default function App() {
               onSwapTodo={swapTodos}
               onSelect={openBlockDetail}
               onSelectTodo={openTodoDetail}
+              onSelectDeadline={openDeadlineDetail}
               onGoToCalendar={() => setSection("calendar")}
             />
           )}
@@ -1604,6 +1615,7 @@ export default function App() {
               setTemplateOpen={setTemplateOpen}
               onSelect={openBlockDetail}
               onSelectTodo={openTodoDetail}
+              onSelectDeadline={openDeadlineDetail}
               onToggle={toggleBlock}
               onToggleDeadline={toggleDeadline}
               onAddBlock={addBlock}
@@ -1635,6 +1647,7 @@ export default function App() {
           {section === "deadlines" && (
             <DeadlinesSection
               deadlines={deadlines} onToggle={toggleDeadline} onAddDeadline={addDeadline} onDelete={deleteDeadline}
+              onUpdateDeadline={updateDeadline}
               paletteColors={paletteColors} onAddPaletteColor={addPaletteColor} onRemovePaletteColor={removePaletteColor}
             />
           )}
@@ -1737,6 +1750,31 @@ export default function App() {
               const { id, date } = todoRepeatDeletePrompt;
               setTodoRepeatDeletePrompt(null);
               deleteTodoRepeatGroup(id, date);
+            }}
+          />
+        )}
+
+        {/* Deadline detail side panel — 시간 블록/할 일 상세와 같은 자리. 제목·마감일만 편집. */}
+        {selectedDeadline && !selectedBlock && !selectedTodo && (
+          <DeadlineDetailPanel
+            key={selectedDeadline.id}
+            deadline={selectedDeadline}
+            onClose={() => setSelectedDeadline(null)}
+            onToggle={() => {
+              toggleDeadline(selectedDeadline.id);
+              setSelectedDeadline({ ...selectedDeadline, completed: !selectedDeadline.completed });
+            }}
+            onDelete={() => {
+              deleteDeadline(selectedDeadline.id);
+              setSelectedDeadline(null);
+            }}
+            onTitleSave={(title) => {
+              updateDeadline(selectedDeadline.id, { title });
+              setSelectedDeadline({ ...selectedDeadline, title });
+            }}
+            onDueDateSave={(dueDate) => {
+              updateDeadline(selectedDeadline.id, { dueDate });
+              setSelectedDeadline({ ...selectedDeadline, dueDate });
             }}
           />
         )}
@@ -2110,7 +2148,7 @@ function CircleProgress({ value, size, strokeWidth = 5 }: { value: number; size:
 
 // ── Today Section ──────────────────────────────────────────────────
 function TodaySection({
-  blocks, deadlines, todos, templates, todoChecklistItems, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onSwapTodo, onSelect, onSelectTodo, onGoToCalendar,
+  blocks, deadlines, todos, templates, todoChecklistItems, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onSwapTodo, onSelect, onSelectTodo, onSelectDeadline, onGoToCalendar,
 }: {
   blocks: Block[];
   deadlines: Deadline[];
@@ -2127,6 +2165,7 @@ function TodaySection({
   onSwapTodo?: (aId: string, bId: string) => void;
   onSelect: (b: Block) => void;
   onSelectTodo?: (t: Todo) => void;
+  onSelectDeadline?: (d: Deadline) => void;
   onGoToCalendar: () => void;
 }) {
   const sorted = [...blocks].sort((a, b) => a.startH * 60 + a.startM - (b.startH * 60 + b.startM));
@@ -2167,12 +2206,14 @@ function TodaySection({
                 const tone = deadlineTone(-daysOver);
                 return (
                   <div key={d.id}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
+                    onClick={() => onSelectDeadline?.(d)}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${
                       d.completed ? "bg-muted/40 border-transparent opacity-60"
                         : `${tone.bg} ${tone.border} ${tone.hoverBorder}`
                     }`}
+                    title="클릭: 상세 열기"
                   >
-                    <button onClick={() => onToggleDeadline(d.id)} className="flex-shrink-0">
+                    <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
                       {d.completed
                         ? <CheckCircle2 size={16} className={tone.circle} />
                         : <Circle size={16} className={tone.circleHollow} />}
@@ -2198,12 +2239,14 @@ function TodaySection({
                 const tone = deadlineTone(daysLeft);
                 return (
                   <div key={d.id}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
+                    onClick={() => onSelectDeadline?.(d)}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${
                       d.completed ? "bg-muted/40 border-transparent opacity-60"
                         : `${tone.bg} ${tone.border} ${tone.hoverBorder}`
                     }`}
+                    title="클릭: 상세 열기"
                   >
-                    <button onClick={() => onToggleDeadline(d.id)} className="flex-shrink-0">
+                    <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
                       {d.completed
                         ? <CheckCircle2 size={16} className={tone.circle} />
                         : <Circle size={16} className={tone.circleHollow} />}
@@ -2390,7 +2433,7 @@ function TodaySection({
 // ── Calendar Section ───────────────────────────────────────────────
 function CalendarSection({
   blocks, deadlines, templates, todoChecklistItems, calView, setCalView,
-  templateOpen, setTemplateOpen, onSelect, onSelectTodo, onToggle, onToggleDeadline, onAddBlock, onUpdateBlock, onUpdateBlockLocal, onDeleteBlock,
+  templateOpen, setTemplateOpen, onSelect, onSelectTodo, onSelectDeadline, onToggle, onToggleDeadline, onAddBlock, onUpdateBlock, onUpdateBlockLocal, onDeleteBlock,
   onAddTemplate, onDeleteBlockTemplate,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat, pushUndo,
@@ -2406,6 +2449,7 @@ function CalendarSection({
   setTemplateOpen: (v: boolean) => void;
   onSelect: (b: Block) => void;
   onSelectTodo?: (t: Todo) => void;
+  onSelectDeadline?: (d: Deadline) => void;
   onToggle: (id: string) => void;
   onToggleDeadline: (id: string) => void;
   onAddBlock: (block: Block, options?: { select?: boolean; openInline?: boolean }) => void;
@@ -2862,10 +2906,10 @@ function CalendarSection({
                 return (
                   <div
                     key={d.id}
-                    onClick={() => onToggleDeadline(d.id)}
+                    onClick={() => onSelectDeadline?.(d)}
                     className={`rounded overflow-hidden text-[10px] cursor-pointer transition-all flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
                     style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
-                    title={d.completed ? "완료됨 — 다시 열기" : "완료 처리"}
+                    title="클릭: 상세 열기"
                   >
                     <span
                       className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
@@ -3403,10 +3447,10 @@ function CalendarSection({
                       return (
                         <div
                           key={d.id}
-                          onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }}
+                          onClick={e => { e.stopPropagation(); onSelectDeadline?.(d); }}
                           className={`rounded overflow-hidden text-[9px] cursor-pointer transition-colors flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
                           style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
-                          title={d.completed ? "완료됨 — 다시 열기" : "완료 처리"}
+                          title="클릭: 상세 열기"
                         >
                           <span
                             className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
@@ -3877,6 +3921,7 @@ function CalendarSection({
                   onChangeCategory={onUpdateTodoCategory}
                   deadlines={deadlines}
                   onToggleDeadline={onToggleDeadline}
+                  onSelectDeadline={onSelectDeadline}
                   showDayHeader={contentView === "todos"}
                   onGoPrev={goPrev}
                   onGoNext={goNext}
@@ -3960,7 +4005,7 @@ function CalendarSection({
 function TodoPanel({
   todos, templates, todoChecklistItems, viewDays, paletteColors, groupMode, onChangeGroupMode,
   onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
-  deadlines, onToggleDeadline,
+  deadlines, onToggleDeadline, onSelectDeadline,
   showDayHeader, onGoPrev, onGoNext, onMoveTodo, onSwapTodo,
 }: {
   todos: Todo[];
@@ -3985,6 +4030,7 @@ function TodoPanel({
   // 땐 그쪽 상단의 마감 행이 유일한 소스.
   deadlines: Deadline[];
   onToggleDeadline: (id: string) => void;
+  onSelectDeadline?: (d: Deadline) => void;
   showDayHeader?: boolean;
   onGoPrev?: () => void;
   onGoNext?: () => void;
@@ -4094,20 +4140,27 @@ function TodoPanel({
     : [];
 
   // 마감 카드 — 할 일 카드와 같은 블록 형태(원형 체크 + 스트라이프), 색은 남은 일수 톤 규칙.
+  // 카드 본체 클릭은 상세 열기(할 일 카드와 동일), 원형 체크만 완료 토글.
   const renderDeadlineCard = (d: Deadline) => {
     const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
     const color = deadlineToneHex(daysLeft);
     return (
       <div
         key={d.id}
-        onClick={() => onToggleDeadline(d.id)}
+        onClick={() => onSelectDeadline?.(d)}
         className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer hover:shadow-sm transition-all ${d.completed ? "bg-card opacity-60" : ""}`}
         style={d.completed ? undefined : { backgroundColor: color + "18", borderColor: color + "55" }}
-        title={d.completed ? "완료됨 — 다시 열기" : "완료 처리"}
+        title="클릭: 상세 열기"
       >
-        {d.completed
-          ? <CheckCircle2 size={18} className="flex-shrink-0" style={{ color }} />
-          : <Circle size={18} className="flex-shrink-0 text-muted-foreground" />}
+        <button
+          onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }}
+          className="flex-shrink-0"
+          title={d.completed ? "완료 해제" : "완료 처리"}
+        >
+          {d.completed
+            ? <CheckCircle2 size={18} style={{ color }} />
+            : <Circle size={18} className="text-muted-foreground" />}
+        </button>
         <span className="w-0.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
         <div className="flex-1 min-w-0">
           <div className={`text-sm font-medium truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</div>
@@ -4747,13 +4800,14 @@ function MultiRepeatModal({
 
 // ── Deadlines Section ──────────────────────────────────────────────
 function DeadlinesSection({
-  deadlines, onToggle, onAddDeadline, onDelete,
+  deadlines, onToggle, onAddDeadline, onDelete, onUpdateDeadline,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
 }: {
   deadlines: Deadline[];
   onToggle: (id: string) => void;
   onAddDeadline: (d: { title: string; dueDate: string }) => void;
   onDelete: (id: string) => void;
+  onUpdateDeadline: (id: string, changes: { title?: string; dueDate?: string }) => void;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
@@ -4778,6 +4832,7 @@ function DeadlinesSection({
     return (
       <KanbanBoard
         deadline={boardDeadline} onBack={() => setBoardId(null)}
+        onUpdateDeadline={onUpdateDeadline}
         paletteColors={paletteColors} onAddPaletteColor={onAddPaletteColor} onRemovePaletteColor={onRemovePaletteColor}
       />
     );
@@ -4941,14 +4996,24 @@ const KANBAN_COLUMNS: { status: KanbanStatus; label: string }[] = [
 ];
 
 function KanbanBoard({
-  deadline, onBack, paletteColors, onAddPaletteColor, onRemovePaletteColor,
+  deadline, onBack, onUpdateDeadline, paletteColors, onAddPaletteColor, onRemovePaletteColor,
 }: {
   deadline: Deadline;
   onBack: () => void;
+  onUpdateDeadline: (id: string, changes: { title?: string; dueDate?: string }) => void;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
 }) {
+  // 헤더 제목 인라인 편집 — 다른 상세 패널과 같은 UX.
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(deadline.title);
+  const commitTitle = () => {
+    const trimmed = titleDraft.trim();
+    if (trimmed && trimmed !== deadline.title) onUpdateDeadline(deadline.id, { title: trimmed });
+    else setTitleDraft(deadline.title);
+    setEditingTitle(false);
+  };
   const [cards, setCards] = useState<KanbanCard[]>([]);
   const [loading, setLoading] = useState(true);
   // 카드 추가 폼이 열려 있는 컬럼(한 번에 하나만).
@@ -5117,12 +5182,41 @@ function KanbanBoard({
           <ArrowLeft size={14} /> 마감 작업 목록
         </button>
 
-        {/* 헤더 — 목록 행과 같은 톤 언어(색 스트라이프 + D-day 배지). */}
+        {/* 헤더 — 목록 행과 같은 톤 언어(색 스트라이프 + D-day 배지).
+             제목 클릭으로 인라인 편집, 날짜 옆 date picker 로 마감일 즉시 변경. */}
         <div className="flex items-center gap-3 mb-6">
           <span className="w-1 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
           <div className="flex-1 min-w-0">
-            <div className="text-lg font-semibold truncate">{deadline.title}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">{deadline.dueDate}</div>
+            {editingTitle ? (
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={e => setTitleDraft(e.target.value)}
+                onFocus={e => e.currentTarget.select()}
+                onBlur={commitTitle}
+                onKeyDown={e => {
+                  if (e.key === "Enter") { e.preventDefault(); commitTitle(); }
+                  else if (e.key === "Escape") { setTitleDraft(deadline.title); setEditingTitle(false); }
+                }}
+                className="w-full text-lg font-semibold bg-transparent outline-none focus:ring-1 focus:ring-ring rounded px-1 -mx-1"
+              />
+            ) : (
+              <button
+                onClick={() => { setTitleDraft(deadline.title); setEditingTitle(true); }}
+                title="제목 편집"
+                className="w-full text-left text-lg font-semibold truncate hover:bg-muted/40 rounded px-1 -mx-1 transition-colors"
+              >{deadline.title}</button>
+            )}
+            <input
+              type="date"
+              value={deadline.dueDate}
+              onChange={e => {
+                const v = e.target.value;
+                if (v && v !== deadline.dueDate) onUpdateDeadline(deadline.id, { dueDate: v });
+              }}
+              className="mt-0.5 text-[11px] text-muted-foreground bg-transparent outline-none hover:text-foreground focus:text-foreground transition-colors cursor-pointer"
+              title="마감일 변경"
+            />
           </div>
           <span
             className="text-[11px] px-2.5 py-1 rounded-full font-medium flex-shrink-0"
@@ -7579,6 +7673,120 @@ function TodoDetailPanel({
         </button>
 
         {/* 저장/닫기 — 필드는 변경 즉시 저장되므로 둘 다 패널을 닫음. 저장이 주 버튼. */}
+        <div className="space-y-1.5">
+          <button
+            onClick={onClose}
+            className="w-full px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+          >저장</button>
+          <button
+            onClick={onClose}
+            className="w-full px-3 py-2 rounded-lg border border-border text-xs text-muted-foreground hover:bg-muted transition-colors"
+          >닫기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Deadline detail side panel ─────────────────────────────────────
+// 시간 블록/할 일 상세 패널과 같은 오른쪽 자리에 뜨는 라이트 버전. 마감 작업은 카테고리/체크리스트
+// 개념이 없어 제목·마감일·완료 토글·삭제만 노출. 색상은 D-day 톤이 자동으로 결정.
+function DeadlineDetailPanel({
+  deadline, onClose, onToggle, onDelete, onTitleSave, onDueDateSave,
+}: {
+  deadline: Deadline;
+  onClose: () => void;
+  onToggle: () => void;
+  onDelete: () => void;
+  onTitleSave: (title: string) => void;
+  onDueDateSave: (dueDate: string) => void;
+}) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(deadline.title);
+  const daysLeft = daysBetween(parseLocalDate(deadline.dueDate), TODAY_DATE);
+  const color = deadlineToneHex(daysLeft);
+
+  const commitTitle = () => {
+    const trimmed = titleDraft.trim();
+    if (trimmed && trimmed !== deadline.title) onTitleSave(trimmed);
+    else setTitleDraft(deadline.title);
+    setEditingTitle(false);
+  };
+
+  return (
+    <div className="w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
+      {/* Header — 색 스와치는 D-day 톤. 제목 클릭으로 인라인 편집. */}
+      <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border flex-shrink-0">
+        <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
+        {editingTitle ? (
+          <input
+            autoFocus
+            value={titleDraft}
+            onChange={e => setTitleDraft(e.target.value)}
+            onFocus={e => e.currentTarget.select()}
+            onBlur={commitTitle}
+            onKeyDown={e => {
+              if (e.key === "Enter") { e.preventDefault(); commitTitle(); }
+              else if (e.key === "Escape") { setTitleDraft(deadline.title); setEditingTitle(false); }
+            }}
+            className="flex-1 min-w-0 text-sm font-medium bg-transparent outline-none focus:ring-1 focus:ring-ring rounded px-1 py-0.5"
+          />
+        ) : (
+          <button
+            onClick={() => { setTitleDraft(deadline.title); setEditingTitle(true); }}
+            title="제목 편집"
+            className="flex-1 min-w-0 text-left text-sm font-medium truncate hover:bg-muted/40 rounded px-1 py-0.5 transition-colors"
+          >
+            {deadline.title}
+          </button>
+        )}
+        <span
+          className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+          style={{ backgroundColor: color + "22", color }}
+        >{formatDDay(daysLeft)}</span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* 마감일 — 네이티브 date picker. 변경 즉시 저장. */}
+        <div>
+          <div className="text-[11px] font-medium text-muted-foreground mb-1.5">마감일</div>
+          <input
+            type="date"
+            value={deadline.dueDate}
+            onChange={e => {
+              const v = e.target.value;
+              if (v && v !== deadline.dueDate) onDueDateSave(v);
+            }}
+            className="w-full text-sm px-3 py-2 rounded-lg bg-muted outline-none focus:ring-2 focus:ring-ring"
+          />
+          <div className="text-[11px] text-muted-foreground mt-1.5">
+            {deadline.dueDate} ({DAYS_KO[parseLocalDate(deadline.dueDate).getDay()]})
+          </div>
+        </div>
+
+        {/* 완료 토글 */}
+        <button
+          onClick={onToggle}
+          className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors ${
+            deadline.completed ? "bg-muted/40 border-transparent" : "bg-card border-border hover:border-primary/40"
+          }`}
+        >
+          {deadline.completed
+            ? <CheckCircle2 size={16} style={{ color }} />
+            : <Circle size={16} className="text-muted-foreground" />}
+          <span className={`text-xs ${deadline.completed ? "text-muted-foreground line-through" : ""}`}>
+            {deadline.completed ? "완료됨 — 다시 열기" : "완료 처리"}
+          </span>
+        </button>
+
+        {/* Delete */}
+        <button
+          onClick={() => { onDelete(); onClose(); }}
+          className="w-full text-[11px] text-destructive hover:bg-destructive/10 rounded-lg py-2 transition-colors"
+        >
+          마감 삭제
+        </button>
+
         <div className="space-y-1.5">
           <button
             onClick={onClose}
