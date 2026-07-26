@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   CheckCircle2, Circle, Clock, Play, Pause,
   Plus, X, ChevronLeft, ChevronRight, ChevronDown,
@@ -5587,7 +5588,10 @@ function AppTooltipRoot() {
   }, []);
 
   if (!tip) return null;
-  return (
+  // document.body 에 portal — #root 에 걸린 CSS zoom(글씨 크기) 이 fixed 좌표에 이중으로
+  // 곱해지는 걸 피하기 위함. getBoundingClientRect 는 이미 zoom 이 반영된 시각 px 를
+  // 반환하므로, zoom 이 없는 body 안에서 fixed 로 그대로 사용해야 위치가 일치함.
+  return createPortal(
     <div
       style={{
         position: "fixed",
@@ -5599,7 +5603,8 @@ function AppTooltipRoot() {
       className="pointer-events-none rounded-lg bg-foreground/95 text-background text-[11px] font-medium px-2.5 py-1 shadow-lg max-w-[240px] whitespace-normal leading-snug"
     >
       {tip.text}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
