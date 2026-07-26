@@ -6,7 +6,7 @@ import {
   BarChart2, Settings, Calendar, Target, Flame, FileText,
   Edit3, Check, AlertCircle, PictureInPicture2 as PictureInPicture,
   Folder, FolderPlus, MoreVertical, ArrowLeft, ArrowUpDown, Trash2,
-  Minus, Square, Copy,
+  Minus, Square, Copy, Palette,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -70,6 +70,8 @@ interface Deadline {
   title: string;
   dueDate: string;
   completed: boolean;
+  // 마감 개별 색상 — 빈 문자열이면 D-day 톤을 따라감(기본).
+  color: string;
 }
 
 interface Template {
@@ -1183,8 +1185,8 @@ export default function App() {
     deleteDeadlineRow(id).catch(notifyError("마감 삭제 실패"));
   };
 
-  // 상세 패널에서 제목/마감일 변경 시 호출 — 낙관적 업데이트 후 DB 저장.
-  const updateDeadline = (id: string, changes: { title?: string; dueDate?: string }) => {
+  // 상세 패널에서 제목/마감일/색상 변경 시 호출 — 낙관적 업데이트 후 DB 저장.
+  const updateDeadline = (id: string, changes: { title?: string; dueDate?: string; color?: string }) => {
     setDeadlines(ds => ds.map(d => d.id === id ? { ...d, ...changes } : d));
     updateDeadlineRow(id, changes).catch(notifyError("마감 저장 실패"));
   };
@@ -1227,7 +1229,7 @@ export default function App() {
      // 두 번째 낙관적 로우가 첫 번째 real 로우로 통째로 덮어씌워지고, DB엔 두 건이지만 화면엔
      // 한 건만 보이는 유령 상태가 나옴. randomUUID로 충돌을 원천 차단.
     const tempId = `temp-${crypto.randomUUID()}`;
-    setDeadlines(ds => [...ds, { id: tempId, title: d.title, dueDate: d.dueDate, completed: false }]);
+    setDeadlines(ds => [...ds, { id: tempId, title: d.title, dueDate: d.dueDate, completed: false, color: "" }]);
     createDeadline(d)
       .then(real => setDeadlines(ds => ds.map(x => (x.id === tempId ? real : x))))
       .catch(e => { setDeadlines(ds => ds.filter(x => x.id !== tempId)); notifyError("마감 추가 실패")(e); });
@@ -4807,7 +4809,7 @@ function DeadlinesSection({
   onToggle: (id: string) => void;
   onAddDeadline: (d: { title: string; dueDate: string }) => void;
   onDelete: (id: string) => void;
-  onUpdateDeadline: (id: string, changes: { title?: string; dueDate?: string }) => void;
+  onUpdateDeadline: (id: string, changes: { title?: string; dueDate?: string; color?: string }) => void;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
@@ -5000,7 +5002,7 @@ function KanbanBoard({
 }: {
   deadline: Deadline;
   onBack: () => void;
-  onUpdateDeadline: (id: string, changes: { title?: string; dueDate?: string }) => void;
+  onUpdateDeadline: (id: string, changes: { title?: string; dueDate?: string; color?: string }) => void;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
@@ -5042,7 +5044,13 @@ function KanbanBoard({
   const [checkItems, setCheckItems] = useState<KanbanChecklistItem[]>([]);
 
   const dl = daysBetween(parseLocalDate(deadline.dueDate), TODAY_DATE);
+  // D-day 톤 색 — 배지에는 항상 이 색을 사용해 "얼마나 남았는지"를 색으로도 즉시 읽히게.
   const color = deadlineToneHex(dl);
+  // 스트라이프/카드 기본 색은 마감이 커스텀 색을 가진 경우 그것을, 없으면 D-day 톤을 사용.
+  const stripeColor = deadline.color || color;
+  // 팔레트 팝오버 열림 여부 + 커스텀 hex 입력 열림 여부.
+  const [showPalette, setShowPalette] = useState(false);
+  const [showDeadlineCustomColor, setShowDeadlineCustomColor] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -5242,9 +5250,11 @@ function KanbanBoard({
         </button>
 
         {/* 헤더 — 목록 행과 같은 톤 언어(색 스트라이프 + D-day 배지).
-             제목 클릭으로 인라인 편집, 날짜 옆 date picker 로 마감일 즉시 변경. */}
-        <div className="flex items-center gap-3 mb-6">
-          <span className="w-1 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+             제목 클릭으로 인라인 편집, 날짜 옆 date picker 로 마감일 즉시 변경,
+             팔레트 아이콘으로 마감 커스텀 색 지정(빈 값이면 D-day 톤을 자동으로 따라감).
+             D-day 배지는 항상 남은 일수에 따른 톤(초록/노랑/주황/빨강)을 그대로 사용. */}
+        <div className="flex items-center gap-3 mb-6 relative">
+          <span className="w-1 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: stripeColor }} />
           <div className="flex-1 min-w-0">
             {editingTitle ? (
               <input
@@ -5266,16 +5276,26 @@ function KanbanBoard({
                 className="w-full text-left text-lg font-semibold truncate hover:bg-muted/40 rounded px-1 -mx-1 transition-colors"
               >{deadline.title}</button>
             )}
-            <input
-              type="date"
-              value={deadline.dueDate}
-              onChange={e => {
-                const v = e.target.value;
-                if (v && v !== deadline.dueDate) onUpdateDeadline(deadline.id, { dueDate: v });
-              }}
-              className="mt-0.5 text-[11px] text-muted-foreground bg-transparent outline-none hover:text-foreground focus:text-foreground transition-colors cursor-pointer"
-              title="마감일 변경"
-            />
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={deadline.dueDate}
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v && v !== deadline.dueDate) onUpdateDeadline(deadline.id, { dueDate: v });
+                }}
+                className="mt-0.5 text-[11px] text-muted-foreground bg-transparent outline-none hover:text-foreground focus:text-foreground transition-colors cursor-pointer"
+                title="마감일 변경"
+              />
+              <button
+                type="button"
+                onClick={() => { setShowPalette(v => !v); setShowDeadlineCustomColor(false); }}
+                title="마감 색상"
+                className={`mt-0.5 p-1 rounded transition-colors ${showPalette ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+              >
+                <Palette size={13} />
+              </button>
+            </div>
           </div>
           <span
             className="text-[11px] px-2.5 py-1 rounded-full font-medium flex-shrink-0"
@@ -5283,6 +5303,61 @@ function KanbanBoard({
           >
             {formatDDay(dl)}
           </span>
+          {/* 팔레트 팝오버 — 카드 편집 폼과 같은 스와치 UI 를 재사용.
+               "기본" 스와치는 색을 비우고 D-day 톤을 자동으로 따라가게 함. */}
+          {showPalette && (
+            <div className="absolute right-0 top-full mt-2 z-20 p-3 rounded-lg border bg-card shadow-lg w-64 space-y-2">
+              <div className="text-[11px] font-medium text-muted-foreground">마감 색상</div>
+              <div className="flex flex-wrap gap-1.5 items-center py-0.5">
+                <button
+                  type="button"
+                  onClick={() => { if (deadline.color) onUpdateDeadline(deadline.id, { color: "" }); }}
+                  className={`size-4 rounded-full border border-dashed border-foreground/50 transition-transform flex-shrink-0 ${deadline.color === "" ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                  style={{ backgroundColor: color }}
+                  title="기본 (D-day 톤)"
+                />
+                {paletteColors.map(c => (
+                  <div key={c} className="relative group/color size-4 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => { if (deadline.color.toLowerCase() !== c.toLowerCase()) onUpdateDeadline(deadline.id, { color: c }); }}
+                      className={`size-4 rounded-full transition-transform ${deadline.color.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    />
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
+                      className="absolute -top-1 -right-1 size-3 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
+                      title="팔레트에서 제거"
+                    >
+                      <X size={7} strokeWidth={2.5} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setShowDeadlineCustomColor(v => !v)}
+                  className={`size-4 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showDeadlineCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-muted/40 hover:bg-muted"}`}
+                  title="사용자 지정 색상 추가"
+                >
+                  <Plus size={9} className={showDeadlineCustomColor ? "text-primary" : "text-muted-foreground"} />
+                </button>
+              </div>
+              {showDeadlineCustomColor && (
+                <CustomColorPickerInline
+                  initial={deadline.color || color}
+                  onAdd={(c) => { onUpdateDeadline(deadline.id, { color: c }); onAddPaletteColor(c); }}
+                  onClose={() => setShowDeadlineCustomColor(false)}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => { setShowPalette(false); setShowDeadlineCustomColor(false); }}
+                className="w-full text-[11px] py-1.5 rounded-md bg-muted hover:bg-muted/70 transition-colors"
+              >닫기</button>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-3 gap-4 items-start">
@@ -5312,15 +5387,15 @@ function KanbanBoard({
 
                 <div className="space-y-2 flex-1">
                   {colCards.map(card => {
-                    // 카드 개별 색이 있으면 그것, 없으면 마감 D-day 톤(기본).
-                    const cardColor = card.color || color;
+                    // 카드 개별 색이 있으면 그것, 없으면 마감의 유효 색(커스텀 색 또는 D-day 톤).
+                    const cardColor = card.color || stripeColor;
                     const checklist = flattenChecklist(card.id);
 
                     // 클릭으로 편집 중 — 카드 자리를 인라인 폼으로 대체.
                     if (editingId === card.id) {
                       return (
                         <div key={card.id} className="p-2.5 rounded-lg border bg-card space-y-1.5"
-                          style={{ borderLeft: `3px solid ${editColor || color}` }}>
+                          style={{ borderLeft: `3px solid ${editColor || stripeColor}` }}>
                           <input
                             autoFocus
                             value={editTitle}
@@ -5348,8 +5423,8 @@ function KanbanBoard({
                               type="button"
                               onClick={() => setEditColor("")}
                               className={`size-4 rounded-full border border-dashed border-foreground/50 transition-transform flex-shrink-0 ${editColor === "" ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
-                              style={{ backgroundColor: color }}
-                              title="기본 (마감 톤)"
+                              style={{ backgroundColor: stripeColor }}
+                              title="기본 (마감 색)"
                             />
                             {paletteColors.map(c => (
                               <div key={c} className="relative group/color size-4 flex-shrink-0">
@@ -5381,7 +5456,7 @@ function KanbanBoard({
                           </div>
                           {showCustomColor && (
                             <CustomColorPickerInline
-                              initial={editColor || color}
+                              initial={editColor || stripeColor}
                               onAdd={(c) => { setEditColor(c); onAddPaletteColor(c); }}
                               onClose={() => setShowCustomColor(false)}
                             />
@@ -5505,7 +5580,7 @@ function KanbanBoard({
 
                 {addingCol === status ? (
                   <div className="mt-2 p-2.5 rounded-lg border bg-card space-y-1.5"
-                    style={{ borderLeft: `3px solid ${newColor || color}` }}>
+                    style={{ borderLeft: `3px solid ${newColor || stripeColor}` }}>
                     <input
                       autoFocus
                       value={newTitle}
@@ -5526,14 +5601,14 @@ function KanbanBoard({
                       rows={2}
                       className="w-full text-[11px] px-2.5 py-1.5 rounded-md bg-muted outline-none focus:ring-2 focus:ring-ring resize-none placeholder:text-muted-foreground"
                     />
-                    {/* 색상 — 편집 폼과 동일한 팔레트 UI. 첫 스와치는 마감 D-day 톤을 따라감. */}
+                    {/* 색상 — 편집 폼과 동일한 팔레트 UI. 첫 스와치는 마감의 유효 색(커스텀 또는 D-day 톤)을 따라감. */}
                     <div className="flex flex-wrap gap-1.5 items-center py-0.5">
                       <button
                         type="button"
                         onClick={() => setNewColor("")}
                         className={`size-4 rounded-full border border-dashed border-foreground/50 transition-transform flex-shrink-0 ${newColor === "" ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
-                        style={{ backgroundColor: color }}
-                        title="기본 (마감 톤)"
+                        style={{ backgroundColor: stripeColor }}
+                        title="기본 (마감 색)"
                       />
                       {paletteColors.map(c => (
                         <div key={c} className="relative group/color size-4 flex-shrink-0">
@@ -5565,7 +5640,7 @@ function KanbanBoard({
                     </div>
                     {showNewCustomColor && (
                       <CustomColorPickerInline
-                        initial={newColor || color}
+                        initial={newColor || stripeColor}
                         onAdd={(c) => { setNewColor(c); onAddPaletteColor(c); }}
                         onClose={() => setShowNewCustomColor(false)}
                       />

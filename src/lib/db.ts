@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS deadlines (
   due_date TEXT NOT NULL,
   completed INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
+  -- 마감 개별 색상 — 빈 문자열이면 D-day 톤(10일 초과 초록, 이하 노랑/주황/빨강)을 따라감.
+  color TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -222,6 +224,12 @@ const KANBAN_UPGRADES = [
   "ALTER TABLE kanban_cards ADD COLUMN color TEXT NOT NULL DEFAULT ''",
 ];
 
+// deadlines 사후 컬럼 추가 — 마감별 커스텀 색상을 지원하기 위해 color 컬럼을 뒤늦게 도입.
+// 빈 문자열이면 D-day 톤을 따라감(기존과 동일한 기본 동작).
+const DEADLINE_UPGRADES = [
+  "ALTER TABLE deadlines ADD COLUMN color TEXT NOT NULL DEFAULT ''",
+];
+
 let dbPromise: Promise<Database> | null = null;
 
 // 첫 호출 시 DB 파일 열고 스키마 초기화, 이후 호출은 같은 인스턴스 반환.
@@ -268,6 +276,9 @@ export function getDb(): Promise<Database> {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
       for (const stmt of KANBAN_UPGRADES) {
+        try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
+      }
+      for (const stmt of DEADLINE_UPGRADES) {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
       try {

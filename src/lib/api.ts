@@ -308,17 +308,18 @@ export async function insertBlocksBulk(blocks: any[]) {
 export async function fetchDeadlines() {
   const db = await getDb();
   const rows = await db.select<any[]>("SELECT * FROM deadlines ORDER BY due_date");
-  return rows.map(d => ({ id: d.id, title: d.title, dueDate: d.due_date, completed: !!d.completed }));
+  return rows.map(d => ({ id: d.id, title: d.title, dueDate: d.due_date, completed: !!d.completed, color: d.color ?? "" }));
 }
 
-export async function createDeadline(d: { title: string; dueDate: string }) {
+export async function createDeadline(d: { title: string; dueDate: string; color?: string }) {
   const db = await getDb();
   const id = uuid();
+  const color = d.color ?? "";
   await db.execute(
-    "INSERT INTO deadlines (id, title, due_date) VALUES (?, ?, ?)",
-    [id, d.title, d.dueDate]
+    "INSERT INTO deadlines (id, title, due_date, color) VALUES (?, ?, ?, ?)",
+    [id, d.title, d.dueDate, color]
   );
-  return { id, title: d.title, dueDate: d.dueDate, completed: false };
+  return { id, title: d.title, dueDate: d.dueDate, completed: false, color };
 }
 
 export async function toggleDeadlineRow(id: string, completed: boolean) {
@@ -329,13 +330,14 @@ export async function toggleDeadlineRow(id: string, completed: boolean) {
   );
 }
 
-// 상세 패널에서 제목/마감일을 수정할 때 호출. 넘어온 필드만 UPDATE.
-export async function updateDeadlineRow(id: string, changes: { title?: string; dueDate?: string }) {
+// 상세 패널에서 제목/마감일/색상을 수정할 때 호출. 넘어온 필드만 UPDATE.
+export async function updateDeadlineRow(id: string, changes: { title?: string; dueDate?: string; color?: string }) {
   const db = await getDb();
   const set: string[] = [];
   const args: any[] = [];
   if (changes.title !== undefined) { set.push("title = ?"); args.push(changes.title); }
   if (changes.dueDate !== undefined) { set.push("due_date = ?"); args.push(changes.dueDate); }
+  if (changes.color !== undefined) { set.push("color = ?"); args.push(changes.color); }
   if (set.length === 0) return;
   args.push(id);
   await db.execute(`UPDATE deadlines SET ${set.join(", ")} WHERE id = ?`, args);
