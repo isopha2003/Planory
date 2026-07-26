@@ -6347,6 +6347,15 @@ function NoteList({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   // 삭제 확인 모달에 띄울 폴더 id — 확인 버튼을 눌러야 실제 삭제가 실행됨.
   const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
+  // 헤더 오른쪽 3-dot 메뉴(임시 저장 / 선택 진입).
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  // 선택 모드 — 켜지면 카드 클릭이 열기 대신 선택 토글이 되고 상단이 선택 툴바로 대체.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set());
+  const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set());
+  // 선택 툴바의 "이동" 드롭다운과 "삭제" 확인 모달.
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   // 드래그 오버 중인 대상: 특정 폴더 id, "back"(뒤로가기 = 루트로 이동), null(없음)
   const [dropFolderId, setDropFolderId] = useState<string | "back" | null>(null);
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
@@ -6427,6 +6436,62 @@ function NoteList({
     try { await updateFolder(folderId, changes); } catch (e) { notifyError("폴더 수정 실패")(e); await refreshFolders(); }
   };
 
+  // ── 선택 모드 관련 헬퍼 ─────────────────────────────────────────
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedNoteIds(new Set());
+    setSelectedFolderIds(new Set());
+    setBulkMoveOpen(false);
+    setBulkDeleteOpen(false);
+  };
+  const toggleNoteSelected = (id: string) => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleFolderSelected = (id: string) => {
+    setSelectedFolderIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // 선택한 메모들을 한꺼번에 특정 폴더(또는 루트)로 이동 — 낙관적 갱신 + 개별 UPDATE 순차 저장.
+  const handleBulkMove = async (targetFolderId: string | null) => {
+    const ids = Array.from(selectedNoteIds);
+    if (ids.length === 0) { setBulkMoveOpen(false); return; }
+    setNotes(ns => ns.map(n => ids.includes(n.id) ? { ...n, folderId: targetFolderId } : n));
+    setBulkMoveOpen(false);
+    for (const id of ids) {
+      try { await moveNoteToFolder(id, targetFolderId); } catch (e) { notifyError("메모 이동 실패")(e); }
+    }
+    exitSelectMode();
+  };
+
+  // 선택한 폴더·메모를 한꺼번에 삭제 — 폴더는 내부 메모까지 함께 지워짐(deleteFolder 시멘틱).
+  const handleBulkDelete = async () => {
+    const nIds = Array.from(selectedNoteIds);
+    const fIds = Array.from(selectedFolderIds);
+    // 낙관적 UI: 선택한 메모 + 선택한 폴더 소속 메모 + 선택한 폴더를 즉시 제거.
+    setNotes(ns => ns.filter(n => !nIds.includes(n.id) && !fIds.includes(n.folderId ?? "")));
+    setFolders(fs => fs.filter(f => !fIds.includes(f.id)));
+    // 삭제된 폴더를 보고 있었으면 루트로 복귀.
+    if (viewFolderId && typeof viewFolderId === "string" && fIds.includes(viewFolderId)) {
+      setViewFolderId(null);
+    }
+    setBulkDeleteOpen(false);
+    for (const id of nIds) {
+      try { await deleteNote(id); } catch (e) { notifyError("메모 삭제 실패")(e); }
+    }
+    for (const id of fIds) {
+      try { await deleteFolder(id); } catch (e) { notifyError("폴더 삭제 실패")(e); }
+    }
+    exitSelectMode();
+  };
+
   // 노트 카드 간 드래그로 재정렬 — 정렬 모드가 custom이 아니면 custom으로 전환
   const handleReorder = async (draggedId: string, targetId: string) => {
     if (draggedId === targetId) return;
@@ -6472,66 +6537,139 @@ function NoteList({
     <div className="flex-1 overflow-y-auto" onClick={() => setMenuNoteId(null)}>
       <div className="max-w-4xl mx-auto px-8 py-8">
         {/* Header — 타이틀 생략, 도구 버튼(정렬/새 폴더/새 메모)만 우측에 배치 */}
-        <div className="flex items-center justify-end mb-6">
-          <div className="flex items-center gap-2">
-            {/* 정렬 드롭다운 */}
-            <div className="relative">
+        {selectMode ? (
+          /* 선택 툴바 — 선택된 메모/폴더 개수를 표시하고, 이동/삭제/취소 액션을 제공. */
+          <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
+            <div className="text-xs text-muted-foreground">
+              메모 <span className="font-semibold text-foreground">{selectedNoteIds.size}</span>개
+              {selectedFolderIds.size > 0 && (
+                <> · 폴더 <span className="font-semibold text-foreground">{selectedFolderIds.size}</span>개</>
+              )} 선택됨
+            </div>
+            <div className="flex items-center gap-2">
+              {/* 폴더로 이동 — 메모가 하나 이상 선택되어 있을 때만 활성. 폴더는 이동 대상 아님. */}
+              <div className="relative">
+                <button
+                  onClick={e => { e.stopPropagation(); setBulkMoveOpen(v => !v); }}
+                  disabled={selectedNoteIds.size === 0}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-card text-xs hover:bg-muted transition-colors disabled:opacity-40 disabled:hover:bg-card"
+                >
+                  <Folder size={13} /> 폴더로 이동
+                </button>
+                {bulkMoveOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setBulkMoveOpen(false)} />
+                    <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border rounded-lg shadow-lg z-50 p-1 max-h-72 overflow-y-auto">
+                      <button
+                        onClick={() => handleBulkMove(null)}
+                        className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+                      ><Folder size={12} /> 폴더 없음</button>
+                      {folders.map(f => (
+                        <button
+                          key={f.id}
+                          onClick={() => handleBulkMove(f.id)}
+                          className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+                        >
+                          <span className="size-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: f.color }} />
+                          {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
               <button
-                onClick={e => { e.stopPropagation(); setSortOpen(v => !v); }}
+                onClick={() => setBulkDeleteOpen(true)}
+                disabled={selectedNoteIds.size === 0 && selectedFolderIds.size === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-destructive/40 text-destructive text-xs hover:bg-destructive/10 transition-colors disabled:opacity-40"
+              >
+                <Trash2 size={13} /> 삭제
+              </button>
+              <button
+                onClick={exitSelectMode}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-card text-xs hover:bg-muted transition-colors"
               >
-                <ArrowUpDown size={13} /> {SORT_LABELS[sortMode]}
+                <X size={13} /> 취소
               </button>
-              {sortOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setSortOpen(false)} />
-                  <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-lg shadow-lg z-50 p-1">
-                    {(Object.keys(SORT_LABELS) as SortMode[]).map(m => (
-                      <button
-                        key={m}
-                        onClick={() => { setSortMode(m); setSortOpen(false); }}
-                        className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors ${sortMode === m ? "text-primary font-medium" : "text-foreground"}`}
-                      >
-                        {SORT_LABELS[m]}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
             </div>
-            <button
-              onClick={() => setShowNewFolder(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-card text-xs hover:bg-muted transition-colors"
-            >
-              <FolderPlus size={13} /> 새 폴더
-            </button>
-            <button
-              // 폴더 뷰 안에서 만들면 그 폴더에 속하게 함. 루트/임시저장 뷰에선 folderId 없음.
-              onClick={() => onCreateNote(currentFolder ? currentFolder.id : null)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
-            >
-              <Plus size={13} /> 새 메모
-            </button>
-            {/* 임시 저장 탭 — 뒤로가기(자동 저장)로 남긴 미확정 노트만 모아 봄.
-                 활성화되어 있으면 primary 톤으로 강조해 현재 뷰가 임시 저장 뷰임을 표시. */}
-            <button
-              onClick={() => setViewFolderId(inDrafts ? null : "drafts")}
-              title={inDrafts ? "임시 저장 나가기" : "임시 저장 메모 보기"}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                inDrafts
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border bg-card hover:bg-muted"
-              }`}
-            >
-              <FileText size={13} /> 임시 저장
-              {draftCount > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                  inDrafts ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
-                }`}>{draftCount}</span>
-              )}
-            </button>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-end mb-6">
+            <div className="flex items-center gap-2">
+              {/* 정렬 드롭다운 */}
+              <div className="relative">
+                <button
+                  onClick={e => { e.stopPropagation(); setSortOpen(v => !v); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-card text-xs hover:bg-muted transition-colors"
+                >
+                  <ArrowUpDown size={13} /> {SORT_LABELS[sortMode]}
+                </button>
+                {sortOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setSortOpen(false)} />
+                    <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-lg shadow-lg z-50 p-1">
+                      {(Object.keys(SORT_LABELS) as SortMode[]).map(m => (
+                        <button
+                          key={m}
+                          onClick={() => { setSortMode(m); setSortOpen(false); }}
+                          className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors ${sortMode === m ? "text-primary font-medium" : "text-foreground"}`}
+                        >
+                          {SORT_LABELS[m]}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              <button
+                onClick={() => setShowNewFolder(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-card text-xs hover:bg-muted transition-colors"
+              >
+                <FolderPlus size={13} /> 새 폴더
+              </button>
+              <button
+                // 폴더 뷰 안에서 만들면 그 폴더에 속하게 함. 루트/임시저장 뷰에선 folderId 없음.
+                onClick={() => onCreateNote(currentFolder ? currentFolder.id : null)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+              >
+                <Plus size={13} /> 새 메모
+              </button>
+              {/* 3-dot 메뉴 — 임시 저장 진입 토글과 선택 모드 진입. 예전 상단 툴바에 노출되던
+                   "임시 저장" 버튼은 자주 쓰이진 않아 이 메뉴 안으로 정리. */}
+              <div className="relative">
+                <button
+                  onClick={e => { e.stopPropagation(); setMoreMenuOpen(v => !v); }}
+                  title="더 보기"
+                  className="p-1.5 rounded-lg border bg-card text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  <MoreVertical size={14} />
+                </button>
+                {moreMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)} />
+                    <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-lg shadow-lg z-50 p-1">
+                      <button
+                        onClick={() => { setMoreMenuOpen(false); setViewFolderId(inDrafts ? null : "drafts"); }}
+                        className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center justify-between gap-2 ${inDrafts ? "text-primary font-medium" : ""}`}
+                      >
+                        <span className="flex items-center gap-2"><FileText size={12} /> 임시 저장</span>
+                        {draftCount > 0 && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${inDrafts ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"}`}>{draftCount}</span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => { setMoreMenuOpen(false); setSelectMode(true); }}
+                        className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+                      >
+                        <CheckCircle2 size={12} /> 선택
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 새 폴더 인라인 폼 — 공용 팔레트(다른 블록과 동일한 색 목록)에서 선택.
              각 스와치는 호버 시 X 버튼으로 팔레트에서 제거 가능하고, 우측 + 로 커스텀 hex 색을 추가. */}
@@ -6659,6 +6797,9 @@ function NoteList({
                 isDropTarget={dropFolderId === f.id}
                 isDragging={dragFolderId === f.id}
                 isEditing={editingFolderId === f.id}
+                selectMode={selectMode}
+                selected={selectedFolderIds.has(f.id)}
+                onToggleSelected={() => toggleFolderSelected(f.id)}
                 paletteColors={paletteColors}
                 onAddPaletteColor={onAddPaletteColor}
                 onRemovePaletteColor={onRemovePaletteColor}
@@ -6693,6 +6834,9 @@ function NoteList({
                 folder={folders.find(f => f.id === n.folderId) ?? null}
                 folders={folders}
                 menuOpen={menuNoteId === n.id}
+                selectMode={selectMode}
+                selected={selectedNoteIds.has(n.id)}
+                onToggleSelected={() => toggleNoteSelected(n.id)}
                 onOpen={() => onOpen(n.id)}
                 onToggleMenu={e => { e.stopPropagation(); setMenuNoteId(menuNoteId === n.id ? null : n.id); }}
                 onMove={folderId => handleMoveNote(n.id, folderId)}
@@ -6724,6 +6868,69 @@ function NoteList({
           />
         );
       })()}
+      {/* 선택 모드의 벌크 삭제 확인 — 폴더 선택분은 내부 메모까지 함께 지워짐을 명시. */}
+      {bulkDeleteOpen && (() => {
+        const folderNoteCount = notes.filter(n => n.folderId && selectedFolderIds.has(n.folderId)).length;
+        return (
+          <BulkDeleteConfirmModal
+            noteCount={selectedNoteIds.size}
+            folderCount={selectedFolderIds.size}
+            folderNoteCount={folderNoteCount}
+            onCancel={() => setBulkDeleteOpen(false)}
+            onConfirm={handleBulkDelete}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+// 선택 모드에서 여러 항목을 한꺼번에 삭제할 때 뜨는 확인 모달. FolderDeleteConfirmModal 과
+// 스타일을 통일하되, 노트/폴더/폴더 안 노트 개수를 각각 명시해 파괴적 동작임을 명확히 전달.
+function BulkDeleteConfirmModal({
+  noteCount, folderCount, folderNoteCount, onCancel, onConfirm,
+}: {
+  noteCount: number;
+  folderCount: number;
+  folderNoteCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const totalNotes = noteCount + folderNoteCount;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
+      <div className="w-80 bg-card border border-border rounded-xl p-4 shadow-lg" onClick={e => e.stopPropagation()}>
+        <div className="text-sm font-semibold mb-1">선택 항목 삭제</div>
+        <div className="text-xs text-foreground mb-4 leading-relaxed space-y-1.5">
+          <div>
+            {folderCount > 0 && (
+              <>폴더 <span className="font-semibold">{folderCount}개</span>{noteCount > 0 && ", "}</>
+            )}
+            {noteCount > 0 && (
+              <>메모 <span className="font-semibold">{noteCount}개</span></>
+            )}
+            {" "}가 삭제됩니다.
+          </div>
+          {folderNoteCount > 0 && (
+            <div className="text-muted-foreground">
+              폴더 안의 메모 <span className="font-semibold text-destructive">{folderNoteCount}개</span>도 함께 삭제됩니다.
+            </div>
+          )}
+          <div className="text-muted-foreground">
+            총 <span className="font-semibold text-destructive">메모 {totalNotes}개</span>가 사라집니다. 이 동작은 되돌릴 수 없습니다.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors"
+          >취소</button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 px-3 py-1.5 rounded-lg border border-destructive/40 text-xs hover:bg-destructive/10 text-destructive font-medium transition-colors"
+          >삭제</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -6769,12 +6976,17 @@ function FolderDeleteConfirmModal({
 // isEditing 상태에서는 카드 본문이 이름 입력 + 팔레트 폼으로 대체됨.
 function FolderCard({
   folder, count, isDropTarget, isDragging, isEditing, paletteColors,
+  selectMode = false, selected = false, onToggleSelected,
   onOpen, onStartEdit, onCancelEdit, onSaveEdit, onDelete,
   onAddPaletteColor, onRemovePaletteColor,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }: {
   folder: NoteFolder; count: number; isDropTarget: boolean; isDragging: boolean; isEditing: boolean;
   paletteColors: string[];
+  // 선택 모드에서는 카드 클릭이 열기 대신 선택 토글이 되고, 3-dot 메뉴·드래그·인라인 편집이 비활성화됨.
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelected?: () => void;
   onOpen: () => void;
   onStartEdit: () => void;
   onCancelEdit: () => void;
@@ -6811,7 +7023,8 @@ function FolderCard({
     onSaveEdit(changes);
   };
 
-  if (isEditing) {
+  // 선택 모드에선 인라인 편집 폼을 열지 않음(선택-편집 동시 진행 방지).
+  if (isEditing && !selectMode) {
     return (
       <div
         className="relative rounded-xl border bg-card p-4"
@@ -6880,17 +7093,26 @@ function FolderCard({
 
   return (
     <div
-      draggable
+      draggable={!selectMode}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onClick={onOpen}
+      onClick={selectMode ? onToggleSelected : onOpen}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       className={`group/folder relative flex items-center gap-3 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer ${
         isDropTarget ? "border-primary bg-primary/10 ring-1 ring-primary" : ""
-      } ${isDragging ? "opacity-40" : ""}`}
+      } ${isDragging ? "opacity-40" : ""} ${
+        selectMode && selected ? "ring-2 ring-primary border-primary" : ""
+      }`}
     >
+      {selectMode && (
+        <div className="flex-shrink-0 flex items-center justify-center">
+          {selected
+            ? <CheckCircle2 size={18} className="text-primary" />
+            : <Circle size={18} className="text-muted-foreground" />}
+        </div>
+      )}
       <div className="flex-shrink-0 flex items-center justify-center size-9 rounded-lg" style={{ backgroundColor: folder.color + "22" }}>
         <Folder size={16} style={{ color: folder.color }} fill={folder.color} fillOpacity={0.35} />
       </div>
@@ -6898,7 +7120,9 @@ function FolderCard({
         <div className="text-sm font-medium truncate">{folder.name}</div>
         <div className="text-[11px] text-muted-foreground mt-0.5">{count}개 메모</div>
       </div>
-      {/* 3-dot 메뉴 — 이름·색상 편집 / 삭제. 카드 클릭(폴더 진입)과 분리를 위해 stopPropagation. */}
+      {/* 3-dot 메뉴 — 이름·색상 편집 / 삭제. 카드 클릭(폴더 진입)과 분리를 위해 stopPropagation.
+           선택 모드에선 벌크 툴바로 대체되므로 숨김. */}
+      {!selectMode && (
       <div className="relative flex-shrink-0" onClick={e => e.stopPropagation()}>
         <button
           onClick={() => setMenuOpen(v => !v)}
@@ -6927,15 +7151,22 @@ function FolderCard({
           </>
         )}
       </div>
+      )}
     </div>
   );
 }
 
 function NoteCard({
-  note, folder, folders, menuOpen, onOpen, onToggleMenu, onMove, onDelete,
+  note, folder, folders, menuOpen,
+  selectMode = false, selected = false, onToggleSelected,
+  onOpen, onToggleMenu, onMove, onDelete,
   onDragStart, onDragEnd, onDragOverCard, onDropCard,
 }: {
   note: Note; folder: NoteFolder | null; folders: NoteFolder[]; menuOpen: boolean;
+  // 선택 모드 — 켜지면 카드 클릭이 열기 대신 선택 토글이 되고, 3-dot 메뉴·드래그가 비활성화됨.
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelected?: () => void;
   onOpen: () => void; onToggleMenu: (e: React.MouseEvent) => void;
   onMove: (folderId: string | null) => void; onDelete: () => void;
   onDragStart: (e: React.DragEvent) => void; onDragEnd: (e: React.DragEvent) => void;
@@ -6945,14 +7176,23 @@ function NoteCard({
   const dateStr = note.updatedAt ? note.updatedAt.slice(0, 10) : "";
   return (
     <div
-      draggable
+      draggable={!selectMode}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOverCard}
       onDrop={onDropCard}
-      onClick={onOpen}
-      className="group/note relative flex items-start gap-3 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer"
+      onClick={selectMode ? onToggleSelected : onOpen}
+      className={`group/note relative flex items-start gap-3 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer ${
+        selectMode && selected ? "ring-2 ring-primary border-primary" : ""
+      }`}
     >
+      {selectMode && (
+        <div className="flex-shrink-0 self-center flex items-center justify-center">
+          {selected
+            ? <CheckCircle2 size={18} className="text-primary" />
+            : <Circle size={18} className="text-muted-foreground" />}
+        </div>
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium truncate">{note.title.trim() || "제목 없음"}</span>
@@ -6965,7 +7205,8 @@ function NoteCard({
         </div>
       </div>
 
-      {/* 3-dot 메뉴 — 카드 전체 높이 기준 세로 중앙 */}
+      {/* 3-dot 메뉴 — 카드 전체 높이 기준 세로 중앙. 선택 모드에선 벌크 툴바로 대체되므로 숨김. */}
+      {!selectMode && (
       <div className="relative flex-shrink-0 self-stretch flex items-center" onClick={e => e.stopPropagation()}>
         <button
           onClick={onToggleMenu}
@@ -6993,6 +7234,7 @@ function NoteCard({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
