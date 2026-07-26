@@ -2510,6 +2510,24 @@ function CalendarSection({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   // 다중 반복 설정 모달 열림 여부.
   const [showMultiRepeat, setShowMultiRepeat] = useState(false);
+  // 헤더 "YYYY년 M월" 라벨을 눌렀을 때 뜨는 연/월 점프 팝오버 상태.
+  // 하나씩 이동하지 않고 원하는 연·월로 바로 이동하기 위한 UI.
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [monthPickerYear, setMonthPickerYear] = useState(TODAY_DATE.getFullYear());
+  const monthPickerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!monthPickerOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (monthPickerRef.current && !monthPickerRef.current.contains(e.target as Node)) setMonthPickerOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setMonthPickerOpen(false); };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [monthPickerOpen]);
 
   const blocksRef = useRef(topLevelBlocks);
   useEffect(() => { blocksRef.current = topLevelBlocks; }, [topLevelBlocks]);
@@ -3514,9 +3532,65 @@ function CalendarSection({
             ))}
           </div>
         </div>
-        {/* 중앙: 날짜 라벨만 표시 — 이동 화살표는 아래 요일/날짜 헤더의 좌우 끝으로 이동. */}
-        <div className="flex items-center">
-          <span className="text-xs px-2 text-muted-foreground min-w-[180px] text-center">{headerLabel}</span>
+        {/* 중앙: 날짜 라벨. 클릭하면 연/월 점프 팝오버가 열려 화살표로 한 칸씩 옮기지 않고
+             원하는 연·월로 바로 이동. 위치 계산 단순화를 위해 relative 컨테이너 안에 absolute 팝오버. */}
+        <div className="flex items-center relative" ref={monthPickerRef}>
+          <button
+            onClick={() => { setMonthPickerYear(viewDate.getFullYear()); setMonthPickerOpen(v => !v); }}
+            className="text-xs px-2 py-1 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors min-w-[180px] text-center"
+            title="연·월 바로 이동"
+          >
+            {headerLabel}
+          </button>
+          {monthPickerOpen && (
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-40 w-64 rounded-lg border border-border bg-card shadow-lg p-3">
+              {/* 연도 조절 — 화살표로 ±1, 가운데 숫자 클릭하면 오늘로 리셋. */}
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  onClick={() => setMonthPickerYear(y => y - 1)}
+                  className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  title="이전 해"
+                ><ChevronLeft size={14} /></button>
+                <button
+                  onClick={() => setMonthPickerYear(TODAY_DATE.getFullYear())}
+                  className="text-sm font-semibold hover:text-primary transition-colors"
+                  title="올해로"
+                >{monthPickerYear}년</button>
+                <button
+                  onClick={() => setMonthPickerYear(y => y + 1)}
+                  className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  title="다음 해"
+                ><ChevronRight size={14} /></button>
+              </div>
+              {/* 3×4 월 그리드. 현재 보고 있는 월은 primary 강조, 오늘의 달은 얇은 링. */}
+              <div className="grid grid-cols-4 gap-1.5">
+                {Array.from({ length: 12 }, (_, i) => i).map(mi => {
+                  const isCurrentView = monthPickerYear === viewDate.getFullYear() && mi === viewDate.getMonth();
+                  const isToday = monthPickerYear === TODAY_DATE.getFullYear() && mi === TODAY_DATE.getMonth();
+                  return (
+                    <button
+                      key={mi}
+                      onClick={() => {
+                        setViewDate(new Date(monthPickerYear, mi, 1));
+                        setMonthPickerOpen(false);
+                      }}
+                      className={`px-2 py-1.5 text-xs rounded-md transition-colors ${
+                        isCurrentView
+                          ? "bg-primary text-primary-foreground font-medium"
+                          : isToday
+                            ? "ring-1 ring-inset ring-primary/40 hover:bg-muted"
+                            : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                      }`}
+                    >{mi + 1}월</button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => { setViewDate(TODAY_DATE); setMonthPickerOpen(false); }}
+                className="mt-3 w-full px-3 py-1.5 text-xs rounded-md border border-border hover:bg-muted transition-colors"
+              >오늘로</button>
+            </div>
+          )}
         </div>
         <div className="flex-1 flex items-center gap-2 justify-end">
           {calView !== "month" && (
