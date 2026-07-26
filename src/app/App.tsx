@@ -2510,10 +2510,13 @@ function CalendarSection({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   // 다중 반복 설정 모달 열림 여부.
   const [showMultiRepeat, setShowMultiRepeat] = useState(false);
-  // 헤더 "YYYY년 M월" 라벨을 눌렀을 때 뜨는 연/월 점프 팝오버 상태.
-  // 하나씩 이동하지 않고 원하는 연·월로 바로 이동하기 위한 UI.
+  // 헤더 "YYYY년 M월" 라벨을 눌렀을 때 뜨는 연/월(/일) 점프 팝오버 상태.
+  // 월 뷰: 연 + 12개월 그리드 → 클릭 즉시 이동.
+  // 일/주 뷰: 연 + 월 그리드로 표시할 달을 선택 → 그 아래 일 그리드에서 원하는 날짜 클릭.
+  // 하나씩 화살표로 옮기지 않고 원하는 시점으로 바로 이동하기 위한 UI.
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [monthPickerYear, setMonthPickerYear] = useState(TODAY_DATE.getFullYear());
+  const [monthPickerMonth, setMonthPickerMonth] = useState(TODAY_DATE.getMonth());
   const monthPickerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!monthPickerOpen) return;
@@ -3536,15 +3539,19 @@ function CalendarSection({
              원하는 연·월로 바로 이동. 위치 계산 단순화를 위해 relative 컨테이너 안에 absolute 팝오버. */}
         <div className="flex items-center relative" ref={monthPickerRef}>
           <button
-            onClick={() => { setMonthPickerYear(viewDate.getFullYear()); setMonthPickerOpen(v => !v); }}
+            onClick={() => {
+              setMonthPickerYear(viewDate.getFullYear());
+              setMonthPickerMonth(viewDate.getMonth());
+              setMonthPickerOpen(v => !v);
+            }}
             className="text-xs px-2 py-1 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors min-w-[180px] text-center"
-            title="연·월 바로 이동"
+            title={calView === "month" ? "연·월 바로 이동" : calView === "week" ? "연·월·주 바로 이동" : "연·월·일 바로 이동"}
           >
             {headerLabel}
           </button>
           {monthPickerOpen && (
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-40 w-64 rounded-lg border border-border bg-card shadow-lg p-3">
-              {/* 연도 조절 — 화살표로 ±1, 가운데 숫자 클릭하면 오늘로 리셋. */}
+            <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-1 z-40 rounded-lg border border-border bg-card shadow-lg p-3 ${calView === "month" ? "w-64" : "w-72"}`}>
+              {/* 연도 조절 — 화살표로 ±1, 가운데 숫자 클릭하면 올해로 리셋. */}
               <div className="flex items-center justify-between mb-3">
                 <button
                   onClick={() => setMonthPickerYear(y => y - 1)}
@@ -3562,33 +3569,99 @@ function CalendarSection({
                   title="다음 해"
                 ><ChevronRight size={14} /></button>
               </div>
-              {/* 3×4 월 그리드. 현재 보고 있는 월은 primary 강조, 오늘의 달은 얇은 링. */}
+              {/* 3×4 월 그리드.
+                 - 월 뷰: 클릭 즉시 해당 월로 점프하고 팝오버 닫음.
+                 - 일/주 뷰: 클릭하면 아래 일 그리드가 그 달로 바뀔 뿐 아직 이동하지 않음. */}
               <div className="grid grid-cols-4 gap-1.5">
                 {Array.from({ length: 12 }, (_, i) => i).map(mi => {
                   const isCurrentView = monthPickerYear === viewDate.getFullYear() && mi === viewDate.getMonth();
                   const isToday = monthPickerYear === TODAY_DATE.getFullYear() && mi === TODAY_DATE.getMonth();
+                  const isPickerMonth = calView !== "month" && mi === monthPickerMonth;
                   return (
                     <button
                       key={mi}
                       onClick={() => {
-                        setViewDate(new Date(monthPickerYear, mi, 1));
-                        setMonthPickerOpen(false);
+                        if (calView === "month") {
+                          setViewDate(new Date(monthPickerYear, mi, 1));
+                          setMonthPickerOpen(false);
+                        } else {
+                          setMonthPickerMonth(mi);
+                        }
                       }}
                       className={`px-2 py-1.5 text-xs rounded-md transition-colors ${
                         isCurrentView
                           ? "bg-primary text-primary-foreground font-medium"
-                          : isToday
-                            ? "ring-1 ring-inset ring-primary/40 hover:bg-muted"
-                            : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                          : isPickerMonth
+                            ? "bg-muted font-medium text-foreground"
+                            : isToday
+                              ? "ring-1 ring-inset ring-primary/40 hover:bg-muted"
+                              : "hover:bg-muted text-muted-foreground hover:text-foreground"
                       }`}
                     >{mi + 1}월</button>
                   );
                 })}
               </div>
+              {/* 일/주 뷰에서만 뜨는 일 그리드 — 원하는 날짜/주로 바로 이동.
+                 주 뷰에선 그 날이 포함된 주(getWeekDays) 로, 일 뷰에선 그 날로 이동. */}
+              {calView !== "month" && (() => {
+                const firstDow = new Date(monthPickerYear, monthPickerMonth, 1).getDay();
+                const daysInMonth = new Date(monthPickerYear, monthPickerMonth + 1, 0).getDate();
+                const cells: Array<number | null> = [
+                  ...Array<null>(firstDow).fill(null),
+                  ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+                ];
+                while (cells.length % 7 !== 0) cells.push(null);
+                // 주 뷰에서 현재 보고 있는 주에 속한 날짜들(YYYY-MM-DD) — 강조 배경용.
+                const currentWeekDates = calView === "week"
+                  ? new Set(getWeekDays(viewDate).map(d => toDateStr(d)))
+                  : new Set<string>();
+                const currentDayStr = calView === "day" ? toDateStr(viewDate) : "";
+                return (
+                  <div className="mt-3 pt-3 border-t border-border">
+                    <div className="grid grid-cols-7 gap-0.5 mb-1">
+                      {["일","월","화","수","목","금","토"].map((d, i) => (
+                        <div key={d} className={`text-[10px] text-center py-0.5 font-medium ${i===0?"text-red-400":i===6?"text-blue-400":"text-muted-foreground"}`}>{d}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-0.5">
+                      {cells.map((day, idx) => {
+                        if (!day) return <div key={`e-${idx}`} />;
+                        const cellDate = new Date(monthPickerYear, monthPickerMonth, day);
+                        const cellStr = toDateStr(cellDate);
+                        const isSelected = calView === "day"
+                          ? cellStr === currentDayStr
+                          : currentWeekDates.has(cellStr);
+                        const isTodayCell = cellStr === TODAY_STR;
+                        const col = idx % 7;
+                        const holiday = isHoliday(cellStr);
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setViewDate(cellDate);
+                              setMonthPickerOpen(false);
+                            }}
+                            title={getHoliday(cellStr) ?? undefined}
+                            className={`text-[11px] py-1 rounded transition-colors ${
+                              isSelected
+                                ? "bg-primary/15 text-primary font-medium"
+                                : isTodayCell
+                                  ? "ring-1 ring-inset ring-primary/40 hover:bg-muted"
+                                  : "hover:bg-muted"
+                            } ${
+                              isSelected ? "" : (holiday || col === 0) ? "text-red-400" : col === 6 ? "text-blue-400" : "text-foreground"
+                            }`}
+                          >{day}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
               <button
                 onClick={() => { setViewDate(TODAY_DATE); setMonthPickerOpen(false); }}
                 className="mt-3 w-full px-3 py-1.5 text-xs rounded-md border border-border hover:bg-muted transition-colors"
-              >오늘로</button>
+              >{calView === "day" ? "오늘로" : calView === "week" ? "이번 주로" : "이번 달로"}</button>
             </div>
           )}
         </div>
