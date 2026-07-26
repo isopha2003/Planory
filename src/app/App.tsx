@@ -23,7 +23,7 @@ import {
   fetchTodoChecklistItems, createTodoChecklistItem, toggleTodoChecklistItemRow, deleteTodoChecklistItemRow,
   fetchAllTodoChecklistItems,
   fetchNotes, createNote, updateNote, deleteNote, moveNoteToFolder, reorderNotes,
-  fetchNoteFolders, createFolder, updateFolder, deleteFolder,
+  fetchNoteFolders, createFolder, updateFolder, deleteFolder, reorderFolders,
   type Note, type NoteFolder,
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
@@ -6341,6 +6341,9 @@ function NoteList({
   // 드래그 오버 중인 대상: 특정 폴더 id, "back"(뒤로가기 = 루트로 이동), null(없음)
   const [dropFolderId, setDropFolderId] = useState<string | "back" | null>(null);
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
+  // 폴더 카드 재정렬 시 드래그 중인 폴더 id — 노트 드래그와 분리해서 다뤄야 하고,
+  // FolderCard 사이의 drop 대상 하이라이트/드래그 소스 tint 용.
+  const [dragFolderId, setDragFolderId] = useState<string | null>(null);
 
   const categories = Array.from(new Set(notes.map(n => n.category).filter(Boolean)));
   const inDrafts = viewFolderId === "drafts";
@@ -6429,6 +6432,31 @@ function NoteList({
     setSortMode("custom");
     setNotes(ns => [...ns].sort((a, b) => finalOrder.indexOf(a.id) - finalOrder.indexOf(b.id)).map((n, i) => ({ ...n, sortOrder: i })));
     try { await reorderNotes(finalOrder); } catch (e) { notifyError("메모 순서 저장 실패")(e); }
+  };
+
+  // 정렬된 폴더 목록 — 노트와 같은 sortMode 를 공유해 UI 상 일관되게 정렬.
+  // 폴더에는 updated_at 이 없어서 date 축은 created_at 을 사용.
+  const sortedFolders = [...folders].sort((a, b) => {
+    switch (sortMode) {
+      case "title-asc": return (a.name || "이름 없음").localeCompare(b.name || "이름 없음");
+      case "title-desc": return (b.name || "이름 없음").localeCompare(a.name || "이름 없음");
+      case "date-asc": return a.createdAt.localeCompare(b.createdAt);
+      case "date-desc": return b.createdAt.localeCompare(a.createdAt);
+      default: return a.sortOrder - b.sortOrder;
+    }
+  });
+
+  // 폴더 카드 간 드래그로 재정렬 — 노트 재정렬과 동일한 패턴. custom 모드로 자동 전환.
+  const handleReorderFolder = async (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const ids = sortedFolders.map(f => f.id);
+    const from = ids.indexOf(draggedId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    setSortMode("custom");
+    setFolders(fs => [...fs].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)).map((f, i) => ({ ...f, sortOrder: i })));
+    try { await reorderFolders(ids); } catch (e) { notifyError("폴더 순서 저장 실패")(e); }
   };
 
   return (
@@ -6613,12 +6641,13 @@ function NoteList({
           </div>
         ) : (
           <div className="space-y-2">
-            {viewFolderId === null && folders.map(f => (
+            {viewFolderId === null && sortedFolders.map(f => (
               <FolderCard
                 key={f.id}
                 folder={f}
                 count={notes.filter(n => n.folderId === f.id).length}
                 isDropTarget={dropFolderId === f.id}
+                isDragging={dragFolderId === f.id}
                 isEditing={editingFolderId === f.id}
                 paletteColors={paletteColors}
                 onAddPaletteColor={onAddPaletteColor}
@@ -6628,9 +6657,23 @@ function NoteList({
                 onCancelEdit={() => setEditingFolderId(null)}
                 onSaveEdit={changes => { handleUpdateFolder(f.id, changes); setEditingFolderId(null); }}
                 onDelete={() => handleDeleteFolder(f.id)}
-                onDragOver={e => { if (dragNoteId) { e.preventDefault(); setDropFolderId(f.id); } }}
+                onDragStart={e => { e.dataTransfer.setData("folderId", f.id); e.dataTransfer.effectAllowed = "move"; setDragFolderId(f.id); }}
+                onDragEnd={() => { setDragFolderId(null); setDropFolderId(null); }}
+                // 노트 드롭(폴더 이동) 과 폴더 드롭(재정렬) 을 같은 자리에서 처리.
+                onDragOver={e => {
+                  if (dragNoteId) { e.preventDefault(); setDropFolderId(f.id); }
+                  else if (dragFolderId && dragFolderId !== f.id) { e.preventDefault(); setDropFolderId(f.id); }
+                }}
                 onDragLeave={() => setDropFolderId(null)}
-                onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData("noteId"); if (id) handleMoveNote(id, f.id); setDropFolderId(null); }}
+                onDrop={e => {
+                  e.preventDefault();
+                  const noteId = e.dataTransfer.getData("noteId");
+                  const folderIdData = e.dataTransfer.getData("folderId");
+                  if (noteId) { handleMoveNote(noteId, f.id); }
+                  else if (folderIdData && folderIdData !== f.id) { handleReorderFolder(folderIdData, f.id); }
+                  setDropFolderId(null);
+                  setDragFolderId(null);
+                }}
               />
             ))}
             {shown.map(n => (
@@ -6715,12 +6758,12 @@ function FolderDeleteConfirmModal({
 // 클릭하면 폴더 안으로 진입. 우측 3-dot 메뉴로 이름·색상 편집이나 삭제.
 // isEditing 상태에서는 카드 본문이 이름 입력 + 팔레트 폼으로 대체됨.
 function FolderCard({
-  folder, count, isDropTarget, isEditing, paletteColors,
+  folder, count, isDropTarget, isDragging, isEditing, paletteColors,
   onOpen, onStartEdit, onCancelEdit, onSaveEdit, onDelete,
   onAddPaletteColor, onRemovePaletteColor,
-  onDragOver, onDragLeave, onDrop,
+  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }: {
-  folder: NoteFolder; count: number; isDropTarget: boolean; isEditing: boolean;
+  folder: NoteFolder; count: number; isDropTarget: boolean; isDragging: boolean; isEditing: boolean;
   paletteColors: string[];
   onOpen: () => void;
   onStartEdit: () => void;
@@ -6729,6 +6772,8 @@ function FolderCard({
   onDelete: () => void;
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
@@ -6825,13 +6870,16 @@ function FolderCard({
 
   return (
     <div
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onClick={onOpen}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       className={`group/folder relative flex items-center gap-3 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer ${
         isDropTarget ? "border-primary bg-primary/10 ring-1 ring-primary" : ""
-      }`}
+      } ${isDragging ? "opacity-40" : ""}`}
     >
       <div className="flex-shrink-0 flex items-center justify-center size-9 rounded-lg" style={{ backgroundColor: folder.color + "22" }}>
         <Folder size={16} style={{ color: folder.color }} fill={folder.color} fillOpacity={0.35} />

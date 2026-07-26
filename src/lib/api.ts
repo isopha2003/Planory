@@ -811,12 +811,14 @@ export interface NoteFolder {
   name: string;
   color: string;
   sortOrder: number;
+  // 노트와 달리 폴더에는 updated_at 이 없어, "날짜순" 정렬 시 이 값을 사용.
+  createdAt: string;
 }
 
 export async function fetchNoteFolders(): Promise<NoteFolder[]> {
   const db = await getDb();
   const rows = await db.select<any[]>("SELECT * FROM note_folders ORDER BY sort_order, created_at");
-  return rows.map(r => ({ id: r.id, name: r.name, color: r.color, sortOrder: r.sort_order ?? 0 }));
+  return rows.map(r => ({ id: r.id, name: r.name, color: r.color, sortOrder: r.sort_order ?? 0, createdAt: r.created_at ?? "" }));
 }
 
 export async function createFolder(f: { name: string; color: string }): Promise<NoteFolder> {
@@ -828,7 +830,19 @@ export async function createFolder(f: { name: string; color: string }): Promise<
     "INSERT INTO note_folders (id, name, color, sort_order) VALUES (?, ?, ?, ?)",
     [id, f.name, f.color, sortOrder]
   );
-  return { id, name: f.name, color: f.color, sortOrder };
+  // created_at 은 DB default(datetime('now')) 로 채워짐 — 갓 만든 행을 다시 읽어 그 값을 반환.
+  const row = await db.select<any[]>("SELECT created_at FROM note_folders WHERE id = ?", [id]);
+  const createdAt = row[0]?.created_at ?? "";
+  return { id, name: f.name, color: f.color, sortOrder, createdAt };
+}
+
+// 폴더 순서 저장 — reorderNotes 와 동일한 패턴(개별 UPDATE, 트랜잭션 없이 부분 반영 감수).
+export async function reorderFolders(orderedIds: string[]): Promise<void> {
+  if (orderedIds.length === 0) return;
+  const db = await getDb();
+  for (let i = 0; i < orderedIds.length; i++) {
+    await db.execute("UPDATE note_folders SET sort_order = ? WHERE id = ?", [i, orderedIds[i]]);
+  }
 }
 
 export async function updateFolder(id: string, changes: { name?: string; color?: string }): Promise<void> {
