@@ -7561,8 +7561,11 @@ function NoteEditor({
            · 편집 모드 + 마크다운 OFF(기본) = 리치 텍스트 에디터.
            · 편집 모드 + 마크다운 ON = raw textarea + 실시간 프리뷰. */}
       {isView ? (
-        <div className="flex-1 overflow-y-auto px-8 pb-8 min-h-0">
-          <div className={`w-full rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
+        /* 편집 모드의 에디터 패널과 동일한 컨테이너 스펙(padding/gap/overflow)을 재사용해
+             카드 크기·위치가 편집 시와 정확히 일치하도록 맞춤. 카드 자체가 남는 세로 공간을
+             전부 채우고, 넘치는 내용은 카드 안쪽에서 스크롤. */
+        <div className="flex-1 overflow-hidden gap-4 px-8 pb-8 min-h-0 flex">
+          <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
             {content.trim() ? (
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
             ) : (
