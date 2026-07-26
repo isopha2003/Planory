@@ -6261,9 +6261,10 @@ function MemoSection({
   const refreshNotes = async () => { try { setNotes(await fetchNotes()); } catch (e) { notifyError("메모 새로고침 실패")(e); } };
   const refreshFolders = async () => { try { setFolders(await fetchNoteFolders()); } catch (e) { notifyError("폴더 새로고침 실패")(e); } };
 
-  const handleCreateNote = async () => {
+  // 현재 폴더 뷰 안에서 만들면 그 폴더에 속하게 함 — 루트 뷰나 임시 저장 뷰에선 folderId 없음.
+  const handleCreateNote = async (folderId: string | null) => {
     try {
-      const n = await createNote({ title: "", content: "" });
+      const n = await createNote({ title: "", content: "", folderId });
       setNotes(ns => [n, ...ns]);
       setEditingId(n.id);
     } catch (e) { notifyError("새 메모 만들기 실패")(e); }
@@ -6311,7 +6312,7 @@ function NoteList({
   notes: Note[];
   folders: NoteFolder[];
   onOpen: (id: string) => void;
-  onCreateNote: () => void;
+  onCreateNote: (folderId: string | null) => void;
   refreshNotes: () => Promise<void>;
   refreshFolders: () => Promise<void>;
   setNotes: React.Dispatch<React.SetStateAction<Note[]>>;
@@ -6497,7 +6498,8 @@ function NoteList({
               <FolderPlus size={13} /> 새 폴더
             </button>
             <button
-              onClick={onCreateNote}
+              // 폴더 뷰 안에서 만들면 그 폴더에 속하게 함. 루트/임시저장 뷰에선 folderId 없음.
+              onClick={() => onCreateNote(currentFolder ? currentFolder.id : null)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
             >
               <Plus size={13} /> 새 메모
