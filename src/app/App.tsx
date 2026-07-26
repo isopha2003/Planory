@@ -6242,6 +6242,11 @@ function MemoSection({
   const [folders, setFolders] = useState<NoteFolder[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null); // null이면 리스트 뷰
+  // 현재 노출 중인 폴더 뷰 — null=루트, "drafts"=임시 저장, 그 외는 폴더 id.
+  // NoteList 가 아니라 여기서 관리하는 이유: 노트 편집기로 진입하면 NoteList 가 언마운트돼서
+  // 로컬 state 로 두면 편집 후 돌아올 때 뷰가 루트로 초기화됨. 사용자가 방금 있던 폴더에
+  // 그대로 머무르게 하려면 리스트/편집 전환을 넘어 상위에서 보존해야 함.
+  const [viewFolderId, setViewFolderId] = useState<string | null | "drafts">(null);
 
   useEffect(() => {
     (async () => {
@@ -6291,6 +6296,8 @@ function MemoSection({
     <NoteList
       notes={notes}
       folders={folders}
+      viewFolderId={viewFolderId}
+      setViewFolderId={setViewFolderId}
       onOpen={id => setEditingId(id)}
       onCreateNote={handleCreateNote}
       refreshNotes={refreshNotes}
@@ -6306,11 +6313,14 @@ function MemoSection({
 
 // ── 메모 리스트 뷰 ──────────────────────────────────────────────────
 function NoteList({
-  notes, folders, onOpen, onCreateNote, refreshNotes, refreshFolders, setNotes, setFolders,
+  notes, folders, viewFolderId, setViewFolderId,
+  onOpen, onCreateNote, refreshNotes, refreshFolders, setNotes, setFolders,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
 }: {
   notes: Note[];
   folders: NoteFolder[];
+  viewFolderId: string | null | "drafts";
+  setViewFolderId: React.Dispatch<React.SetStateAction<string | null | "drafts">>;
   onOpen: (id: string) => void;
   onCreateNote: (folderId: string | null) => void;
   refreshNotes: () => Promise<void>;
@@ -6323,11 +6333,9 @@ function NoteList({
 }) {
   const [sortMode, setSortMode] = useState<SortMode>("custom");
   const [sortOpen, setSortOpen] = useState(false);
-  // viewFolderId: null이면 루트 뷰(폴더 카드 + 폴더 없는 노트), 폴더 id면 그 폴더의 노트만 노출.
-  // "drafts" 센티널은 임시 저장 탭 — 아직 사용자가 "저장" 버튼으로 확정하지 않은 노트만 노출.
-  // 예전엔 "전체 / 폴더 없음 / 각 폴더" 필터 칩 바가 있었는데, 폴더 자체를 리스트 아이템으로
-  // 두고 클릭으로 진입하는 파일탐색기 스타일이 더 직관적이라 그렇게 재설계.
-  const [viewFolderId, setViewFolderId] = useState<string | null | "drafts">(null);
+  // viewFolderId 는 상위 MemoSection 에서 관리 — 편집기 진입/복귀 시 NoteList 가
+  // 언마운트되므로 여기 두면 초기화됨. 사용자가 폴더에서 메모를 저장 후 돌아왔을 때
+  // 방금 있던 폴더 뷰에 그대로 머무르도록 상위로 끌어올림.
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [menuNoteId, setMenuNoteId] = useState<string | null>(null);
   const [showNewFolder, setShowNewFolder] = useState(false);
