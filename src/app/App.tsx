@@ -1550,8 +1550,9 @@ export default function App() {
              모서리에 딱 붙어야 클릭이 편하므로 우측 컨테이너 자체엔 padding을 두지 않음. */}
         <div data-tauri-drag-region className="flex-1 flex items-stretch items-center justify-end min-w-0">
           <div data-tauri-drag-region className="flex items-center gap-2 px-3 pointer-events-none">
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border/80 bg-background/70 pointer-events-auto">
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap">오늘 달성률</span>
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border/80 bg-background/70 pointer-events-auto" title={`오늘 달성률 ${completionRate}%`}>
+              {/* 좁은 창(<md)에서는 텍스트 라벨을 감춰 % + 원형 게이지만 유지 — 정보 밀도 유지하면서 폭 절약. */}
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap hidden md:inline">오늘 달성률</span>
               <span className="text-[11px] font-semibold tabular-nums text-foreground">{completionRate}%</span>
               <CircleProgress value={completionRate} size={16} strokeWidth={2.5} />
             </div>
@@ -1563,21 +1564,24 @@ export default function App() {
       {/* ── Body (sidebar + main + panel) ── */}
       <div className="flex flex-1 overflow-hidden min-h-0">
 
-        {/* Sidebar */}
-        <nav className="w-48 flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col py-4">
+        {/* Sidebar — 반응형: 창이 좁아지면(<lg = <1024px) 라벨을 감추고 아이콘만 표시(w-14).
+             lg 이상에선 기존처럼 w-48 + 라벨. 최소 폭에서도 사이드바 자체는 유지해
+             섹션 이동이 가능하도록 함(완전히 숨기지는 않음). */}
+        <nav className="w-14 lg:w-48 flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col py-4 transition-[width] duration-150">
           <div className="flex flex-col gap-0.5 px-2">
             {navItems.map(({ id, label, Icon }) => (
               <button
                 key={id}
                 onClick={() => setSection(id)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                title={label}
+                className={`flex items-center justify-center lg:justify-start gap-2.5 px-2 lg:px-3 py-2.5 rounded-lg text-sm transition-all ${
                   section === id
                     ? "bg-primary text-primary-foreground font-medium shadow-sm"
                     : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
                 }`}
               >
                 <Icon size={15} />
-                {label}
+                <span className="hidden lg:inline truncate">{label}</span>
               </button>
             ))}
           </div>
@@ -8084,7 +8088,7 @@ function BlockDetailPanel({
   };
 
   return (
-    <div className="w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
+    <div className="w-60 lg:w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden transition-[width] duration-150">
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border flex-shrink-0">
         <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
@@ -8450,7 +8454,7 @@ function TodoDetailPanel({
   };
 
   return (
-    <div className="w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
+    <div className="w-60 lg:w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden transition-[width] duration-150">
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border flex-shrink-0">
         <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
@@ -8697,7 +8701,7 @@ function DeadlineDetailPanel({
   };
 
   return (
-    <div className="w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
+    <div className="w-60 lg:w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden transition-[width] duration-150">
       {/* Header — 색 스와치는 마감 커스텀 색을 따라감(없으면 D-day 톤). 배지는 항상 D-day 톤. */}
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border flex-shrink-0">
         <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: blockColor }} />
