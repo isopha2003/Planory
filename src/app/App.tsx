@@ -2904,20 +2904,23 @@ function CalendarSection({
             <div key={i} className="flex-1 min-w-0 border-l border-border/40 px-1 py-1 space-y-0.5">
               {cellDeadlines.map(d => {
                 const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
-                const color = deadlineToneHex(daysLeft);
+                // 블록 색은 마감 커스텀 색이 있으면 그것을, 없으면 D-day 톤을 사용.
+                // D-day 배지는 항상 D-day 톤을 그대로 사용해 "얼마나 남았는지" 를 색으로도 즉시 표시.
+                const dayColor = deadlineToneHex(daysLeft);
+                const blockColor = d.color || dayColor;
                 return (
                   <div
                     key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
                     className={`rounded overflow-hidden text-[10px] cursor-pointer transition-all flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
-                    style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
+                    style={{ backgroundColor: blockColor + "28", borderLeft: `3px solid ${blockColor}` }}
                     title="클릭: 상세 열기"
                   >
                     <span
                       className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
-                      style={{ color }}
+                      style={{ color: blockColor }}
                     >{d.title}</span>
-                    <span className="text-[9px] font-semibold leading-none flex-shrink-0" style={{ color }}>
+                    <span className="text-[9px] font-semibold leading-none flex-shrink-0" style={{ color: dayColor }}>
                       {formatDDay(daysLeft)}
                     </span>
                   </div>
@@ -3445,20 +3448,22 @@ function CalendarSection({
                   <div className="space-y-0.5 mb-0.5">
                     {dayDeadlines.map(d => {
                       const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
-                      const color = deadlineToneHex(daysLeft);
+                      // 블록 색은 커스텀 우선, 없으면 D-day 톤. D-day 배지는 항상 D-day 톤.
+                      const dayColor = deadlineToneHex(daysLeft);
+                      const blockColor = d.color || dayColor;
                       return (
                         <div
                           key={d.id}
                           onClick={e => { e.stopPropagation(); onSelectDeadline?.(d); }}
                           className={`rounded overflow-hidden text-[9px] cursor-pointer transition-colors flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
-                          style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
+                          style={{ backgroundColor: blockColor + "28", borderLeft: `3px solid ${blockColor}` }}
                           title="클릭: 상세 열기"
                         >
                           <span
                             className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
-                            style={{ color }}
+                            style={{ color: blockColor }}
                           >{d.title}</span>
-                          <span className="text-[8px] font-semibold leading-none flex-shrink-0" style={{ color }}>
+                          <span className="text-[8px] font-semibold leading-none flex-shrink-0" style={{ color: dayColor }}>
                             {formatDDay(daysLeft)}
                           </span>
                         </div>
@@ -4141,17 +4146,19 @@ function TodoPanel({
     ? deadlines.filter(d => viewDateStrs.includes(d.dueDate)).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
     : [];
 
-  // 마감 카드 — 할 일 카드와 같은 블록 형태(원형 체크 + 스트라이프), 색은 남은 일수 톤 규칙.
-  // 카드 본체 클릭은 상세 열기(할 일 카드와 동일), 원형 체크만 완료 토글.
+  // 마감 카드 — 할 일 카드와 같은 블록 형태(원형 체크 + 스트라이프).
+  // 블록 색(배경/스트라이프/체크 아이콘)은 마감 커스텀 색이 있으면 그것을, 없으면 D-day 톤.
+  // D-day 배지는 항상 D-day 톤(>10 초록, 이하 노랑/주황/빨강)을 그대로 사용.
   const renderDeadlineCard = (d: Deadline) => {
     const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
-    const color = deadlineToneHex(daysLeft);
+    const dayColor = deadlineToneHex(daysLeft);
+    const blockColor = d.color || dayColor;
     return (
       <div
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
         className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer hover:shadow-sm transition-all ${d.completed ? "bg-card opacity-60" : ""}`}
-        style={d.completed ? undefined : { backgroundColor: color + "18", borderColor: color + "55" }}
+        style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
         title="클릭: 상세 열기"
       >
         <button
@@ -4160,17 +4167,17 @@ function TodoPanel({
           title={d.completed ? "완료 해제" : "완료 처리"}
         >
           {d.completed
-            ? <CheckCircle2 size={18} style={{ color }} />
+            ? <CheckCircle2 size={18} style={{ color: blockColor }} />
             : <Circle size={18} className="text-muted-foreground" />}
         </button>
-        <span className="w-0.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+        <span className="w-0.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
         <div className="flex-1 min-w-0">
           <div className={`text-sm font-medium truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</div>
           <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>
         </div>
         <span
           className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-          style={{ backgroundColor: color + "22", color }}
+          style={{ backgroundColor: dayColor + "22", color: dayColor }}
         >{formatDDay(daysLeft)}</span>
       </div>
     );
@@ -4852,22 +4859,24 @@ function DeadlinesSection({
             <div className="space-y-2">
               {overdue.map(d => {
                 const dl = daysLeft(d.dueDate);
-                const color = deadlineToneHex(dl);
+                // 블록 색은 커스텀 우선, D-day 배지는 항상 D-day 톤.
+                const dayColor = deadlineToneHex(dl);
+                const blockColor = d.color || dayColor;
                 return (
                   <div
                     key={d.id}
                     onClick={() => setBoardId(d.id)}
                     className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
-                    style={{ backgroundColor: color + "18", borderColor: color + "55" }}
+                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                   >
-                    <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color }} /></button>
+                    <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium">{d.title}</div>
                       <div className="text-[11px] text-muted-foreground mt-0.5">{d.dueDate}</div>
                     </div>
                     <span
                       className="text-[11px] px-2.5 py-1 rounded-full font-medium flex-shrink-0"
-                      style={{ backgroundColor: color + "22", color }}
+                      style={{ backgroundColor: dayColor + "22", color: dayColor }}
                     >
                       {formatDDay(dl)}
                     </span>
@@ -4891,22 +4900,24 @@ function DeadlinesSection({
           <div className="space-y-2">
             {upcoming.map(d => {
               const dl = daysLeft(d.dueDate);
-              const color = deadlineToneHex(dl);
+              // 블록 색은 커스텀 우선, D-day 배지는 항상 D-day 톤.
+              const dayColor = deadlineToneHex(dl);
+              const blockColor = d.color || dayColor;
               return (
                 <div
                   key={d.id}
                   onClick={() => setBoardId(d.id)}
                   className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
-                  style={{ backgroundColor: color + "18", borderColor: color + "55" }}
+                  style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                 >
-                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color }} /></button>
+                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">{d.title}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">{d.dueDate}</div>
                   </div>
                   <span
                     className="text-[11px] px-2.5 py-1 rounded-full font-medium flex-shrink-0"
-                    style={{ backgroundColor: color + "22", color }}
+                    style={{ backgroundColor: dayColor + "22", color: dayColor }}
                   >
                     {formatDDay(dl)}
                   </span>
@@ -7884,7 +7895,9 @@ function DeadlineDetailPanel({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(deadline.title);
   const daysLeft = daysBetween(parseLocalDate(deadline.dueDate), TODAY_DATE);
-  const color = deadlineToneHex(daysLeft);
+  // D-day 배지 색(항상 규칙) 과 블록 색(커스텀 우선) 을 분리.
+  const dayColor = deadlineToneHex(daysLeft);
+  const blockColor = deadline.color || dayColor;
 
   const commitTitle = () => {
     const trimmed = titleDraft.trim();
@@ -7895,9 +7908,9 @@ function DeadlineDetailPanel({
 
   return (
     <div className="w-72 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
-      {/* Header — 색 스와치는 D-day 톤. 제목 클릭으로 인라인 편집. */}
+      {/* Header — 색 스와치는 마감 커스텀 색을 따라감(없으면 D-day 톤). 배지는 항상 D-day 톤. */}
       <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border flex-shrink-0">
-        <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
+        <span className="size-3 rounded-sm flex-shrink-0" style={{ backgroundColor: blockColor }} />
         {editingTitle ? (
           <input
             autoFocus
@@ -7922,7 +7935,7 @@ function DeadlineDetailPanel({
         )}
         <span
           className="text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-          style={{ backgroundColor: color + "22", color }}
+          style={{ backgroundColor: dayColor + "22", color: dayColor }}
         >{formatDDay(daysLeft)}</span>
       </div>
 
@@ -7952,7 +7965,7 @@ function DeadlineDetailPanel({
           }`}
         >
           {deadline.completed
-            ? <CheckCircle2 size={16} style={{ color }} />
+            ? <CheckCircle2 size={16} style={{ color: blockColor }} />
             : <Circle size={16} className="text-muted-foreground" />}
           <span className={`text-xs ${deadline.completed ? "text-muted-foreground line-through" : ""}`}>
             {deadline.completed ? "완료됨 — 다시 열기" : "완료 처리"}
