@@ -5386,7 +5386,7 @@ function KanbanBoard({
                               onClose={() => setShowCustomColor(false)}
                             />
                           )}
-                          {/* 체크리스트 — 블록/할 일 상세와 동일한 무제한 중첩 ChecklistNode.
+                          {/* 체크리스트 — 블록 바로 아래 단계만 추가 가능. 하위 항목 중첩은 지원하지 않음.
                                항목 추가/토글/삭제는 저장 버튼과 무관하게 즉시 반영. */}
                           <div className="pt-0.5">
                             <div className="text-[10px] font-medium text-muted-foreground mb-1">체크리스트</div>
@@ -5399,7 +5399,6 @@ function KanbanBoard({
                                   depth={0}
                                   onToggle={toggleCheckItem}
                                   onDelete={deleteCheckItem}
-                                  onAddChild={(text, pid) => addCheckItem(card.id, text, pid)}
                                 />
                               ))}
                               <NewChecklistItemForm onAdd={text => addCheckItem(card.id, text)} />
@@ -5583,7 +5582,6 @@ function KanbanBoard({
                             depth={0}
                             onToggle={toggleNewCheckItem}
                             onDelete={deleteNewCheckItem}
-                            onAddChild={addNewCheckItem}
                           />
                         ))}
                         <NewChecklistItemForm onAdd={text => addNewCheckItem(text)} />
@@ -7368,7 +7366,7 @@ function BlockDetailPanel({
           />
         </div>
 
-        {/* 체크리스트 — 무제한 중첩. todo 상세와 동일한 ChecklistNode 컴포넌트. */}
+        {/* 체크리스트 — 블록 바로 아래 단계만 추가 가능. todo 상세와 동일한 ChecklistNode 컴포넌트. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-2">체크리스트</div>
           <div className="space-y-0.5">
@@ -7380,7 +7378,6 @@ function BlockDetailPanel({
                 depth={0}
                 onToggle={toggleChecklistItem}
                 onDelete={deleteChecklistItem}
-                onAddChild={addChecklistItem}
               />
             ))}
             <NewChecklistItemForm onAdd={text => addChecklistItem(text)} />
@@ -7431,21 +7428,17 @@ function BlockDetailPanel({
 // ── Checklist item — recursive, unlimited nesting ─────────────────
 // Block 과 Todo 양쪽 체크리스트를 동일한 컴포넌트로 렌더링. 최소 필드만 요구.
 type ChecklistNodeItem = { id: string; parentItemId?: string; text: string; completed: boolean };
+// 새 항목은 블록 바로 아래(depth 0) 로만 추가됨 — 하위 항목 추가 UI 는 제거됨.
+// 기존 데이터에 남아 있는 중첩 항목은 그대로 표시(호환), 다만 더 깊이 파고들 수는 없음.
 function ChecklistNode({
-  item, items, depth, onToggle, onDelete, onAddChild,
+  item, items, depth, onToggle, onDelete,
 }: {
   item: ChecklistNodeItem;
   items: ChecklistNodeItem[];
   depth: number;
   onToggle: (id: string, completed: boolean) => void;
   onDelete: (id: string) => void;
-  // (text, parentItemId) 순서 — addChecklistItem의 시그니처와 일치시켜야 함.
-  // 예전에 (parentItemId, text)로 잘못 선언돼 있어 addChecklistItem을 그대로 넘기면
-  // 인자 순서가 뒤집혀 text 자리에 부모 UUID, parent_item_id 자리에 사용자 입력이
-  // 들어가 하위 항목이 완전히 깨져 저장되던 버그.
-  onAddChild: (text: string, parentItemId?: string) => void;
 }) {
-  const [showAdd, setShowAdd] = useState(false);
   const kids = items.filter(i => i.parentItemId === item.id);
 
   return (
@@ -7459,13 +7452,6 @@ function ChecklistNode({
         </button>
         <span className={`flex-1 min-w-0 truncate ${item.completed ? "line-through text-muted-foreground" : ""}`}>{item.text}</span>
         <button
-          onClick={() => setShowAdd(v => !v)}
-          title="하위 항목 추가"
-          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity flex-shrink-0"
-        >
-          <Plus size={11} />
-        </button>
-        <button
           onClick={() => onDelete(item.id)}
           title="삭제"
           className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity flex-shrink-0"
@@ -7473,17 +7459,8 @@ function ChecklistNode({
           <X size={11} />
         </button>
       </div>
-      {showAdd && (
-        <div style={{ marginLeft: 18 }}>
-          <NewChecklistItemForm
-            autoFocus
-            onAdd={text => { onAddChild(text, item.id); setShowAdd(false); }}
-            onCancel={() => setShowAdd(false)}
-          />
-        </div>
-      )}
       {kids.map(k => (
-        <ChecklistNode key={k.id} item={k} items={items} depth={depth + 1} onToggle={onToggle} onDelete={onDelete} onAddChild={onAddChild} />
+        <ChecklistNode key={k.id} item={k} items={items} depth={depth + 1} onToggle={onToggle} onDelete={onDelete} />
       ))}
     </div>
   );
@@ -7757,7 +7734,7 @@ function TodoDetailPanel({
           />
         </div>
 
-        {/* 체크리스트 — 무제한 중첩. 블록의 체크리스트와 동일한 ChecklistNode 컴포넌트. */}
+        {/* 체크리스트 — 블록 바로 아래 단계만 추가 가능. 블록의 체크리스트와 동일한 ChecklistNode 컴포넌트. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-2">체크리스트</div>
           <div className="space-y-0.5">
@@ -7769,7 +7746,6 @@ function TodoDetailPanel({
                 depth={0}
                 onToggle={onToggleChecklistItem}
                 onDelete={onDeleteChecklistItem}
-                onAddChild={onAddChecklistItem}
               />
             ))}
             <NewChecklistItemForm onAdd={text => onAddChecklistItem(text)} />
