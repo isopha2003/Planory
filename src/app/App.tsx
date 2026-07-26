@@ -2611,9 +2611,6 @@ function CalendarSection({
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   };
-  // 월 뷰 셀 클릭으로 새 todo 인라인 입력 중인 날짜 & 각 셀 별 draft 입력값.
-  const [monthEditing, setMonthEditing] = useState<string | null>(null);
-  const [monthDrafts, setMonthDrafts] = useState<Record<string, string>>({});
   // 월 뷰 셀 hover — 마우스 올리면 "새 일정" 프리뷰 그림자를 띄우기 위한 상태.
   const [monthHoverDate, setMonthHoverDate] = useState<string | null>(null);
   // 우클릭 컨텍스트 메뉴 — 화면 절대 좌표.
@@ -3478,18 +3475,16 @@ function CalendarSection({
             const dayBlocks = blocks
               .filter(b => b.date === dateStr && b.countInCompletion !== false)
               .sort((a, b) => (a.startH * 60 + a.startM) - (b.startH * 60 + b.startM));
-            const monthAddDraft = monthDrafts[dateStr] ?? "";
-
-            const showHoverGhost = monthHoverDate === dateStr && monthEditing !== dateStr;
+            const showHoverGhost = monthHoverDate === dateStr;
             return (
               <div key={dateStr}
                 onMouseEnter={() => setMonthHoverDate(dateStr)}
                 onMouseLeave={() => setMonthHoverDate(prev => prev === dateStr ? null : prev)}
                 className={`min-h-0 min-w-0 overflow-hidden p-1.5 relative flex flex-col ${col!==6?"border-r border-border":""} ${row<totalRows-1?"border-b border-border":""} ${isToday?"ring-1 ring-inset ring-primary/40":""} ${isFuture?"bg-muted/5":""}`}
                 onClick={e => {
-                  // 셀 배경 직접 클릭 → 새 todo 인라인 입력 오픈.
+                  // 셀 배경 직접 클릭 → 일/주 뷰와 동일하게 새 할 일 생성 + 상세 패널 오픈.
                   if (e.target !== e.currentTarget) return;
-                  setMonthEditing(dateStr);
+                  onAddTodo({ title: "새 할 일", date: dateStr }, { openInline: true });
                 }}
               >
                 <div className="flex items-center justify-start mb-1 gap-1.5 min-w-0">
@@ -3588,39 +3583,14 @@ function CalendarSection({
                     );
                   })}
                 </div>
-                {/* 새 todo 인라인 입력 — 셀 클릭으로 열리며 Enter/Escape/blur 로 확정/취소 */}
-                {monthEditing === dateStr && (
-                  <input
-                    autoFocus
-                    value={monthAddDraft}
-                    onChange={e => setMonthDrafts(d => ({ ...d, [dateStr]: e.target.value }))}
-                    onClick={e => e.stopPropagation()}
-                    onKeyDown={e => {
-                      if (e.key === "Enter") {
-                        const v = (monthDrafts[dateStr] ?? "").trim();
-                        if (v) onAddTodo({ title: v, date: dateStr });
-                        setMonthDrafts(d => ({ ...d, [dateStr]: "" }));
-                        setMonthEditing(null);
-                      } else if (e.key === "Escape") {
-                        setMonthDrafts(d => ({ ...d, [dateStr]: "" }));
-                        setMonthEditing(null);
-                      }
-                    }}
-                    onBlur={() => {
-                      const v = (monthDrafts[dateStr] ?? "").trim();
-                      if (v) onAddTodo({ title: v, date: dateStr });
-                      setMonthDrafts(d => ({ ...d, [dateStr]: "" }));
-                      setMonthEditing(null);
-                    }}
-                    placeholder="새 일정"
-                    className="mt-1 w-full px-1 py-0.5 rounded text-[9px] bg-transparent border border-primary/40 outline-none placeholder:text-muted-foreground/60"
-                  />
-                )}
                 {/* Hover ghost — 셀에 마우스 올리면 "새 일정 추가" 프리뷰가 그림자와 함께 뜸.
-                     click 은 부모 셀로 버블 → monthEditing 열림. */}
+                     클릭 시 셀 배경 클릭과 동일하게 새 할 일 생성 + 상세 패널 오픈. */}
                 {showHoverGhost && (
                   <div
-                    onClick={e => { e.stopPropagation(); setMonthEditing(dateStr); }}
+                    onClick={e => {
+                      e.stopPropagation();
+                      onAddTodo({ title: "새 할 일", date: dateStr }, { openInline: true });
+                    }}
                     className="mt-1 flex items-center gap-1 px-1 py-0.5 rounded text-[9px] bg-card border border-dashed border-primary/40 text-muted-foreground/80 shadow-md cursor-pointer hover:text-primary hover:border-primary/70 transition-colors pointer-events-auto"
                     title="이 날짜에 새 일정 추가"
                   >
