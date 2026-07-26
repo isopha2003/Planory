@@ -1215,8 +1215,33 @@ export default function App() {
   // 템플릿(카테고리) 색상·이름 수정 — 낙관적 갱신 후 DB 반영, 실패 시 새로 fetch.
   // 카테고리 색은 여러 화면(템플릿 패널, 블록 카드, 상세 패널)에서 templates 배열의 color를
   // 즉시 참조하므로 setTemplates만 갱신해도 전부 재렌더됨.
+  //
+  // 이름이 바뀌면 category 컬럼(문자열 매칭)을 쓰는 blocks/todos 도 함께 갱신 — 그렇지 않으면
+  // 렌더 시 getCategoryColor(templates, oldName) 조회가 실패해 미분류 톤으로 튕겨나감.
   const updateTemplate = (id: string, changes: { title?: string; color?: string; tags?: string[] }) => {
+    const prev = templates.find(x => x.id === id);
+    const oldTitle = prev?.title;
     setTemplates(ts => ts.map(x => (x.id === id ? { ...x, ...changes } : x)));
+
+    if (changes.title !== undefined && oldTitle !== undefined && changes.title !== oldTitle) {
+      const newTitle = changes.title;
+      // 낙관적 로컬 갱신 후, 매칭된 각 로우에 대해 개별 UPDATE 를 순차 실행.
+      const matchingTodos = todos.filter(t => t.category === oldTitle);
+      const matchingBlocks = blocks.filter(b => b.category === oldTitle);
+      if (matchingTodos.length > 0) {
+        setTodos(ts => ts.map(t => t.category === oldTitle ? { ...t, category: newTitle } : t));
+        for (const t of matchingTodos) {
+          updateTodo(t.id, { category: newTitle }).catch(notifyError("할 일 카테고리 갱신 실패"));
+        }
+      }
+      if (matchingBlocks.length > 0) {
+        setBlocks(bs => bs.map(b => b.category === oldTitle ? { ...b, category: newTitle } : b));
+        for (const b of matchingBlocks) {
+          patchBlock(b.id, { category: newTitle }).catch(notifyError("블록 카테고리 갱신 실패"));
+        }
+      }
+    }
+
     updateTemplateRow(id, changes).catch(e => {
       notifyError("템플릿 수정 실패")(e);
       fetchTemplates().then(setTemplates).catch(() => {});
@@ -3837,27 +3862,22 @@ function CalendarSection({
                           setDragTplId(t.id);
                         }}
                         onDragEnd={() => { setDragTplId(null); setDropTarget(null); }}
+                        // 행 어디를 클릭해도 편집 팝오버 토글 — HTML5 drag 는 임계값 이상 움직였을 때만
+                        // 발화하므로 진짜 클릭과 드래그는 자동으로 구분됨.
+                        onClick={() => {
+                          if (editing) {
+                            setEditingTplId(null);
+                            setShowEditRowCustomColor(false);
+                          } else {
+                            setEditingTplId(t.id);
+                            setEditingTplNameDraft(t.title);
+                            setShowEditRowCustomColor(false);
+                          }
+                        }}
                         className="group/tpl flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-sidebar-accent cursor-grab active:cursor-grabbing transition-colors text-xs select-none">
-                        {/* 색 스와치 자체를 클릭 대상으로 — 드래그 이벤트를 막고 편집 팝오버 토글.
-                             편집 중인 행은 링으로 강조해서 지금 편집 대상이 명확히 보이게 함. */}
-                        <button
-                          type="button"
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (editing) {
-                              setEditingTplId(null);
-                              setShowEditRowCustomColor(false);
-                            } else {
-                              setEditingTplId(t.id);
-                              setEditingTplNameDraft(t.title);
-                              setShowEditRowCustomColor(false);
-                            }
-                          }}
-                          onMouseDown={e => e.stopPropagation()}
-                          onDragStart={e => { e.stopPropagation(); e.preventDefault(); }}
-                          draggable={false}
-                          title="이름·색상 변경"
-                          className={`size-3.5 rounded-sm flex-shrink-0 transition-transform hover:scale-110 ${editing ? "ring-2 ring-offset-1 ring-offset-sidebar ring-foreground/40" : ""}`}
+                        {/* 편집 중인 행은 스와치 링으로 강조 — 지금 편집 대상이 명확히 보이게 함. */}
+                        <span
+                          className={`size-3.5 rounded-sm flex-shrink-0 ${editing ? "ring-2 ring-offset-1 ring-offset-sidebar ring-foreground/40" : ""}`}
                           style={{ backgroundColor: t.color }}
                         />
                         <span className="flex-1 truncate text-foreground/80">{t.title}</span>
