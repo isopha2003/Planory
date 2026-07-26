@@ -1663,7 +1663,13 @@ export default function App() {
               focusSecByDate={focusSecByDate}
             />
           )}
-          {section === "memo" && <MemoSection />}
+          {section === "memo" && (
+            <MemoSection
+              paletteColors={paletteColors}
+              onAddPaletteColor={addPaletteColor}
+              onRemovePaletteColor={removePaletteColor}
+            />
+          )}
           {section === "settings" && (
             <SettingsSection
               pomodoroOn={pomodoroOn} setPomodoroOn={setPomodoroOn}
@@ -6225,7 +6231,13 @@ function CustomColorPickerInline({ initial, onAdd, onClose }: {
 // 마크다운 프리뷰 공용 클래스
 const PROSE_CLASS = "prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:my-2 prose-li:my-1 prose-code:before:hidden prose-code:after:hidden prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-a:text-primary";
 
-function MemoSection() {
+function MemoSection({
+  paletteColors, onAddPaletteColor, onRemovePaletteColor,
+}: {
+  paletteColors: string[];
+  onAddPaletteColor: (color: string) => void;
+  onRemovePaletteColor: (color: string) => void;
+}) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [folders, setFolders] = useState<NoteFolder[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -6283,13 +6295,18 @@ function MemoSection() {
       refreshNotes={refreshNotes}
       refreshFolders={refreshFolders}
       setNotes={setNotes}
+      setFolders={setFolders}
+      paletteColors={paletteColors}
+      onAddPaletteColor={onAddPaletteColor}
+      onRemovePaletteColor={onRemovePaletteColor}
     />
   );
 }
 
 // ── 메모 리스트 뷰 ──────────────────────────────────────────────────
 function NoteList({
-  notes, folders, onOpen, onCreateNote, refreshNotes, refreshFolders, setNotes,
+  notes, folders, onOpen, onCreateNote, refreshNotes, refreshFolders, setNotes, setFolders,
+  paletteColors, onAddPaletteColor, onRemovePaletteColor,
 }: {
   notes: Note[];
   folders: NoteFolder[];
@@ -6298,6 +6315,10 @@ function NoteList({
   refreshNotes: () => Promise<void>;
   refreshFolders: () => Promise<void>;
   setNotes: React.Dispatch<React.SetStateAction<Note[]>>;
+  setFolders: React.Dispatch<React.SetStateAction<NoteFolder[]>>;
+  paletteColors: string[];
+  onAddPaletteColor: (color: string) => void;
+  onRemovePaletteColor: (color: string) => void;
 }) {
   const [sortMode, setSortMode] = useState<SortMode>("custom");
   const [sortOpen, setSortOpen] = useState(false);
@@ -6310,7 +6331,11 @@ function NoteList({
   const [menuNoteId, setMenuNoteId] = useState<string | null>(null);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
+  // 새 폴더 색상 기본값 — 공용 팔레트의 첫 항목(비어있으면 FOLDER_COLORS 첫 항목으로 폴백).
+  const [newFolderColor, setNewFolderColor] = useState<string>(paletteColors[0] ?? FOLDER_COLORS[0]);
+  const [showNewFolderCustomColor, setShowNewFolderCustomColor] = useState(false);
+  // 편집 중인 폴더 id — 폴더 카드의 3-dot 메뉴에서 "이름·색상 편집" 클릭 시 세팅.
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   // 드래그 오버 중인 대상: 특정 폴더 id, "back"(뒤로가기 = 루트로 이동), null(없음)
   const [dropFolderId, setDropFolderId] = useState<string | "back" | null>(null);
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
@@ -6358,12 +6383,19 @@ function NoteList({
     const name = newFolderName.trim();
     if (!name) return;
     try { await createFolder({ name, color: newFolderColor }); await refreshFolders(); } catch (e) { notifyError("폴더 만들기 실패")(e); }
-    setNewFolderName(""); setNewFolderColor(FOLDER_COLORS[0]); setShowNewFolder(false);
+    setNewFolderName(""); setNewFolderColor(paletteColors[0] ?? FOLDER_COLORS[0]); setShowNewFolder(false); setShowNewFolderCustomColor(false);
   };
 
   const handleDeleteFolder = async (folderId: string) => {
     if (viewFolderId === folderId) setViewFolderId(null);
+    if (editingFolderId === folderId) setEditingFolderId(null);
     try { await deleteFolder(folderId); await Promise.all([refreshFolders(), refreshNotes()]); } catch (e) { notifyError("폴더 삭제 실패")(e); }
+  };
+
+  // 폴더 이름·색상 편집 저장 — 낙관적 업데이트 후 DB, 실패 시 서버 상태로 되돌림.
+  const handleUpdateFolder = async (folderId: string, changes: { name?: string; color?: string }) => {
+    setFolders(fs => fs.map(f => f.id === folderId ? { ...f, ...changes } : f));
+    try { await updateFolder(folderId, changes); } catch (e) { notifyError("폴더 수정 실패")(e); await refreshFolders(); }
   };
 
   // 노트 카드 간 드래그로 재정렬 — 정렬 모드가 custom이 아니면 custom으로 전환
@@ -6446,7 +6478,8 @@ function NoteList({
           </div>
         </div>
 
-        {/* 새 폴더 인라인 폼 */}
+        {/* 새 폴더 인라인 폼 — 공용 팔레트(다른 블록과 동일한 색 목록)에서 선택.
+             각 스와치는 호버 시 X 버튼으로 팔레트에서 제거 가능하고, 우측 + 로 커스텀 hex 색을 추가. */}
         {showNewFolder && (
           <div className="mb-4 p-4 rounded-xl border bg-card">
             <div className="flex items-center gap-2 mb-3">
@@ -6459,18 +6492,43 @@ function NoteList({
                 className="flex-1 px-3 py-2 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
               />
               <button onClick={handleCreateFolder} className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium">만들기</button>
-              <button onClick={() => setShowNewFolder(false)} className="p-2 text-muted-foreground hover:text-foreground"><X size={14} /></button>
+              <button onClick={() => { setShowNewFolder(false); setShowNewFolderCustomColor(false); }} className="p-2 text-muted-foreground hover:text-foreground"><X size={14} /></button>
             </div>
-            <div className="flex items-center gap-1.5">
-              {FOLDER_COLORS.map(c => (
-                <button
-                  key={c}
-                  onClick={() => setNewFolderColor(c)}
-                  className={`size-6 rounded-full transition-transform ${newFolderColor === c ? "ring-2 ring-offset-2 ring-offset-card ring-foreground/40 scale-110" : ""}`}
-                  style={{ backgroundColor: c }}
-                />
+            <div className="flex flex-wrap items-center gap-2">
+              {paletteColors.map(c => (
+                <div key={c} className="relative group/color size-6 flex-shrink-0">
+                  <button
+                    onClick={() => setNewFolderColor(c)}
+                    className={`size-6 rounded-full transition-transform ${newFolderColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-2 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                    style={{ backgroundColor: c }}
+                    title={c}
+                  />
+                  <button
+                    onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
+                    className="absolute -top-1 -right-1 size-3.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
+                    title="팔레트에서 제거"
+                  >
+                    <X size={8} strokeWidth={2.5} />
+                  </button>
+                </div>
               ))}
+              <button
+                onClick={() => setShowNewFolderCustomColor(v => !v)}
+                className={`size-6 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showNewFolderCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-muted/40 hover:bg-muted"}`}
+                title="사용자 지정 색상 추가"
+              >
+                <Plus size={12} className={showNewFolderCustomColor ? "text-primary" : "text-muted-foreground"} />
+              </button>
             </div>
+            {showNewFolderCustomColor && (
+              <div className="mt-2">
+                <CustomColorPickerInline
+                  initial={newFolderColor}
+                  onAdd={(c) => { setNewFolderColor(c); onAddPaletteColor(c); }}
+                  onClose={() => setShowNewFolderCustomColor(false)}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -6544,7 +6602,14 @@ function NoteList({
                 folder={f}
                 count={notes.filter(n => n.folderId === f.id).length}
                 isDropTarget={dropFolderId === f.id}
-                onOpen={() => setViewFolderId(f.id)}
+                isEditing={editingFolderId === f.id}
+                paletteColors={paletteColors}
+                onAddPaletteColor={onAddPaletteColor}
+                onRemovePaletteColor={onRemovePaletteColor}
+                onOpen={() => { if (editingFolderId !== f.id) setViewFolderId(f.id); }}
+                onStartEdit={() => setEditingFolderId(f.id)}
+                onCancelEdit={() => setEditingFolderId(null)}
+                onSaveEdit={changes => { handleUpdateFolder(f.id, changes); setEditingFolderId(null); }}
                 onDelete={() => handleDeleteFolder(f.id)}
                 onDragOver={e => { if (dragNoteId) { e.preventDefault(); setDropFolderId(f.id); } }}
                 onDragLeave={() => setDropFolderId(null)}
@@ -6577,16 +6642,117 @@ function NoteList({
 
 // 노트 리스트 안에 폴더를 카드로 노출. NoteCard와 시각 언어를 맞춰(rounded-xl, p-4, border)
 // 같은 리스트에 섞여도 위화감이 없게 함. 드래그된 노트가 위에 오면 primary 링으로 강조하고,
-// 클릭하면 폴더 안으로 진입. hover 시 우측에 삭제 버튼 노출.
+// 클릭하면 폴더 안으로 진입. 우측 3-dot 메뉴로 이름·색상 편집이나 삭제.
+// isEditing 상태에서는 카드 본문이 이름 입력 + 팔레트 폼으로 대체됨.
 function FolderCard({
-  folder, count, isDropTarget, onOpen, onDelete, onDragOver, onDragLeave, onDrop,
+  folder, count, isDropTarget, isEditing, paletteColors,
+  onOpen, onStartEdit, onCancelEdit, onSaveEdit, onDelete,
+  onAddPaletteColor, onRemovePaletteColor,
+  onDragOver, onDragLeave, onDrop,
 }: {
-  folder: NoteFolder; count: number; isDropTarget: boolean;
-  onOpen: () => void; onDelete: () => void;
+  folder: NoteFolder; count: number; isDropTarget: boolean; isEditing: boolean;
+  paletteColors: string[];
+  onOpen: () => void;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (changes: { name?: string; color?: string }) => void;
+  onDelete: () => void;
+  onAddPaletteColor: (color: string) => void;
+  onRemovePaletteColor: (color: string) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState(folder.name);
+  const [colorDraft, setColorDraft] = useState(folder.color);
+  const [showCustomColor, setShowCustomColor] = useState(false);
+
+  // isEditing 이 새로 켜질 때 폼 필드를 현재 값으로 리셋(연속 편집 시 이전 draft 잔재 방지).
+  useEffect(() => {
+    if (isEditing) {
+      setNameDraft(folder.name);
+      setColorDraft(folder.color);
+      setShowCustomColor(false);
+    }
+  }, [isEditing, folder.name, folder.color]);
+
+  const commit = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) return;
+    const changes: { name?: string; color?: string } = {};
+    if (trimmed !== folder.name) changes.name = trimmed;
+    if (colorDraft !== folder.color) changes.color = colorDraft;
+    onSaveEdit(changes);
+  };
+
+  if (isEditing) {
+    return (
+      <div
+        className="relative rounded-xl border bg-card p-4"
+        style={{ borderColor: colorDraft + "55" }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex-shrink-0 flex items-center justify-center size-9 rounded-lg" style={{ backgroundColor: colorDraft + "22" }}>
+            <Folder size={16} style={{ color: colorDraft }} fill={colorDraft} fillOpacity={0.35} />
+          </div>
+          <input
+            autoFocus
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") commit(); if (e.key === "Escape") onCancelEdit(); }}
+            placeholder="폴더 이름"
+            className="flex-1 px-3 py-2 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+          />
+          <button onClick={commit} disabled={!nameDraft.trim()} className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40">저장</button>
+          <button onClick={onCancelEdit} className="p-2 text-muted-foreground hover:text-foreground"><X size={14} /></button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {paletteColors.map(c => (
+            <div key={c} className="relative group/color size-6 flex-shrink-0">
+              <button
+                onClick={() => setColorDraft(c)}
+                className={`size-6 rounded-full transition-transform ${colorDraft.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-2 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                style={{ backgroundColor: c }}
+                title={c}
+              />
+              <button
+                onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
+                className="absolute -top-1 -right-1 size-3.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
+                title="팔레트에서 제거"
+              >
+                <X size={8} strokeWidth={2.5} />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => setShowCustomColor(v => !v)}
+            className={`size-6 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-muted/40 hover:bg-muted"}`}
+            title="사용자 지정 색상 추가"
+          >
+            <Plus size={12} className={showCustomColor ? "text-primary" : "text-muted-foreground"} />
+          </button>
+        </div>
+        {showCustomColor && (
+          <div className="mt-2">
+            <CustomColorPickerInline
+              initial={colorDraft}
+              onAdd={(c) => { setColorDraft(c); onAddPaletteColor(c); }}
+              onClose={() => setShowCustomColor(false)}
+            />
+          </div>
+        )}
+        <div className="mt-3 pt-3 border-t border-border/60">
+          <button
+            onClick={() => { setMenuOpen(false); onDelete(); }}
+            className="text-[11px] text-destructive hover:underline"
+          >폴더 삭제</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       onClick={onOpen}
@@ -6604,11 +6770,35 @@ function FolderCard({
         <div className="text-sm font-medium truncate">{folder.name}</div>
         <div className="text-[11px] text-muted-foreground mt-0.5">{count}개 메모</div>
       </div>
-      <button
-        onClick={e => { e.stopPropagation(); onDelete(); }}
-        title="폴더 삭제"
-        className="opacity-0 group-hover/folder:opacity-100 transition-opacity p-1.5 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-      ><Trash2 size={13} /></button>
+      {/* 3-dot 메뉴 — 이름·색상 편집 / 삭제. 카드 클릭(폴더 진입)과 분리를 위해 stopPropagation. */}
+      <div className="relative flex-shrink-0" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={() => setMenuOpen(v => !v)}
+          title="폴더 옵션"
+          className="p-1.5 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          <MoreVertical size={14} />
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-0 top-full mt-1 w-40 bg-card border border-border rounded-lg shadow-lg z-50 p-1">
+              <button
+                onClick={() => { setMenuOpen(false); onStartEdit(); }}
+                className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+              >
+                <Edit3 size={12} /> 이름·색상 편집
+              </button>
+              <button
+                onClick={() => { setMenuOpen(false); onDelete(); }}
+                className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-2"
+              >
+                <Trash2 size={12} /> 폴더 삭제
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
