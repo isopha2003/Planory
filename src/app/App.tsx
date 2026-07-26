@@ -453,11 +453,26 @@ export default function App() {
   // 이 코드베이스엔 text-[11px] 같은 절대 px 클래스도 많아서, font-size로만 조절하면
   // 일부만 커지고 균형이 깨짐. zoom은 요소 크기·간격·경계까지 비례로 확대해줌.
   // WebView2(Windows)/WKWebView(macOS) 모두 zoom 지원.
+  //
+  // zoom을 <html>이 아니라 #root 에 적용하는 이유:
+  // Radix Tooltip/Popover 등이 Portal 로 <body> 에 렌더링되는데, html 에 zoom 을 걸면
+  // 그 Portal 요소가 zoom 된 서브트리 안에 있어서, Radix 가 getBoundingClientRect(시각 px)
+  // 로 계산한 fixed 좌표에 브라우저가 zoom 을 한 번 더 곱해버려 툴팁이 엉뚱한 곳에 뜬다.
+  // #root 에만 zoom 을 걸면 <body> 는 zoom 바깥이라 Portal 이 정상 위치로 렌더링됨.
   type FontSize = "normal" | "larger" | "large";
   const [fontSize, setFontSize] = usePersistedState<FontSize>("settings_font_size", "normal");
   useEffect(() => {
-    const zoomMap: Record<FontSize, string> = { normal: "1", larger: "1.10", large: "1.20" };
-    document.documentElement.style.setProperty("zoom", zoomMap[fontSize]);
+    const zoomMap: Record<FontSize, number> = { normal: 1, larger: 1.10, large: 1.20 };
+    const z = zoomMap[fontSize];
+    const root = document.getElementById("root");
+    if (root) {
+      root.style.zoom = String(z);
+      // #root 가 zoom 배율만큼 커져 body 를 넘치지 않도록 뷰포트를 zoom 으로 나눠 크기 보정.
+      root.style.width = `${100 / z}vw`;
+      root.style.height = `${100 / z}vh`;
+    }
+    // 예전 버전에서 html 에 걸어둔 zoom 흔적 제거 — 남아있으면 이중 스케일이 됨.
+    document.documentElement.style.removeProperty("zoom");
   }, [fontSize]);
 
   // Pomodoro / settings — timer effect들이 이 상태를 참조하므로 반드시 그 앞에서 선언돼야 함.
@@ -2376,7 +2391,7 @@ function CalendarSection({
   // 마우스 이벤트 좌표와 getBoundingClientRect는 시각적 viewport px로 반환되는 반면
   // HOUR_H 같은 레이아웃 상수는 zoom이 안 걸린 CSS px 이라, delta를 zoom으로 나눠줘야
   // hover ghost 위치가 실제 마우스 위치와 일치함.
-  const getRootZoom = () => parseFloat(document.documentElement.style.zoom) || 1;
+  const getRootZoom = () => parseFloat(document.getElementById("root")?.style.zoom ?? "") || 1;
 
   // 자식 블록(독립 타임블록형)은 부모의 상세 패널 안에서만 다뤄지고, 캘린더 그리드에는
   // 최상위 블록만 표시됨 — 안 그러면 부모 시간대 안에 자식이 겹쳐 보이거나 통계가 중복 집계됨.
