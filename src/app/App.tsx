@@ -5237,6 +5237,10 @@ function KanbanBoard({
                 onDrop={e => {
                   e.preventDefault();
                   setDragOverCol(null);
+                  // 다른 컬럼으로 이동 시 소스 카드가 언마운트되어 onDragEnd 가 발화하지
+                  // 않는 경우가 있음 — dragCardId 를 여기서도 정리해 새 위치 카드가
+                  // opacity 0.3 으로 남는 것을 방지.
+                  setDragCardId(null);
                   const id = e.dataTransfer.getData("kanbanCardId");
                   if (id) moveCard(id, status);
                 }}
@@ -5373,6 +5377,9 @@ function KanbanBoard({
                           e.preventDefault();
                           e.stopPropagation();
                           setDragOverCol(null);
+                          // 소스 카드가 재정렬로 언마운트/리마운트되면서 onDragEnd 가 유실될
+                          // 수 있음 — 방어적으로 dragCardId 를 여기서도 정리.
+                          setDragCardId(null);
                           const id = e.dataTransfer.getData("kanbanCardId");
                           if (!id) return;
                           const rect = e.currentTarget.getBoundingClientRect();
