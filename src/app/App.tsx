@@ -2198,31 +2198,33 @@ function TodaySection({
           {`${TODAY_DATE.getFullYear()}년 ${TODAY_DATE.getMonth() + 1}월 ${TODAY_DATE.getDate()}일 ${DAYS_KO[TODAY_DATE.getDay()]}요일`}
         </div>
 
-        {/* 지난 마감 — 이미 놓친 것. 항상 빨강 톤. */}
+        {/* 지난 마감 — 이미 놓친 것. 배지는 항상 빨강 톤, 블록 색은 마감 커스텀 색이 있으면 그것을 우선. */}
         {overdueDeadlines.length > 0 && (
           <div className="mb-4">
             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">지난 마감</div>
             <div className="space-y-1.5">
               {overdueDeadlines.map(d => {
                 const daysOver = Math.abs(daysBetween(parseLocalDate(d.dueDate), TODAY_DATE));
-                const tone = deadlineTone(-daysOver);
+                const dayColor = deadlineToneHex(-daysOver);
+                const blockColor = d.color || dayColor;
                 return (
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${
-                      d.completed ? "bg-muted/40 border-transparent opacity-60"
-                        : `${tone.bg} ${tone.border} ${tone.hoverBorder}`
-                    }`}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "bg-muted/40 border-transparent opacity-60 hover:border-transparent" : "hover:brightness-[0.97]"}`}
+                    style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
                       {d.completed
-                        ? <CheckCircle2 size={16} className={tone.circle} />
-                        : <Circle size={16} className={tone.circleHollow} />}
+                        ? <CheckCircle2 size={16} style={{ color: blockColor }} />
+                        : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
-                    <span className={`w-0.5 h-6 rounded-full flex-shrink-0 ${tone.stripe}`} />
+                    <span className="w-0.5 h-6 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
                     <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${tone.badge}`}>{daysOver}일 초과</span>
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
+                      style={{ backgroundColor: dayColor + "22", color: dayColor }}
+                    >{daysOver}일 초과</span>
                   </div>
                 );
               })}
@@ -2230,32 +2232,34 @@ function TodaySection({
           </div>
         )}
 
-        {/* 일주일 내 마감 일정 — 오늘부터 +7일 이내(포함). D-day 배지·카드 톤이 남은 일수에 따라
-              초록→노랑→주황→빨강으로 바뀌어 급함 정도를 즉시 보이도록. */}
+        {/* 일주일 내 마감 일정 — 오늘부터 +7일 이내(포함). 블록 색은 커스텀 우선, D-day 배지는 항상 D-day 톤으로
+              초록→노랑→주황→빨강 규칙(>10 초록, 10 이하 노랑, 5 이하 주황, 3 이하 빨강)을 유지. */}
         {upcomingDeadlines.length > 0 && (
           <div className="mb-4">
             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">일주일 내 마감 일정</div>
             <div className="space-y-1.5">
               {upcomingDeadlines.map(d => {
                 const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
-                const tone = deadlineTone(daysLeft);
+                const dayColor = deadlineToneHex(daysLeft);
+                const blockColor = d.color || dayColor;
                 return (
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${
-                      d.completed ? "bg-muted/40 border-transparent opacity-60"
-                        : `${tone.bg} ${tone.border} ${tone.hoverBorder}`
-                    }`}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "bg-muted/40 border-transparent opacity-60 hover:border-transparent" : "hover:brightness-[0.97]"}`}
+                    style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
                       {d.completed
-                        ? <CheckCircle2 size={16} className={tone.circle} />
-                        : <Circle size={16} className={tone.circleHollow} />}
+                        ? <CheckCircle2 size={16} style={{ color: blockColor }} />
+                        : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
-                    <span className={`w-0.5 h-6 rounded-full flex-shrink-0 ${tone.stripe}`} />
+                    <span className="w-0.5 h-6 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
                     <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${tone.badge}`}>D-{daysLeft}</span>
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
+                      style={{ backgroundColor: dayColor + "22", color: dayColor }}
+                    >D-{daysLeft}</span>
                   </div>
                 );
               })}
