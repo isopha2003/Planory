@@ -5020,6 +5020,12 @@ function KanbanBoard({
   const [addingCol, setAddingCol] = useState<KanbanStatus | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
+  // 새 카드 색상 — 편집 폼과 동일하게 빈 문자열이면 마감 D-day 톤을 따라감.
+  const [newColor, setNewColor] = useState("");
+  const [showNewCustomColor, setShowNewCustomColor] = useState(false);
+  // 카드 생성 전 체크리스트 임시 버퍼 — 카드가 없어서 DB에 못 쓰므로 로컬에만 보관하다
+  // 추가 시점에 실제 카드 id 를 받아 순서대로 저장. parentItemId 는 임시 id 를 참조.
+  const [newChecklist, setNewChecklist] = useState<ChecklistNodeItem[]>([]);
   // 드래그 중 카드가 올라가 있는 컬럼 — 하이라이트용.
   const [dragOverCol, setDragOverCol] = useState<KanbanStatus | null>(null);
   // 드래그 중인 카드 id — 원본 카드를 반투명 처리.
@@ -5047,16 +5053,69 @@ function KanbanBoard({
     return () => { cancelled = true; };
   }, [deadline.id]);
 
-  const addCard = (status: KanbanStatus) => {
+  const addCard = async (status: KanbanStatus) => {
     const title = newTitle.trim();
     if (!title) return;
     const content = newContent.trim();
+    const color = newColor;
+    // 체크리스트 버퍼 스냅샷 — 폼 리셋 뒤 참조하기 위해 미리 캡처.
+    const bufferedItems = newChecklist;
     // 추가 후 폼을 닫음 — 열어두면 방금 추가한 카드 아래에 빈 폼이 다시 떠서
     // "작업 추가 탭이 또 열리는" 것처럼 보임. 연속 추가는 버튼을 다시 누르는 쪽이 명확.
-    setNewTitle(""); setNewContent(""); setAddingCol(null);
-    createKanbanCard({ deadlineId: deadline.id, status, title, content })
-      .then(c => setCards(cs => [...cs, c]))
-      .catch(notifyError("작업 추가 실패"));
+    setNewTitle(""); setNewContent(""); setNewColor(""); setShowNewCustomColor(false); setNewChecklist([]); setAddingCol(null);
+    try {
+      const c = await createKanbanCard({ deadlineId: deadline.id, status, title, content, color });
+      setCards(cs => [...cs, c]);
+      // 임시 id → 실제 id 매핑을 유지하며 DFS 순서로 저장 — 부모가 먼저 만들어져야
+      // 하위 항목이 올바른 parent_item_id 로 저장됨.
+      if (bufferedItems.length > 0) {
+        const tempToReal = new Map<string, string>();
+        const flat: ChecklistNodeItem[] = [];
+        const walk = (parentTempId?: string) => {
+          for (const it of bufferedItems.filter(i => i.parentItemId === parentTempId)) {
+            flat.push(it);
+            walk(it.id);
+          }
+        };
+        walk(undefined);
+        for (const it of flat) {
+          const parentRealId = it.parentItemId ? tempToReal.get(it.parentItemId) : undefined;
+          try {
+            const created = await createKanbanChecklistItem(c.id, it.text, parentRealId);
+            tempToReal.set(it.id, created.id);
+            const finalItem = it.completed ? { ...created, completed: true } : created;
+            setCheckItems(is => [...is, finalItem]);
+            if (it.completed) {
+              toggleKanbanChecklistItemRow(created.id, true).catch(notifyError("체크리스트 저장 실패"));
+            }
+          } catch (e) { notifyError("체크리스트 항목 추가 실패")(e); }
+        }
+      }
+    } catch (e) { notifyError("작업 추가 실패")(e); }
+  };
+
+  // ── 새 카드용 체크리스트 로컬 조작 — 카드가 아직 없으므로 DB 대신 임시 버퍼만 갱신 ──
+  const addNewCheckItem = (text: string, parentItemId?: string) => {
+    const id = `tmp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    setNewChecklist(is => [...is, { id, parentItemId, text, completed: false }]);
+  };
+  const toggleNewCheckItem = (id: string, completed: boolean) => {
+    setNewChecklist(is => is.map(i => i.id === id ? { ...i, completed } : i));
+  };
+  const deleteNewCheckItem = (id: string) => {
+    setNewChecklist(is => {
+      const toRemove = new Set([id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const it of is) {
+          if (it.parentItemId && toRemove.has(it.parentItemId) && !toRemove.has(it.id)) {
+            toRemove.add(it.id); grew = true;
+          }
+        }
+      }
+      return is.filter(i => !toRemove.has(i.id));
+    });
   };
 
   // 컬럼 빈 공간으로 드롭 — 대상 컬럼 맨 아래로. 같은 컬럼이어도 "맨 아래로 이동"으로
@@ -5446,7 +5505,8 @@ function KanbanBoard({
                 </div>
 
                 {addingCol === status ? (
-                  <div className="mt-2 p-2.5 rounded-lg border bg-card space-y-1.5">
+                  <div className="mt-2 p-2.5 rounded-lg border bg-card space-y-1.5"
+                    style={{ borderLeft: `3px solid ${newColor || color}` }}>
                     <input
                       autoFocus
                       value={newTitle}
@@ -5467,6 +5527,68 @@ function KanbanBoard({
                       rows={2}
                       className="w-full text-[11px] px-2.5 py-1.5 rounded-md bg-muted outline-none focus:ring-2 focus:ring-ring resize-none placeholder:text-muted-foreground"
                     />
+                    {/* 색상 — 편집 폼과 동일한 팔레트 UI. 첫 스와치는 마감 D-day 톤을 따라감. */}
+                    <div className="flex flex-wrap gap-1.5 items-center py-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setNewColor("")}
+                        className={`size-4 rounded-full border border-dashed border-foreground/50 transition-transform flex-shrink-0 ${newColor === "" ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                        style={{ backgroundColor: color }}
+                        title="기본 (마감 톤)"
+                      />
+                      {paletteColors.map(c => (
+                        <div key={c} className="relative group/color size-4 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setNewColor(c)}
+                            className={`size-4 rounded-full transition-transform ${newColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40 scale-110" : ""}`}
+                            style={{ backgroundColor: c }}
+                            title={c}
+                          />
+                          <button
+                            type="button"
+                            onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
+                            className="absolute -top-1 -right-1 size-3 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
+                            title="팔레트에서 제거"
+                          >
+                            <X size={7} strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setShowNewCustomColor(v => !v)}
+                        className={`size-4 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showNewCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-muted/40 hover:bg-muted"}`}
+                        title="사용자 지정 색상 추가"
+                      >
+                        <Plus size={9} className={showNewCustomColor ? "text-primary" : "text-muted-foreground"} />
+                      </button>
+                    </div>
+                    {showNewCustomColor && (
+                      <CustomColorPickerInline
+                        initial={newColor || color}
+                        onAdd={(c) => { setNewColor(c); onAddPaletteColor(c); }}
+                        onClose={() => setShowNewCustomColor(false)}
+                      />
+                    )}
+                    {/* 체크리스트 — 카드가 아직 없어 로컬 버퍼에만 쌓아두고 추가 시점에 일괄 저장. */}
+                    <div className="pt-0.5">
+                      <div className="text-[10px] font-medium text-muted-foreground mb-1">체크리스트</div>
+                      <div className="space-y-0.5">
+                        {newChecklist.filter(i => !i.parentItemId).map(item => (
+                          <ChecklistNode
+                            key={item.id}
+                            item={item}
+                            items={newChecklist}
+                            depth={0}
+                            onToggle={toggleNewCheckItem}
+                            onDelete={deleteNewCheckItem}
+                            onAddChild={addNewCheckItem}
+                          />
+                        ))}
+                        <NewChecklistItemForm onAdd={text => addNewCheckItem(text)} />
+                      </div>
+                    </div>
                     <div className="flex gap-1.5">
                       <button
                         onClick={() => addCard(status)}
@@ -5474,14 +5596,14 @@ function KanbanBoard({
                         className="flex-1 text-[11px] py-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-40 transition-opacity"
                       >추가</button>
                       <button
-                        onClick={() => setAddingCol(null)}
+                        onClick={() => { setAddingCol(null); setNewTitle(""); setNewContent(""); setNewColor(""); setShowNewCustomColor(false); setNewChecklist([]); }}
                         className="flex-1 text-[11px] py-1.5 rounded-md bg-muted hover:bg-muted/70 transition-colors"
                       >취소</button>
                     </div>
                   </div>
                 ) : (
                   <button
-                    onClick={() => { setAddingCol(status); setNewTitle(""); setNewContent(""); }}
+                    onClick={() => { setAddingCol(status); setNewTitle(""); setNewContent(""); setNewColor(""); setShowNewCustomColor(false); setNewChecklist([]); }}
                     className="flex items-center justify-center gap-1.5 w-full mt-2 py-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors"
                   >
                     <Plus size={12} /> 작업 추가
