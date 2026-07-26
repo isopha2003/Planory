@@ -7,6 +7,8 @@ import {
   Edit3, Check, AlertCircle, PictureInPicture2 as PictureInPicture,
   Folder, FolderPlus, MoreVertical, ArrowLeft, ArrowUpDown, Trash2,
   Minus, Square, Copy, Palette,
+  Bold, Italic, Underline, Strikethrough, Code, Code2,
+  Heading1, Heading2, Pilcrow, List, ListOrdered, Quote,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -28,6 +30,10 @@ import {
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import UnderlineExtension from "@tiptap/extension-underline";
+import { Markdown } from "tiptap-markdown";
 import { type TimerState, fmtSec } from "../lib/timer";
 import { runAutoBackupIfNeeded, createBackupNow, getLastBackupTimestamp } from "../lib/backup";
 import { checkForUpdate, installUpdate, type UpdateCheckResult } from "../lib/updater";
@@ -7239,6 +7245,122 @@ function NoteCard({
   );
 }
 
+// ── 리치 텍스트 에디터 (일반 메모 모드) ────────────────────────────
+// TipTap 기반 WYSIWYG. 저장 포맷은 마크다운 그대로 유지(tiptap-markdown) — 마크다운 모드와
+// 같은 note.content 필드를 공유하므로, 두 모드 사이를 오가도 데이터 손실 없이 그대로 보임.
+function RichNoteEditor({
+  initialContent,
+  onContentChange,
+  autoFocus,
+}: {
+  initialContent: string;
+  onContentChange: (md: string) => void;
+  autoFocus?: boolean;
+}) {
+  // 콜백을 ref로 감싸서 부모 리렌더로 함수가 새로 만들어져도 useEditor의 옵션이 stale 되지 않게.
+  const onContentChangeRef = useRef(onContentChange);
+  onContentChangeRef.current = onContentChange;
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      UnderlineExtension,
+      // html:false 로 두면 tiptap-markdown이 raw HTML을 이스케이프해 저장 — 마크다운 소스만 유지.
+      // breaks:true 로 줄바꿈을 <br>이 아닌 소프트 개행으로 처리해 일반 메모장 감각에 가깝게.
+      Markdown.configure({ html: false, tightLists: true, breaks: true, linkify: true }),
+    ],
+    content: initialContent,
+    autofocus: autoFocus ?? false,
+    onUpdate: ({ editor }) => {
+      const md = (editor.storage as any).markdown?.getMarkdown?.() ?? "";
+      onContentChangeRef.current(md);
+    },
+    editorProps: {
+      attributes: {
+        // PROSE_CLASS로 목록/제목 스타일을 마크다운 프리뷰와 동일하게 통일.
+        class: `w-full ${PROSE_CLASS} outline-none focus:outline-none`,
+      },
+    },
+  });
+
+  if (!editor) {
+    return (
+      <div className="w-full h-full rounded-xl border bg-card flex items-center justify-center text-muted-foreground text-sm">
+        에디터 준비 중…
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full h-full rounded-xl border bg-card flex flex-col overflow-hidden">
+      <RichToolbar editor={editor} />
+      {/* 빈 공간 클릭 시 에디터 포커스 — 짧은 메모라 아래 여백이 넓을 때 클릭이 먹히지 않는 것 방지. */}
+      <div
+        className="flex-1 overflow-y-auto p-4 cursor-text"
+        onClick={e => {
+          if (e.target === e.currentTarget) editor.chain().focus().run();
+        }}
+      >
+        <EditorContent editor={editor} />
+      </div>
+    </div>
+  );
+}
+
+// 리치 에디터 상단 툴바. 굵게/기울임/밑줄/취소선/모노/제목1·2/본문/글머리·번호 목록/인용/코드블록/구분선.
+function RichToolbar({ editor }: { editor: Editor }) {
+  // 활성 상태 표시를 위해 selectionUpdate 등에서 리렌더가 필요 — 간단히 강제 리렌더 훅으로 처리.
+  const [, force] = useState(0);
+  useEffect(() => {
+    const handler = () => force(v => v + 1);
+    editor.on("selectionUpdate", handler);
+    editor.on("transaction", handler);
+    return () => {
+      editor.off("selectionUpdate", handler);
+      editor.off("transaction", handler);
+    };
+  }, [editor]);
+
+  const btnCls = (active: boolean) =>
+    `p-1.5 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${
+      active ? "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary" : ""
+    }`;
+  const sep = <div className="w-px h-5 bg-border mx-0.5" />;
+
+  return (
+    <div className="flex flex-wrap items-center gap-0.5 border-b border-border px-2 py-1.5 flex-shrink-0">
+      <button title="굵게 (Ctrl+B)" onClick={() => editor.chain().focus().toggleBold().run()}
+        className={btnCls(editor.isActive("bold"))}><Bold size={14} /></button>
+      <button title="기울임 (Ctrl+I)" onClick={() => editor.chain().focus().toggleItalic().run()}
+        className={btnCls(editor.isActive("italic"))}><Italic size={14} /></button>
+      <button title="밑줄 (Ctrl+U)" onClick={() => editor.chain().focus().toggleUnderline().run()}
+        className={btnCls(editor.isActive("underline"))}><Underline size={14} /></button>
+      <button title="취소선" onClick={() => editor.chain().focus().toggleStrike().run()}
+        className={btnCls(editor.isActive("strike"))}><Strikethrough size={14} /></button>
+      <button title="모노스페이스" onClick={() => editor.chain().focus().toggleCode().run()}
+        className={btnCls(editor.isActive("code"))}><Code size={14} /></button>
+      {sep}
+      <button title="머릿글 (제목1)" onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+        className={btnCls(editor.isActive("heading", { level: 1 }))}><Heading1 size={14} /></button>
+      <button title="부머릿글 (제목2)" onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+        className={btnCls(editor.isActive("heading", { level: 2 }))}><Heading2 size={14} /></button>
+      <button title="본문" onClick={() => editor.chain().focus().setParagraph().run()}
+        className={btnCls(editor.isActive("paragraph") && !editor.isActive("heading"))}><Pilcrow size={14} /></button>
+      {sep}
+      <button title="글머리 기호 목록" onClick={() => editor.chain().focus().toggleBulletList().run()}
+        className={btnCls(editor.isActive("bulletList"))}><List size={14} /></button>
+      <button title="번호 매기기 목록" onClick={() => editor.chain().focus().toggleOrderedList().run()}
+        className={btnCls(editor.isActive("orderedList"))}><ListOrdered size={14} /></button>
+      <button title="인용문" onClick={() => editor.chain().focus().toggleBlockquote().run()}
+        className={btnCls(editor.isActive("blockquote"))}><Quote size={14} /></button>
+      <button title="코드 블록" onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+        className={btnCls(editor.isActive("codeBlock"))}><Code2 size={14} /></button>
+      <button title="구분선" onClick={() => editor.chain().focus().setHorizontalRule().run()}
+        className={btnCls(false)}><Minus size={14} /></button>
+    </div>
+  );
+}
+
 // ── 메모 편집기 뷰 (생성·수정 공용) ─────────────────────────────────
 function NoteEditor({
   note, folders, allCategories, onBack, onChangeLocal,
@@ -7380,28 +7502,38 @@ function NoteEditor({
         </select>
       </div>
 
-      {/* 편집(항상) + 프리뷰(마크다운 모드일 때만).
-           마크다운 모드는 편집기 세션 로컬 상태이고 텍스트는 같은 content state를 공유하므로,
-           도중에 토글해도 입력 내용은 그대로 유지됨. */}
+      {/* 마크다운 모드 OFF(기본) = 리치 텍스트 에디터 한 판. 툴바로 굵게/기울임/제목 등 서식을
+           즉시 시각적으로 반영. 저장 포맷은 마크다운 그대로 유지되므로 마크다운 모드로 토글해도
+           같은 content 로 이어지고, 기존 메모/신규 메모 모두 손실 없이 오갈 수 있음.
+           마크다운 모드 ON = 기존 raw + 실시간 프리뷰 2단 뷰(파워 유저용).
+           key 로 모드 토글 시 강제 remount — 리치 에디터/textarea 초기값을 최신 content 로 다시 세팅. */}
       <div className={`flex-1 overflow-hidden gap-4 px-8 pb-8 min-h-0 ${markdownMode ? "grid grid-cols-2" : "flex"}`}>
-        <textarea
-          value={content}
-          onChange={e => setContent(e.target.value)}
-          placeholder={markdownMode
-            ? "여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
-            : "여기에 자유롭게 적어보세요."}
-          className="w-full h-full resize-none rounded-xl border bg-card p-4 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring leading-relaxed"
-          spellCheck={false}
-          autoFocus
-        />
-        {markdownMode && (
-          <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
-            {content.trim() ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-            ) : (
-              <p className="text-muted-foreground text-sm italic">미리보기가 여기에 표시돼요</p>
-            )}
-          </div>
+        {markdownMode ? (
+          <>
+            <textarea
+              key="md-textarea"
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              placeholder="여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
+              className="w-full h-full resize-none rounded-xl border bg-card p-4 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring leading-relaxed"
+              spellCheck={false}
+              autoFocus
+            />
+            <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
+              {content.trim() ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+              ) : (
+                <p className="text-muted-foreground text-sm italic">미리보기가 여기에 표시돼요</p>
+              )}
+            </div>
+          </>
+        ) : (
+          <RichNoteEditor
+            key="rich-editor"
+            initialContent={content}
+            onContentChange={setContent}
+            autoFocus
+          />
         )}
       </div>
     </div>
