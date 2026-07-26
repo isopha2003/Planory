@@ -7486,8 +7486,9 @@ function NoteEditor({
         )}
       </div>
 
-      {/* 메타 행 + 우측 액션(저장·마크다운 or 수정) — 카테고리·폴더와 같은 높이에 정렬 */}
-      <div className="flex items-start gap-3 px-8 pb-3 flex-shrink-0">
+      {/* 메타 행 — 카테고리·폴더·마크다운·저장(또는 수정)이 모두 한 줄에 정렬.
+           마크다운은 저장 왼쪽에 붙어 카테고리·폴더와 같은 그룹처럼 보이고, 저장/수정은 오른쪽 끝. */}
+      <div className="flex items-center gap-2 px-8 pb-1.5 flex-shrink-0">
         {isView ? (
           <>
             {/* 뷰 모드: 카테고리·폴더는 읽기 전용 칩으로 노출. 값이 없으면 표시 자체를 생략. */}
@@ -7521,43 +7522,38 @@ function NoteEditor({
               <option value="">폴더 없음</option>
               {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </select>
+            {/* 마크다운 토글 — 저장 왼쪽, 카테고리/폴더와 동일한 pill 높이로 통일. */}
+            <button
+              onClick={() => setMarkdownMode(v => !v)}
+              title={markdownMode ? "마크다운 모드 끄기" : "마크다운 문서로 작성"}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+                markdownMode
+                  ? "border-primary/60 bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <span className={`inline-block size-2 rounded-full ${markdownMode ? "bg-primary" : "bg-muted-foreground/40"}`} />
+              마크다운
+            </button>
           </>
         )}
         <div className="flex-1" />
-        {/* 우측 세로 액션 스택 — 예전엔 상단 바에 있던 저장/마크다운을 카테고리 행 높이로 내려서
-             제목 영역이 넓어졌고, 시각적으로 "메타 + 액션"이 한 층에 모임. */}
-        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-          {isView ? (
-            <button
-              onClick={() => setMode("edit")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
-            >
-              <Edit3 size={13} /> 수정
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity"
-              >
-                <Check size={13} /> 저장
-              </button>
-              <button
-                onClick={() => setMarkdownMode(v => !v)}
-                title={markdownMode ? "마크다운 모드 끄기" : "마크다운 문서로 작성"}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] transition-colors ${
-                  markdownMode
-                    ? "border-primary/60 bg-primary/10 text-primary"
-                    : "border-border bg-card text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <span className={`inline-block size-2 rounded-full ${markdownMode ? "bg-primary" : "bg-muted-foreground/40"}`} />
-                마크다운
-              </button>
-            </>
-          )}
-        </div>
+        {isView ? (
+          <button
+            onClick={() => setMode("edit")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity flex-shrink-0"
+          >
+            <Edit3 size={13} /> 수정
+          </button>
+        ) : (
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity flex-shrink-0"
+          >
+            <Check size={13} /> 저장
+          </button>
+        )}
       </div>
 
       {/* 본문 —
