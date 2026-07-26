@@ -7382,6 +7382,11 @@ function NoteEditor({
   // 편집기 세션 로컬 상태 — 마크다운 문법을 모르는 사용자를 위한 기본값은 일반 메모장 뷰.
   // 켜면 우측에 실시간 프리뷰 패널이 붙고, 꺼도 content state는 그대로라 입력 내용은 보존됨.
   const [markdownMode, setMarkdownMode] = useState(false);
+  // 이미 저장된(non-draft) 메모는 열자마자 읽기 뷰로 표시하고, 사용자가 "수정"을 눌러야 편집 상태로.
+  // draft(새로 만든/저장 전) 메모는 바로 편집 상태로 들어감. 초기값을 ref로도 보관해서
+  // 저장/뒤로가기가 "리스트로 나가기" vs "뷰로 돌아가기" 중 어느 쪽인지 결정에 사용.
+  const [mode, setMode] = useState<"view" | "edit">(() => (note.isDraft ? "edit" : "view"));
+  const initialModeRef = useRef<"view" | "edit">(mode);
   const first = useRef(true);
   // 아직 debounce 대기 중인 미저장 변경을 추적. 사용자가 debounce 안 끝난 상태에서
   // 뒤로가기를 누르면 아래 unmount cleanup이 이걸 즉시 flush해서 데이터 유실을 막음.
@@ -7420,7 +7425,22 @@ function NoteEditor({
       return;
     }
     setSaving(false);
-    onBack();
+    // "이미 저장된 메모를 열어서 수정" 흐름이면 저장 후 뷰 모드로 복귀(리스트로 튕겨나가지 않음).
+    // 새 메모/draft를 처음 저장하는 흐름이면 기존처럼 목록으로 나감.
+    if (initialModeRef.current === "view") {
+      setMode("view");
+    } else {
+      onBack();
+    }
+  };
+
+  // 뒤로가기 — 편집→뷰 흐름이면 한 단계만 되돌리고, 그 외에는 목록으로.
+  const handleBack = () => {
+    if (mode === "edit" && initialModeRef.current === "view") {
+      setMode("view");
+    } else {
+      onBack();
+    }
   };
 
   // 언마운트 시 아직 debounce 대기 중이던 변경을 즉시 저장. 뒤로가기 버튼으로 편집기를
@@ -7442,100 +7462,149 @@ function NoteEditor({
     }
   }, [note.id]);
 
+  const isView = mode === "view";
+  const currentFolder = folders.find(f => f.id === folderId) ?? null;
+
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
-      {/* 상단 바 */}
+      {/* 상단 바 — 뒤로 + 제목 (뷰에선 읽기 전용 텍스트, 편집에선 입력 필드) */}
       <div className="flex items-center gap-3 px-8 pt-8 pb-3 flex-shrink-0">
-        <button onClick={onBack} className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors" title="목록으로">
+        <button onClick={handleBack} className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors" title={isView || initialModeRef.current !== "view" ? "목록으로" : "돌아가기"}>
           <ArrowLeft size={18} />
         </button>
-        <input
-          value={title}
-          onChange={e => setTitle(e.target.value)}
-          placeholder="제목 없음"
-          className="flex-1 text-2xl font-medium bg-transparent outline-none placeholder:text-muted-foreground/50"
-        />
-        {/* 저장 + 그 아래 마크다운 토글을 세로 정렬. 토글은 편집기 세션 로컬 상태이며,
-             기본 OFF(일반 메모장). 켜면 우측 프리뷰 패널이 나오고, 꺼도 입력 내용은 유지됨. */}
-        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity"
-          >
-            <Check size={13} /> 저장
-          </button>
-          <button
-            onClick={() => setMarkdownMode(v => !v)}
-            title={markdownMode ? "마크다운 모드 끄기" : "마크다운 문서로 작성"}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] transition-colors ${
-              markdownMode
-                ? "border-primary/60 bg-primary/10 text-primary"
-                : "border-border bg-card text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            <span className={`inline-block size-2 rounded-full ${markdownMode ? "bg-primary" : "bg-muted-foreground/40"}`} />
-            마크다운
-          </button>
-        </div>
-      </div>
-
-      {/* 메타: 카테고리 + 폴더 */}
-      <div className="flex items-center gap-3 px-8 pb-3 flex-shrink-0">
-        <input
-          list="note-categories"
-          value={category}
-          onChange={e => setCategory(e.target.value)}
-          placeholder="카테고리"
-          className="px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring w-40"
-        />
-        <datalist id="note-categories">
-          {allCategories.map(c => <option key={c} value={c} />)}
-        </datalist>
-        <select
-          value={folderId ?? ""}
-          onChange={e => setFolderId(e.target.value || null)}
-          className="px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
-        >
-          <option value="">폴더 없음</option>
-          {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-        </select>
-      </div>
-
-      {/* 마크다운 모드 OFF(기본) = 리치 텍스트 에디터 한 판. 툴바로 굵게/기울임/제목 등 서식을
-           즉시 시각적으로 반영. 저장 포맷은 마크다운 그대로 유지되므로 마크다운 모드로 토글해도
-           같은 content 로 이어지고, 기존 메모/신규 메모 모두 손실 없이 오갈 수 있음.
-           마크다운 모드 ON = 기존 raw + 실시간 프리뷰 2단 뷰(파워 유저용).
-           key 로 모드 토글 시 강제 remount — 리치 에디터/textarea 초기값을 최신 content 로 다시 세팅. */}
-      <div className={`flex-1 overflow-hidden gap-4 px-8 pb-8 min-h-0 ${markdownMode ? "grid grid-cols-2" : "flex"}`}>
-        {markdownMode ? (
-          <>
-            <textarea
-              key="md-textarea"
-              value={content}
-              onChange={e => setContent(e.target.value)}
-              placeholder="여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
-              className="w-full h-full resize-none rounded-xl border bg-card p-4 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring leading-relaxed"
-              spellCheck={false}
-              autoFocus
-            />
-            <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
-              {content.trim() ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-              ) : (
-                <p className="text-muted-foreground text-sm italic">미리보기가 여기에 표시돼요</p>
-              )}
-            </div>
-          </>
+        {isView ? (
+          <div className="flex-1 text-2xl font-medium truncate">
+            {title.trim() || <span className="text-muted-foreground/50">제목 없음</span>}
+          </div>
         ) : (
-          <RichNoteEditor
-            key="rich-editor"
-            initialContent={content}
-            onContentChange={setContent}
-            autoFocus
+          <input
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="제목 없음"
+            className="flex-1 text-2xl font-medium bg-transparent outline-none placeholder:text-muted-foreground/50"
           />
         )}
       </div>
+
+      {/* 메타 행 + 우측 액션(저장·마크다운 or 수정) — 카테고리·폴더와 같은 높이에 정렬 */}
+      <div className="flex items-start gap-3 px-8 pb-3 flex-shrink-0">
+        {isView ? (
+          <>
+            {/* 뷰 모드: 카테고리·폴더는 읽기 전용 칩으로 노출. 값이 없으면 표시 자체를 생략. */}
+            {category && (
+              <span className="px-3 py-1.5 rounded-lg bg-muted text-xs text-muted-foreground">{category}</span>
+            )}
+            {currentFolder && (
+              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted text-xs text-muted-foreground">
+                <span className="size-2 rounded-full" style={{ backgroundColor: currentFolder.color }} />
+                {currentFolder.name}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            <input
+              list="note-categories"
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+              placeholder="카테고리"
+              className="px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring w-40"
+            />
+            <datalist id="note-categories">
+              {allCategories.map(c => <option key={c} value={c} />)}
+            </datalist>
+            <select
+              value={folderId ?? ""}
+              onChange={e => setFolderId(e.target.value || null)}
+              className="px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+            >
+              <option value="">폴더 없음</option>
+              {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </>
+        )}
+        <div className="flex-1" />
+        {/* 우측 세로 액션 스택 — 예전엔 상단 바에 있던 저장/마크다운을 카테고리 행 높이로 내려서
+             제목 영역이 넓어졌고, 시각적으로 "메타 + 액션"이 한 층에 모임. */}
+        <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+          {isView ? (
+            <button
+              onClick={() => setMode("edit")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+            >
+              <Edit3 size={13} /> 수정
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity"
+              >
+                <Check size={13} /> 저장
+              </button>
+              <button
+                onClick={() => setMarkdownMode(v => !v)}
+                title={markdownMode ? "마크다운 모드 끄기" : "마크다운 문서로 작성"}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] transition-colors ${
+                  markdownMode
+                    ? "border-primary/60 bg-primary/10 text-primary"
+                    : "border-border bg-card text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <span className={`inline-block size-2 rounded-full ${markdownMode ? "bg-primary" : "bg-muted-foreground/40"}`} />
+                마크다운
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* 본문 —
+           · 뷰 모드: 렌더링된 마크다운만 표시(에디터·툴바 없음), 저장 포맷이 마크다운이므로 그대로 렌더.
+           · 편집 모드 + 마크다운 OFF(기본) = 리치 텍스트 에디터.
+           · 편집 모드 + 마크다운 ON = raw textarea + 실시간 프리뷰. */}
+      {isView ? (
+        <div className="flex-1 overflow-y-auto px-8 pb-8 min-h-0">
+          <div className={`w-full rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
+            {content.trim() ? (
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+            ) : (
+              <p className="text-muted-foreground text-sm italic">내용이 없습니다. 수정 버튼을 눌러 작성해 보세요.</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className={`flex-1 overflow-hidden gap-4 px-8 pb-8 min-h-0 ${markdownMode ? "grid grid-cols-2" : "flex"}`}>
+          {markdownMode ? (
+            <>
+              <textarea
+                key="md-textarea"
+                value={content}
+                onChange={e => setContent(e.target.value)}
+                placeholder="여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
+                className="w-full h-full resize-none rounded-xl border bg-card p-4 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-ring leading-relaxed"
+                spellCheck={false}
+                autoFocus
+              />
+              <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
+                {content.trim() ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                ) : (
+                  <p className="text-muted-foreground text-sm italic">미리보기가 여기에 표시돼요</p>
+                )}
+              </div>
+            </>
+          ) : (
+            <RichNoteEditor
+              key="rich-editor"
+              initialContent={content}
+              onContentChange={setContent}
+              autoFocus
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
