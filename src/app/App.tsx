@@ -8560,8 +8560,12 @@ function TodoDetailPanel({
   onToggleChecklistItem: (id: string, completed: boolean) => void;
   onDeleteChecklistItem: (id: string) => void;
 }) {
+  // draft 모델 — 아래 필드는 편집 도중 로컬에만 반영되고, "저장" 눌러야만 부모(DB)에 커밋됨.
+  // "닫기" 는 draft 를 폐기하고 저장된 값을 그대로 둠. 완료 토글·삭제·체크리스트·새 카테고리 생성·
+  // 반복 적용은 개별 명시적 액션이라 기존처럼 즉시 저장.
   const [memo, setMemo] = useState(todo.memo);
   const [category, setCategory] = useState(todo.category);
+  const [countInCompletion, setCountInCompletion] = useState(todo.countInCompletion !== false);
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
   const [titleDraft, setTitleDraft] = useState(todo.title);
   // 카테고리 드롭다운 열림 여부 · 새 카테고리 인라인 폼 상태.
@@ -8589,17 +8593,18 @@ function TodoDetailPanel({
   }, [catOpen]);
   const categories = templates.filter(t => t.kind === "todo");
   const color = getCategoryColor(templates, category);
+  // 제목 인라인 편집 종료 — draft 만 확정하고 실제 저장은 "저장" 버튼에서 일괄 처리.
   const commitTitle = () => {
     const trimmed = titleDraft.trim();
-    if (trimmed && trimmed !== todo.title) onTitleSave(trimmed);
-    else setTitleDraft(todo.title);
+    if (!trimmed) setTitleDraft(todo.title);
+    else setTitleDraft(trimmed);
     setEditingTitle(false);
   };
   const chooseCategory = (name: string) => {
     setCategory(name);
-    if (name !== todo.category) onCategorySave(name);
     setCatOpen(false); setNewCatMode(false);
   };
+  // 새 카테고리 생성은 즉시 저장(템플릿 신규 생성은 draft 로 잡기 어색).
   const commitNewCategory = () => {
     const name = newCatTitle.trim();
     if (!name) return;
@@ -8607,6 +8612,16 @@ function TodoDetailPanel({
     if (!existing) onAddTemplate({ title: name, color: newCatColor, tags: [], kind: "todo" });
     setNewCatTitle(""); setNewCatMode(false);
     chooseCategory(name);
+  };
+
+  // 저장 — 바뀐 draft 만 부모에 통보하고 패널 닫음. 닫기는 draft 폐기.
+  const handleSaveAndClose = () => {
+    const t = titleDraft.trim() || todo.title;
+    if (t !== todo.title) onTitleSave(t);
+    if (category !== todo.category) onCategorySave(category);
+    if (memo !== todo.memo) onMemoSave(memo);
+    if (countInCompletion !== (todo.countInCompletion !== false)) onCountInCompletionSave(countInCompletion);
+    onClose();
   };
 
   return (
@@ -8629,11 +8644,11 @@ function TodoDetailPanel({
           />
         ) : (
           <button
-            onClick={() => { setTitleDraft(todo.title); setEditingTitle(true); }}
+            onClick={() => setEditingTitle(true)}
             title="제목 편집"
             className="flex-1 min-w-0 text-left text-sm font-medium truncate hover:bg-muted/40 rounded px-1 py-0.5 transition-colors"
           >
-            {todo.title}
+            {titleDraft || todo.title}
           </button>
         )}
       </div>
@@ -8731,12 +8746,12 @@ function TodoDetailPanel({
           )}
         </div>
 
-        {/* 오늘 달성률 포함 여부 토글 — 시간 블록과 동일한 옵션. */}
+        {/* 오늘 달성률 포함 여부 토글 — 시간 블록과 동일한 옵션. draft 로만 반영, 저장 시 커밋. */}
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <input
             type="checkbox"
-            checked={todo.countInCompletion !== false}
-            onChange={e => onCountInCompletionSave(e.target.checked)}
+            checked={countInCompletion}
+            onChange={e => setCountInCompletion(e.target.checked)}
             className="size-3.5 rounded border-border accent-primary cursor-pointer"
           />
           <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
@@ -8764,7 +8779,6 @@ function TodoDetailPanel({
           <textarea
             value={memo}
             onChange={e => setMemo(e.target.value)}
-            onBlur={() => { if (memo !== todo.memo) onMemoSave(memo); }}
             placeholder="자유롭게 메모하세요..."
             className="w-full h-24 px-3 py-2 text-xs bg-muted rounded-lg resize-none outline-none focus:ring-2 focus:ring-ring text-foreground placeholder:text-muted-foreground"
           />
@@ -8788,8 +8802,9 @@ function TodoDetailPanel({
           </div>
         </div>
 
-        {/* 완료 토글 — 삭제 버튼 바로 위. 달성률에 포함되지 않는 할 일은 완료 개념이 없으므로 숨김. */}
-        {todo.countInCompletion !== false && (
+        {/* 완료 토글 — 삭제 버튼 바로 위. 달성률 포함(draft) 상태에서만 노출.
+             즉시 저장되는 명시적 액션이므로 draft/저장 모델 밖에서 동작. */}
+        {countInCompletion && (
           <button
             onClick={onToggle}
             className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-colors ${
@@ -8813,10 +8828,10 @@ function TodoDetailPanel({
           할 일 삭제
         </button>
 
-        {/* 저장/닫기 — 필드는 변경 즉시 저장되므로 둘 다 패널을 닫음. 저장이 주 버튼. */}
+        {/* 저장 — draft 커밋 후 닫기 / 닫기 — draft 폐기하고 실제 저장된 값 유지. */}
         <div className="space-y-1.5">
           <button
-            onClick={onClose}
+            onClick={handleSaveAndClose}
             className="w-full px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
           >저장</button>
           <button
@@ -8842,18 +8857,29 @@ function DeadlineDetailPanel({
   onTitleSave: (title: string) => void;
   onDueDateSave: (dueDate: string) => void;
 }) {
+  // draft 모델 — 제목·마감일은 편집 도중 로컬에만 반영, "저장" 눌러야 커밋.
+  // 닫기는 draft 폐기. 완료 토글·삭제는 즉시 저장(명시적 액션).
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(deadline.title);
-  const daysLeft = daysBetween(parseLocalDate(deadline.dueDate), TODAY_DATE);
+  const [dueDateDraft, setDueDateDraft] = useState(deadline.dueDate);
+  // 아래 배지/톤은 draft 마감일에 따라 즉시 반응하도록 draft 값을 기준으로 계산.
+  const daysLeft = daysBetween(parseLocalDate(dueDateDraft), TODAY_DATE);
   // D-day 배지 색(항상 규칙) 과 블록 색(커스텀 우선) 을 분리.
   const dayColor = deadlineToneHex(daysLeft);
   const blockColor = deadline.color || dayColor;
 
   const commitTitle = () => {
     const trimmed = titleDraft.trim();
-    if (trimmed && trimmed !== deadline.title) onTitleSave(trimmed);
-    else setTitleDraft(deadline.title);
+    if (!trimmed) setTitleDraft(deadline.title);
+    else setTitleDraft(trimmed);
     setEditingTitle(false);
+  };
+
+  const handleSaveAndClose = () => {
+    const t = titleDraft.trim() || deadline.title;
+    if (t !== deadline.title) onTitleSave(t);
+    if (dueDateDraft && dueDateDraft !== deadline.dueDate) onDueDateSave(dueDateDraft);
+    onClose();
   };
 
   return (
@@ -8876,11 +8902,11 @@ function DeadlineDetailPanel({
           />
         ) : (
           <button
-            onClick={() => { setTitleDraft(deadline.title); setEditingTitle(true); }}
+            onClick={() => setEditingTitle(true)}
             title="제목 편집"
             className="flex-1 min-w-0 text-left text-sm font-medium truncate hover:bg-muted/40 rounded px-1 py-0.5 transition-colors"
           >
-            {deadline.title}
+            {titleDraft || deadline.title}
           </button>
         )}
         <span
@@ -8890,20 +8916,17 @@ function DeadlineDetailPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* 마감일 — 네이티브 date picker. 변경 즉시 저장. */}
+        {/* 마감일 — 네이티브 date picker. draft 로만 반영, 저장 시 커밋. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">마감일</div>
           <input
             type="date"
-            value={deadline.dueDate}
-            onChange={e => {
-              const v = e.target.value;
-              if (v && v !== deadline.dueDate) onDueDateSave(v);
-            }}
+            value={dueDateDraft}
+            onChange={e => { if (e.target.value) setDueDateDraft(e.target.value); }}
             className="w-full text-sm px-3 py-2 rounded-lg bg-muted outline-none focus:ring-2 focus:ring-ring"
           />
           <div className="text-[11px] text-muted-foreground mt-1.5">
-            {deadline.dueDate} ({DAYS_KO[parseLocalDate(deadline.dueDate).getDay()]})
+            {dueDateDraft} ({DAYS_KO[parseLocalDate(dueDateDraft).getDay()]})
           </div>
         </div>
 
@@ -8930,9 +8953,10 @@ function DeadlineDetailPanel({
           마감 삭제
         </button>
 
+        {/* 저장 — draft 커밋 후 닫기 / 닫기 — draft 폐기하고 실제 저장된 값 유지. */}
         <div className="space-y-1.5">
           <button
-            onClick={onClose}
+            onClick={handleSaveAndClose}
             className="w-full px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
           >저장</button>
           <button
