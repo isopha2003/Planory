@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  fetchTemplates, createTemplate, deleteTemplateRow, fetchBlocks, insertBlock, patchBlock, deleteBlockRow,
+  fetchTemplates, createTemplate, deleteTemplateRow, updateTemplateRow, fetchBlocks, insertBlock, patchBlock, deleteBlockRow,
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
   fetchDeadlines, createDeadline, toggleDeadlineRow, updateDeadlineRow, deleteDeadlineRow,
   fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow, bulkUpdateKanbanCardOrder,
@@ -1212,6 +1212,17 @@ export default function App() {
   // 템플릿 삭제 — 이미 이 템플릿으로 만들어진 블록은 그대로 두고 template_id만 NULL로 끊김.
   // kind='todo' (= 카테고리) 삭제 시엔 이름이 매칭되는 todos.category 를 빈 문자열(미분류)로
   // 이동. 색상은 렌더링 시 getCategoryColor 가 자동으로 미분류 톤으로 바꿔줌.
+  // 템플릿(카테고리) 색상·이름 수정 — 낙관적 갱신 후 DB 반영, 실패 시 새로 fetch.
+  // 카테고리 색은 여러 화면(템플릿 패널, 블록 카드, 상세 패널)에서 templates 배열의 color를
+  // 즉시 참조하므로 setTemplates만 갱신해도 전부 재렌더됨.
+  const updateTemplate = (id: string, changes: { title?: string; color?: string; tags?: string[] }) => {
+    setTemplates(ts => ts.map(x => (x.id === id ? { ...x, ...changes } : x)));
+    updateTemplateRow(id, changes).catch(e => {
+      notifyError("템플릿 수정 실패")(e);
+      fetchTemplates().then(setTemplates).catch(() => {});
+    });
+  };
+
   const deleteTemplate = (id: string) => {
     const target = templates.find(x => x.id === id);
     setTemplates(ts => ts.filter(x => x.id !== id));
@@ -1636,6 +1647,7 @@ export default function App() {
               onDeleteBlock={requestDeleteBlock}
               onAddTemplate={addTemplate}
               onDeleteBlockTemplate={deleteTemplate}
+              onUpdateBlockTemplate={updateTemplate}
               paletteColors={paletteColors}
               onAddPaletteColor={addPaletteColor}
               onRemovePaletteColor={removePaletteColor}
@@ -2456,7 +2468,7 @@ function TodaySection({
 function CalendarSection({
   blocks, deadlines, templates, todoChecklistItems, calView, setCalView,
   templateOpen, setTemplateOpen, onSelect, onSelectTodo, onSelectDeadline, onToggle, onToggleDeadline, onAddBlock, onUpdateBlock, onUpdateBlockLocal, onDeleteBlock,
-  onAddTemplate, onDeleteBlockTemplate,
+  onAddTemplate, onDeleteBlockTemplate, onUpdateBlockTemplate,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat, pushUndo,
   todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onSwapTodo, onToggleTodo, onUpdateTodoCategory,
@@ -2480,6 +2492,7 @@ function CalendarSection({
   onDeleteBlock: (id: string) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
   onDeleteBlockTemplate: (id: string) => void;
+  onUpdateBlockTemplate: (id: string, changes: { title?: string; color?: string; tags?: string[] }) => void;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
@@ -2519,6 +2532,11 @@ function CalendarSection({
   const [showTplCustomColor, setShowTplCustomColor] = useState(false);
   const [newTplTitle, setNewTplTitle] = useState("");
   const [newTplColor, setNewTplColor] = useState("#5AA9E6");
+  // 기존 카테고리 색 편집 — 색 스와치를 클릭하면 그 행 아래에 팔레트 팝오버가 열림.
+  // 한 번에 한 카테고리만 편집 상태이므로 단일 id 로 관리, showEditRowCustomColor 는 그 팝오버
+  // 내부의 사용자 지정 색 추가 폼 오픈 여부.
+  const [editingTplColorId, setEditingTplColorId] = useState<string | null>(null);
+  const [showEditRowCustomColor, setShowEditRowCustomColor] = useState(false);
   const [dragTplId, setDragTplId] = useState<string | null>(null);
   const [dragBlockId, setDragBlockId] = useState<string | null>(null);
   const [dragBlockOffsetMin, setDragBlockOffsetMin] = useState(0); // minutes from block top to mouse
@@ -3792,33 +3810,104 @@ function CalendarSection({
               {(
                 <div>
                   <div className="text-[10px] font-medium text-muted-foreground px-2 py-1 uppercase tracking-wide">카테고리</div>
-                  {templates.map(t => (
-                    <div key={t.id} draggable
-                      onDragStart={e => {
-                        // 시간 그리드는 templateId 를 소비하고, 할 일 컬럼은 todoCategory 를 소비.
-                        // 두 키를 같이 실어 어느 쪽으로 드롭해도 동작하게 함.
-                        e.dataTransfer.setData("templateId", t.id);
-                        e.dataTransfer.setData("todoTemplateId", t.id);
-                        e.dataTransfer.setData("todoCategory", t.title);
-                        e.dataTransfer.effectAllowed = "copy";
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        e.dataTransfer.setDragImage(e.currentTarget, e.clientX - rect.left, e.clientY - rect.top);
-                        setDragTplId(t.id);
-                      }}
-                      onDragEnd={() => { setDragTplId(null); setDropTarget(null); }}
-                      className="group/tpl flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-sidebar-accent cursor-grab active:cursor-grabbing transition-colors text-xs select-none">
-                      <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: t.color }} />
-                      <span className="flex-1 truncate text-foreground/80">{t.title}</span>
-                      <button
-                        onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(t.id); }}
-                        onMouseDown={e => e.stopPropagation()}
-                        onDragStart={e => { e.stopPropagation(); e.preventDefault(); }}
-                        draggable={false}
-                        title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
-                        className="opacity-0 group-hover/tpl:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-destructive flex-shrink-0"
-                      ><X size={11} /></button>
+                  {templates.map(t => {
+                    const editingColor = editingTplColorId === t.id;
+                    return (
+                    <div key={t.id}>
+                      <div draggable
+                        onDragStart={e => {
+                          // 시간 그리드는 templateId 를 소비하고, 할 일 컬럼은 todoCategory 를 소비.
+                          // 두 키를 같이 실어 어느 쪽으로 드롭해도 동작하게 함.
+                          e.dataTransfer.setData("templateId", t.id);
+                          e.dataTransfer.setData("todoTemplateId", t.id);
+                          e.dataTransfer.setData("todoCategory", t.title);
+                          e.dataTransfer.effectAllowed = "copy";
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          e.dataTransfer.setDragImage(e.currentTarget, e.clientX - rect.left, e.clientY - rect.top);
+                          setDragTplId(t.id);
+                        }}
+                        onDragEnd={() => { setDragTplId(null); setDropTarget(null); }}
+                        className="group/tpl flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-sidebar-accent cursor-grab active:cursor-grabbing transition-colors text-xs select-none">
+                        {/* 색 스와치 자체를 클릭 대상으로 — 드래그 이벤트를 막고 편집 팝오버 토글.
+                             편집 중인 행은 링으로 강조해서 지금 색 바꾸는 대상이 명확히 보이게 함. */}
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setEditingTplColorId(editingColor ? null : t.id);
+                            setShowEditRowCustomColor(false);
+                          }}
+                          onMouseDown={e => e.stopPropagation()}
+                          onDragStart={e => { e.stopPropagation(); e.preventDefault(); }}
+                          draggable={false}
+                          title="색상 변경"
+                          className={`size-3.5 rounded-sm flex-shrink-0 transition-transform hover:scale-110 ${editingColor ? "ring-2 ring-offset-1 ring-offset-sidebar ring-foreground/40" : ""}`}
+                          style={{ backgroundColor: t.color }}
+                        />
+                        <span className="flex-1 truncate text-foreground/80">{t.title}</span>
+                        <button
+                          onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(t.id); }}
+                          onMouseDown={e => e.stopPropagation()}
+                          onDragStart={e => { e.stopPropagation(); e.preventDefault(); }}
+                          draggable={false}
+                          title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
+                          className="opacity-0 group-hover/tpl:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-destructive flex-shrink-0"
+                        ><X size={11} /></button>
+                      </div>
+                      {/* 색 편집 팝오버 — 팔레트에서 선택 시 즉시 저장 후 자동 닫힘.
+                           팔레트 각 스와치는 hover 시 X 로 팔레트에서 제거 가능(공용 팔레트 규칙과 동일). */}
+                      {editingColor && (
+                        <div className="mx-1 my-1 p-2 rounded-lg bg-sidebar-accent space-y-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {paletteColors.map(c => (
+                              <div key={c} className="relative group/color size-5 flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onUpdateBlockTemplate(t.id, { color: c });
+                                    setEditingTplColorId(null);
+                                    setShowEditRowCustomColor(false);
+                                  }}
+                                  className={`size-5 rounded-full transition-transform ${t.color.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-sidebar-accent ring-foreground/40 scale-110" : ""}`}
+                                  style={{ backgroundColor: c }}
+                                  title={c}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
+                                  className="absolute -top-1 -right-1 size-3 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
+                                  title="팔레트에서 제거"
+                                >
+                                  <X size={7} strokeWidth={2.5} />
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => setShowEditRowCustomColor(v => !v)}
+                              className={`size-5 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showEditRowCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-muted/40 hover:bg-muted"}`}
+                              title="사용자 지정 색상 추가"
+                            >
+                              <Plus size={10} className={showEditRowCustomColor ? "text-primary" : "text-muted-foreground"} />
+                            </button>
+                          </div>
+                          {showEditRowCustomColor && (
+                            <CustomColorPickerInline
+                              initial={t.color}
+                              onAdd={(color) => {
+                                onAddPaletteColor(color);
+                                onUpdateBlockTemplate(t.id, { color });
+                                setEditingTplColorId(null);
+                                setShowEditRowCustomColor(false);
+                              }}
+                              onClose={() => setShowEditRowCustomColor(false)}
+                            />
+                          )}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                   {showNewTpl === "todo" ? (
                     <div className="p-2 rounded-lg bg-sidebar-accent space-y-1.5">
                       <input
