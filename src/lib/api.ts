@@ -584,6 +584,20 @@ export async function insertTodosBulk(todos: Todo[]): Promise<void> {
   }
 }
 
+// 반복 할 일 그룹에서 fromDate 이후(포함) 인스턴스 전체 삭제 — deleteBlocksByRepeatGroup 의 todo 대응.
+export async function deleteTodosByRepeatGroup(repeatGroupId: string, fromDate: string): Promise<void> {
+  const db = await getDb();
+  // FK 방어 — 지워질 인스턴스들의 체크리스트를 먼저 정리.
+  await db.execute(
+    "DELETE FROM todo_checklist_items WHERE todo_id IN (SELECT id FROM todos WHERE repeat_group_id = ? AND date >= ?)",
+    [repeatGroupId, fromDate]
+  );
+  await db.execute(
+    "DELETE FROM todos WHERE repeat_group_id = ? AND date >= ?",
+    [repeatGroupId, fromDate]
+  );
+}
+
 // 반복 규칙 재적용 시 이전 규칙으로 만든 인스턴스 정리 — 원본(origin)은 남김.
 export async function deleteTodoRepeatInstancesExceptOrigin(repeatGroupId: string, originId: string): Promise<void> {
   const db = await getDb();

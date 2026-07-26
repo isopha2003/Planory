@@ -17,7 +17,7 @@ import {
   fetchKanbanChecklistItemsByDeadline, createKanbanChecklistItem, toggleKanbanChecklistItemRow, deleteKanbanChecklistItemRow,
   type KanbanCard, type KanbanStatus, type KanbanChecklistItem,
   fetchTodos, createTodo, updateTodo, toggleTodoRow, deleteTodoRow, bulkUpdateTodoOrder, type Todo,
-  insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin,
+  insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin, deleteTodosByRepeatGroup as apiDeleteTodoRepeatGroup,
   fetchTodaySessions, startTimerSession, endTimerSession, deleteTodaySessions, fetchFocusSecByDate,
   fetchChecklistItems, createChecklistItem, toggleChecklistItemRow, deleteChecklistItemRow,
   fetchTodoChecklistItems, createTodoChecklistItem, toggleTodoChecklistItemRow, deleteTodoChecklistItemRow,
@@ -324,6 +324,8 @@ export default function App() {
   // 반복 블록 삭제 요청 — 이 블록만 지울지 / 이 블록 이후 전체를 지울지 사용자에게 물어보는 모달.
   // 반복 그룹에 속하지 않은 블록은 곧바로 삭제하고 이 state 는 건너뜀.
   const [repeatDeletePrompt, setRepeatDeletePrompt] = useState<{ id: string; date: string; title: string } | null>(null);
+  // 반복 할 일 삭제 요청 — repeatDeletePrompt 의 todo 판.
+  const [todoRepeatDeletePrompt, setTodoRepeatDeletePrompt] = useState<{ id: string; date: string; title: string } | null>(null);
 
   // 다중 블록 UX용 — 클립보드(Ctrl+C/V), 실행 취소 스택(Ctrl+Z), 다시 실행 스택(Ctrl+Y).
   // 클립보드는 블록의 얕은 스냅샷: 원본과 무관한 새 블록으로 붙여넣기 위해 date/id 만 재계산.
@@ -1281,6 +1283,33 @@ export default function App() {
       });
     }
   };
+
+  // UI 진입점에서 호출하는 삭제 래퍼 — 반복 그룹 소속이면 모달로 범위(단건/이후 전체) 를 물어보고,
+  // 아니면 곧바로 단건 삭제. requestDeleteBlock 의 todo 대응.
+  const requestDeleteTodo = (id: string) => {
+    const todo = todos.find(t => t.id === id);
+    if (!todo) return;
+    if (todo.repeatGroupId) {
+      setTodoRepeatDeletePrompt({ id, date: todo.date, title: todo.title });
+    } else {
+      deleteTodo(id);
+    }
+  };
+
+  const deleteTodoRepeatGroup = (id: string, fromDate: string) => {
+    const todo = todos.find(t => t.id === id);
+    const groupId = todo?.repeatGroupId;
+    setTodos(ts => {
+      if (!groupId) return ts.filter(t => t.id !== id);
+      return ts.filter(t => !(t.repeatGroupId === groupId && t.date >= fromDate));
+    });
+    setSelectedTodo(prev => (prev?.id === id ? null : prev));
+    if (!groupId) {
+      deleteTodoRow(id).catch(notifyError("todo 삭제 실패"));
+    } else {
+      apiDeleteTodoRepeatGroup(groupId, fromDate).catch(notifyError("반복 할 일 삭제 실패"));
+    }
+  };
   const updateTodoTitle = (id: string, title: string) => {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, title } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, title } : prev));
@@ -1553,7 +1582,7 @@ export default function App() {
               onToggle={toggleBlock}
               onToggleDeadline={toggleDeadline}
               onToggleTodo={toggleTodo}
-              onDeleteTodo={deleteTodo}
+              onDeleteTodo={requestDeleteTodo}
               onAddTodo={addTodo}
               onReorderTodos={reorderTodos}
               onSwapTodo={swapTodos}
@@ -1594,7 +1623,7 @@ export default function App() {
               pushUndo={pushUndo}
               todos={todos}
               onAddTodo={addTodo}
-              onDeleteTodo={deleteTodo}
+              onDeleteTodo={requestDeleteTodo}
               onUpdateTodoTitle={updateTodoTitle}
               onMoveTodo={moveTodoToDate}
               onSwapTodo={swapTodos}
@@ -1692,6 +1721,25 @@ export default function App() {
           />
         )}
 
+        {/* 반복 할 일 삭제 범위 확인 모달 — repeatDeletePrompt 의 todo 판. */}
+        {todoRepeatDeletePrompt && (
+          <RepeatDeleteModal
+            title={todoRepeatDeletePrompt.title}
+            noun="할 일"
+            onClose={() => setTodoRepeatDeletePrompt(null)}
+            onDeleteOne={() => {
+              const { id } = todoRepeatDeletePrompt;
+              setTodoRepeatDeletePrompt(null);
+              deleteTodo(id);
+            }}
+            onDeleteFollowing={() => {
+              const { id, date } = todoRepeatDeletePrompt;
+              setTodoRepeatDeletePrompt(null);
+              deleteTodoRepeatGroup(id, date);
+            }}
+          />
+        )}
+
         {/* Todo detail side panel — 시간 블록의 상세 패널과 같은 자리에 뜨는 라이트 버전.
              선택된 todo 를 갱신하면 컴포넌트 내부 state 는 리마운트되어 새 값을 로드. */}
         {selectedTodo && !selectedBlock && (
@@ -1704,7 +1752,7 @@ export default function App() {
             checklistItems={todoChecklistItems.filter(c => c.todoId === selectedTodo.id)}
             onClose={() => setSelectedTodo(null)}
             onToggle={() => toggleTodo(selectedTodo.id)}
-            onDelete={() => deleteTodo(selectedTodo.id)}
+            onDelete={() => requestDeleteTodo(selectedTodo.id)}
             onTitleSave={(title) => {
               updateTodoTitle(selectedTodo.id, title);
               if (selectedTodo.id === justCreatedTodoId) {
@@ -4382,11 +4430,13 @@ function TodoPanel({
   );
 }
 
-// 반복 블록 삭제 시 범위(단건/이후 전체) 를 물어보는 확인 모달. 스타일은 MultiRepeatModal 과 통일.
+// 반복 블록/할 일 삭제 시 범위(단건/이후 전체) 를 물어보는 확인 모달. 스타일은 MultiRepeatModal 과 통일.
+// noun 은 "블록" | "할 일" — 블록/할 일 양쪽에서 재사용하기 위해 문구만 파라미터화.
 function RepeatDeleteModal({
-  title, onClose, onDeleteOne, onDeleteFollowing,
+  title, noun = "블록", onClose, onDeleteOne, onDeleteFollowing,
 }: {
   title: string;
+  noun?: string;
   onClose: () => void;
   onDeleteOne: () => void;
   onDeleteFollowing: () => void;
@@ -4394,21 +4444,21 @@ function RepeatDeleteModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div className="w-80 bg-card border border-border rounded-xl p-4 shadow-lg" onClick={e => e.stopPropagation()}>
-        <div className="text-sm font-semibold mb-1">반복 블록 삭제</div>
+        <div className="text-sm font-semibold mb-1">반복 {noun} 삭제</div>
         <div className="text-[11px] text-muted-foreground mb-4 truncate">"{title || "제목 없음"}"</div>
         <div className="space-y-2">
           <button
             onClick={onDeleteOne}
             className="w-full text-left px-3 py-2.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors"
           >
-            <div className="font-medium">이 블록만 삭제</div>
+            <div className="font-medium">이 {noun}만 삭제</div>
             <div className="text-[10px] text-muted-foreground mt-0.5">나머지 반복 일정은 그대로 유지</div>
           </button>
           <button
             onClick={onDeleteFollowing}
             className="w-full text-left px-3 py-2.5 rounded-lg border border-destructive/40 text-xs hover:bg-destructive/10 text-destructive transition-colors"
           >
-            <div className="font-medium">이후 모든 블록 삭제</div>
+            <div className="font-medium">이후 모든 {noun} 삭제</div>
             <div className="text-[10px] text-destructive/70 mt-0.5">오늘 이후의 반복 인스턴스가 함께 사라집니다</div>
           </button>
         </div>
