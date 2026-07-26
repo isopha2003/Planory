@@ -7487,16 +7487,17 @@ function NoteEditor({
       </div>
 
       {/* 메타 행 — 카테고리·폴더·마크다운·저장(또는 수정)이 모두 한 줄에 정렬.
-           마크다운은 저장 왼쪽에 붙어 카테고리·폴더와 같은 그룹처럼 보이고, 저장/수정은 오른쪽 끝. */}
-      <div className="flex items-center gap-2 px-8 pb-1.5 flex-shrink-0">
+           뷰↔편집 모드 사이에서 카드/버튼의 세로 위치가 튀지 않도록, 행 자체에 고정 높이(h-9)를 주고
+           모든 pill 요소도 동일한 h-8 로 통일. items-center 로 세로 중앙 정렬됨. */}
+      <div className="flex items-center gap-2 px-8 pb-1.5 flex-shrink-0 h-9">
         {isView ? (
           <>
             {/* 뷰 모드: 카테고리·폴더는 읽기 전용 칩으로 노출. 값이 없으면 표시 자체를 생략. */}
             {category && (
-              <span className="px-3 py-1.5 rounded-lg bg-muted text-xs text-muted-foreground">{category}</span>
+              <span className="h-8 flex items-center px-3 rounded-lg bg-muted text-xs text-muted-foreground">{category}</span>
             )}
             {currentFolder && (
-              <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted text-xs text-muted-foreground">
+              <span className="h-8 flex items-center gap-1.5 px-3 rounded-lg bg-muted text-xs text-muted-foreground">
                 <span className="size-2 rounded-full" style={{ backgroundColor: currentFolder.color }} />
                 {currentFolder.name}
               </span>
@@ -7509,7 +7510,7 @@ function NoteEditor({
               value={category}
               onChange={e => setCategory(e.target.value)}
               placeholder="카테고리"
-              className="px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring w-40"
+              className="h-8 px-3 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring w-40"
             />
             <datalist id="note-categories">
               {allCategories.map(c => <option key={c} value={c} />)}
@@ -7517,7 +7518,7 @@ function NoteEditor({
             <select
               value={folderId ?? ""}
               onChange={e => setFolderId(e.target.value || null)}
-              className="px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+              className="h-8 px-3 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
             >
               <option value="">폴더 없음</option>
               {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
@@ -7526,7 +7527,7 @@ function NoteEditor({
             <button
               onClick={() => setMarkdownMode(v => !v)}
               title={markdownMode ? "마크다운 모드 끄기" : "마크다운 문서로 작성"}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+              className={`h-8 flex items-center gap-1.5 px-3 rounded-lg border text-xs transition-colors ${
                 markdownMode
                   ? "border-primary/60 bg-primary/10 text-primary"
                   : "border-border bg-card text-muted-foreground hover:bg-muted"
@@ -7541,7 +7542,7 @@ function NoteEditor({
         {isView ? (
           <button
             onClick={() => setMode("edit")}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity flex-shrink-0"
+            className="h-8 flex items-center gap-1.5 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity flex-shrink-0"
           >
             <Edit3 size={13} /> 수정
           </button>
@@ -7549,7 +7550,7 @@ function NoteEditor({
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity flex-shrink-0"
+            className="h-8 flex items-center gap-1.5 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-60 transition-opacity flex-shrink-0"
           >
             <Check size={13} /> 저장
           </button>
