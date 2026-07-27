@@ -107,6 +107,9 @@ interface Deadline {
   title: string;
   dueDate: string;
   completed: boolean;
+  // 완료 처리한 시각(ISO). 활동 기록 캘린더가 "끝낸 날" 칸에 표시하는 기준.
+  // 미완료면 null. 이 필드가 생기기 전에 완료된 옛 데이터도 null 이라 마감일로 폴백함.
+  completedAt: string | null;
   // 마감 개별 색상 — 빈 문자열이면 D-day 톤을 따라감(기본).
   color: string;
 }
@@ -1410,7 +1413,10 @@ export default function App() {
     const target = deadlines.find(d => d.id === id);
     if (!target) return;
     const completed = !target.completed;
-    setDeadlines(ds => ds.map(d => d.id === id ? { ...d, completed } : d));
+    // completedAt 도 함께 갱신 — 활동 기록 캘린더가 이 값으로 "끝낸 날" 칸을 정하므로,
+    // DB 만 쓰고 로컬 상태를 안 바꾸면 새로고침 전까지 표시가 안 됨.
+    const completedAt = completed ? new Date().toISOString() : null;
+    setDeadlines(ds => ds.map(d => d.id === id ? { ...d, completed, completedAt } : d));
     toggleDeadlineRow(id, completed).catch(notifyError("마감 저장 실패"));
   };
 
@@ -1501,7 +1507,7 @@ export default function App() {
      // 두 번째 낙관적 로우가 첫 번째 real 로우로 통째로 덮어씌워지고, DB엔 두 건이지만 화면엔
      // 한 건만 보이는 유령 상태가 나옴. randomUUID로 충돌을 원천 차단.
     const tempId = `temp-${crypto.randomUUID()}`;
-    setDeadlines(ds => [...ds, { id: tempId, title: d.title, dueDate: d.dueDate, completed: false, color: "" }]);
+    setDeadlines(ds => [...ds, { id: tempId, title: d.title, dueDate: d.dueDate, completed: false, completedAt: null, color: "" }]);
     createDeadline(d)
       .then(real => setDeadlines(ds => ds.map(x => (x.id === tempId ? real : x))))
       .catch(e => { setDeadlines(ds => ds.filter(x => x.id !== tempId)); notifyError("마감 추가 실패")(e); });
@@ -2109,6 +2115,7 @@ export default function App() {
             <GrassSection
               completionRate={completionRate}
               blocks={blocks.filter(b => !b.parentBlockId)}
+              deadlines={deadlines}
               templates={templates}
               timerSec={timerSec}
               totalPlanMin={totalPlanMin}
@@ -6611,11 +6618,21 @@ function KanbanBoard({
 }
 
 // ── Activity Record Section (v3: monthly calendar) ────────────────
+// 활동 기록 캘린더 한 칸에 나열되는 항목 — 완료한 시간 블록 또는 완료한 마감.
+// kind 는 표시용(마감은 마름모 점)이자 "무엇이 집계됐는지" 를 코드에서 구분하기 위한 값.
+type DayActivity = { title: string; color: string; kind: "block" | "deadline" };
+// 완료한 마감의 기본 점 색 — 마감에 커스텀 색이 없을 때. D-day 톤은 "남은 날" 에 따라
+// 계속 변하는 값이라 이미 끝난 기록에 쓰면 볼 때마다 색이 달라져서 고정색을 씀.
+const DEADLINE_DONE_COLOR = "#10B981"; // emerald-500
+
 function GrassSection({
-  completionRate, blocks, templates, timerSec, totalPlanMin, focusSecByDate,
+  completionRate, blocks, deadlines, templates, timerSec, totalPlanMin, focusSecByDate,
 }: {
   completionRate: number;
   blocks: Block[];
+  // 완료한 마감도 그날의 활동으로 함께 표시 — 예전엔 blocks 만 받아서 마감을 아무리 끝내도
+  // 활동 기록 캘린더에는 아무것도 안 뜨는 상태였음.
+  deadlines: Deadline[];
   templates: Template[];
   timerSec: number;
   totalPlanMin: number;
@@ -6660,29 +6677,50 @@ function GrassSection({
   ];
   while (dayStrings.length % 7 !== 0) dayStrings.push(null);
 
-  // 그 날짜의 완료된 블록 목록과 총 집중 시간(분)을 실제 데이터에서 계산.
+  // 완료한 마감을 "끝낸 날" 기준으로 모아둔 인덱스.
+  // ⚠ completed_at 은 ISO(UTC) 문자열이라 앞 10자를 자르면 안 됨 — UTC+9 에서 자정 직후
+  // 완료한 마감이 하루 전 칸에 찍힌다. Date 를 거쳐 로컬 날짜로 변환.
+  // completedAt 을 읽지 않던 시절에 완료된 데이터는 값이 없으므로 마감일로 폴백.
+  const deadlinesByDoneDate: Record<string, DayActivity[]> = {};
+  for (const d of deadlines) {
+    if (!d.completed) continue;
+    const ds = d.completedAt ? toDateStr(new Date(d.completedAt)) : d.dueDate;
+    (deadlinesByDoneDate[ds] ??= []).push({
+      title: d.title,
+      color: d.color || DEADLINE_DONE_COLOR,
+      kind: "deadline",
+    });
+  }
+
+  // 그 날짜의 완료된 블록·마감 목록과 총 집중 시간(분)을 실제 데이터에서 계산.
   // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
+  // 마감은 칸이 잘려도(MAX_SHOWN) 보이도록 블록보다 앞에 둠.
+  const activitiesOn = (dateStr: string): DayActivity[] => [
+    ...(deadlinesByDoneDate[dateStr] ?? []),
+    // 오늘 분기도 반드시 date 필터를 함께 걸어야 함. 예전엔 `b.completed`만 걸어서
+    // 지난 몇 달간의 모든 완료 블록이 오늘 셀에 activities로 나오고, activeDays 계산도
+    // 왜곡되던 버그가 있었음.
+    ...blocks
+      .filter(b => b.date === dateStr && b.completed)
+      .map(b => ({ title: b.title, color: getCategoryColor(templates, b.category), kind: "block" as const })),
+  ];
+
   const getDayData = (dateStr: string): {
-    activities: { title: string; color: string }[];
+    activities: DayActivity[];
     focusMin: number;
     goalMet: boolean;
   } => {
     if (dateStr === TODAY_STR) {
-      // 오늘 분기도 반드시 date 필터를 함께 걸어야 함. 예전엔 `b.completed`만 걸어서
-      // 지난 몇 달간의 모든 완료 블록이 오늘 셀에 activities로 나오고, activeDays 계산도
-      // 왜곡되던 버그가 있었음.
-      const completedBlocks = blocks.filter(b => b.date === dateStr && b.completed);
       return {
-        activities: completedBlocks.map(b => ({ title: b.title, color: getCategoryColor(templates, b.category) })),
+        activities: activitiesOn(dateStr),
         focusMin: focusedMin,
         goalMet: focusedMin >= goalMin && goalMin > 0,
       };
     }
     if (dateStr > TODAY_STR) return { activities: [], focusMin: 0, goalMet: false };
-    const completed = blocks.filter(b => b.date === dateStr && b.completed);
     const fm = Math.floor((focusSecByDate[dateStr] ?? 0) / 60);
     return {
-      activities: completed.map(b => ({ title: b.title, color: getCategoryColor(templates, b.category) })),
+      activities: activitiesOn(dateStr),
       focusMin: fm,
       goalMet: fm >= goalMin && goalMin > 0,
     };
@@ -6810,6 +6848,10 @@ function GrassSection({
                   <span className="inline-block size-2.5 rounded-sm bg-sky-100 border border-sky-300" />
                   목표 달성일
                 </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block size-1.5 rotate-45 rounded-[1px]" style={{ backgroundColor: DEADLINE_DONE_COLOR }} />
+                  마감 완료
+                </span>
               </div>
             </div>
             <button
@@ -6901,8 +6943,16 @@ function GrassSection({
                   {!isFuture && data.activities.length > 0 && (
                     <div className="space-y-0.5">
                       {allShown.map((act, ai) => (
-                        <div key={ai} className="flex items-center gap-1 min-w-0">
-                          <span className="size-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: act.color }} />
+                        <div
+                          key={ai}
+                          className="flex items-center gap-1 min-w-0"
+                          title={act.kind === "deadline" ? `마감 완료 — ${act.title}` : act.title}
+                        >
+                          {/* 마감은 마름모, 시간 블록은 동그라미 — 같은 줄에 섞여도 구분되게 */}
+                          <span
+                            className={`size-1.5 flex-shrink-0 ${act.kind === "deadline" ? "rotate-45 rounded-[1px]" : "rounded-full"}`}
+                            style={{ backgroundColor: act.color }}
+                          />
                           <span className="text-[9px] leading-tight truncate text-foreground/70">{act.title}</span>
                         </div>
                       ))}

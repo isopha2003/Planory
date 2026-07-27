@@ -355,7 +355,12 @@ export async function insertBlocksBulk(blocks: any[]) {
 export async function fetchDeadlines() {
   const db = await getDb();
   const rows = await db.select<any[]>("SELECT * FROM deadlines ORDER BY due_date");
-  return rows.map(d => ({ id: d.id, title: d.title, dueDate: d.due_date, completed: !!d.completed, color: d.color ?? "" }));
+  // completed_at 은 예전부터 저장만 하고 읽지는 않았음 — 활동 기록 캘린더가 "언제 끝냈는지"
+  // 를 알아야 그 날짜 칸에 표시할 수 있어서 이제 함께 내려준다(ISO 문자열, 미완료면 null).
+  return rows.map(d => ({
+    id: d.id, title: d.title, dueDate: d.due_date,
+    completed: !!d.completed, completedAt: d.completed_at ?? null, color: d.color ?? "",
+  }));
 }
 
 export async function createDeadline(d: { title: string; dueDate: string; color?: string }) {
@@ -366,7 +371,7 @@ export async function createDeadline(d: { title: string; dueDate: string; color?
     "INSERT INTO deadlines (id, title, due_date, color) VALUES (?, ?, ?, ?)",
     [id, d.title, d.dueDate, color]
   );
-  return { id, title: d.title, dueDate: d.dueDate, completed: false, color };
+  return { id, title: d.title, dueDate: d.dueDate, completed: false, completedAt: null, color };
 }
 
 export async function toggleDeadlineRow(id: string, completed: boolean) {
