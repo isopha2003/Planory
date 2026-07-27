@@ -355,8 +355,8 @@ export async function insertBlocksBulk(blocks: any[]) {
 export async function fetchDeadlines() {
   const db = await getDb();
   const rows = await db.select<any[]>("SELECT * FROM deadlines ORDER BY due_date");
-  // completed_at 은 예전부터 저장만 하고 읽지는 않았음 — 활동 기록 캘린더가 "언제 끝냈는지"
-  // 를 알아야 그 날짜 칸에 표시할 수 있어서 이제 함께 내려준다(ISO 문자열, 미완료면 null).
+  // completed_at 은 예전부터 저장만 하고 읽지는 않아 앱 상태가 DB 와 어긋나 있었음 —
+  // 이제 함께 내려준다(ISO 문자열, 미완료면 null).
   return rows.map(d => ({
     id: d.id, title: d.title, dueDate: d.due_date,
     completed: !!d.completed, completedAt: d.completed_at ?? null, color: d.color ?? "",
@@ -578,8 +578,7 @@ export interface Todo {
   endDate: string | null;
   color: string;
   completed: boolean;
-  // 완료 처리한 시각(ISO). 활동 기록 캘린더가 "끝낸 날" 칸에 표시하는 기준. 미완료면 null.
-  // deadlines.completedAt 과 동일한 취급 — 값이 없는 옛 데이터는 예정 날짜로 폴백.
+  // 완료 처리한 시각(ISO, 미완료면 null) — DB 의 completed_at 을 그대로 반영.
   completedAt: string | null;
   memo: string;
   category: string;
