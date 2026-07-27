@@ -245,19 +245,22 @@ export async function deleteBlocksByRepeatGroup(repeatGroupId: string, fromDate:
   );
 }
 
-// 같은 반복 그룹의 origin(=사용자가 편집 중인 블록)을 제외한 모든 인스턴스 삭제.
-// setBlockRepeat가 규칙을 재저장할 때 사용 — 예전엔 이 정리 없이 새 인스턴스만 insert해서
-// 이전 규칙으로 만든 인스턴스가 DB에 그대로 남아 refetch 시 새/구 인스턴스가 함께 나타남.
-export async function deleteRepeatInstancesExceptOrigin(repeatGroupId: string, originId: string) {
+// 반복 규칙을 다시 적용할 때, 기준 블록 날짜 이후의 같은 그룹 인스턴스를 정리(기준 블록 자신은 유지).
+// 지나간 날짜는 기록이라 남김 — 삭제·수정의 "이후 전체" 와 같은 기준.
+//
+// 예전엔 "그룹에서 origin 만 빼고 전부" 였는데, 호출부가 항상 rg-<클릭한 블록 id> 로 새 그룹
+// id 를 만들어 넘겨서, 파생 인스턴스에서 규칙을 바꾸면 이 DELETE 가 아무것도 지우지 못하고
+// (그 id 의 그룹은 아직 없으므로) 기존 그룹 위에 새 그룹이 통째로 겹쳐 쌓였음.
+export async function deleteRepeatInstancesFrom(repeatGroupId: string, fromDate: string, exceptId: string) {
   const db = await getDb();
   // FK 방어 — 지워질 인스턴스들의 체크리스트를 먼저 정리.
   await db.execute(
-    "DELETE FROM checklist_items WHERE block_id IN (SELECT id FROM blocks WHERE repeat_group_id = ? AND id != ?)",
-    [repeatGroupId, originId]
+    "DELETE FROM checklist_items WHERE block_id IN (SELECT id FROM blocks WHERE repeat_group_id = ? AND date >= ? AND id != ?)",
+    [repeatGroupId, fromDate, exceptId]
   );
   await db.execute(
-    "DELETE FROM blocks WHERE repeat_group_id = ? AND id != ?",
-    [repeatGroupId, originId]
+    "DELETE FROM blocks WHERE repeat_group_id = ? AND date >= ? AND id != ?",
+    [repeatGroupId, fromDate, exceptId]
   );
 }
 
@@ -510,6 +513,11 @@ export async function createKanbanChecklistItem(cardId: string, text: string, pa
   return { id, cardId, parentItemId, text, completed: false, sortOrder: 0 };
 }
 
+export async function updateKanbanChecklistItemText(id: string, text: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE kanban_checklist_items SET text = ? WHERE id = ?", [text, id]);
+}
+
 export async function toggleKanbanChecklistItemRow(id: string, completed: boolean): Promise<void> {
   const db = await getDb();
   await db.execute(
@@ -639,15 +647,18 @@ export async function deleteTodosByRepeatGroup(repeatGroupId: string, fromDate: 
   );
 }
 
-// 반복 규칙 재적용 시 이전 규칙으로 만든 인스턴스 정리 — 원본(origin)은 남김.
-export async function deleteTodoRepeatInstancesExceptOrigin(repeatGroupId: string, originId: string): Promise<void> {
+// deleteRepeatInstancesFrom 의 todo 대응 — 기준 날짜 이후의 같은 그룹 인스턴스만 정리.
+export async function deleteTodoRepeatInstancesFrom(repeatGroupId: string, fromDate: string, exceptId: string): Promise<void> {
   const db = await getDb();
   // FK 방어 — 지워질 인스턴스들의 체크리스트를 먼저 정리.
   await db.execute(
-    "DELETE FROM todo_checklist_items WHERE todo_id IN (SELECT id FROM todos WHERE repeat_group_id = ? AND id != ?)",
-    [repeatGroupId, originId]
+    "DELETE FROM todo_checklist_items WHERE todo_id IN (SELECT id FROM todos WHERE repeat_group_id = ? AND date >= ? AND id != ?)",
+    [repeatGroupId, fromDate, exceptId]
   );
-  await db.execute("DELETE FROM todos WHERE repeat_group_id = ? AND id != ?", [repeatGroupId, originId]);
+  await db.execute(
+    "DELETE FROM todos WHERE repeat_group_id = ? AND date >= ? AND id != ?",
+    [repeatGroupId, fromDate, exceptId]
+  );
 }
 
 // patchBlocksByRepeatGroup 의 todo 대응 — 반복 그룹이 공유하는 필드를 fromDate 이후 전체에 반영.
@@ -1090,6 +1101,12 @@ export async function createChecklistItem(blockId: string, text: string, parentI
   return { id, blockId, parentItemId, text, completed: false, sortOrder: 0 };
 }
 
+// 항목 내용 수정 — 예전엔 추가/토글/삭제만 있어서 오타 하나에도 지우고 다시 만들어야 했음.
+export async function updateChecklistItemText(id: string, text: string) {
+  const db = await getDb();
+  await db.execute("UPDATE checklist_items SET text = ? WHERE id = ?", [text, id]);
+}
+
 export async function toggleChecklistItemRow(id: string, completed: boolean) {
   const db = await getDb();
   await db.execute(
@@ -1208,6 +1225,11 @@ export async function createTodoChecklistItem(todoId: string, text: string, pare
     [id, todoId, parentItemId ?? null, text]
   );
   return { id, todoId, parentItemId, text, completed: false, sortOrder: 0 };
+}
+
+export async function updateTodoChecklistItemText(id: string, text: string) {
+  const db = await getDb();
+  await db.execute("UPDATE todo_checklist_items SET text = ? WHERE id = ?", [text, id]);
 }
 
 export async function toggleTodoChecklistItemRow(id: string, completed: boolean) {
