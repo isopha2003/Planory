@@ -89,6 +89,16 @@ type BlockDraftFields = {
   countInCompletion?: boolean;
 };
 
+// 상세 패널 "저장" 이 필드 draft 와 함께 넘기는 부가 정보.
+// date/endDate 를 BlockDraftFields 에 넣지 않는 이유: 저 필드들은 반복 그룹의 "이후 전체" 에
+// 그대로 복사되는 공유 값인데, 날짜는 인스턴스마다 달라야 하는 개별 값이라 전파하면 같은 그룹
+// 블록이 전부 한 날짜로 뭉쳐버림. 그래서 이 항목 한 건만 옮기는 별도 경로로 처리한다.
+type BlockSaveOpts = {
+  checklistChanged: boolean;
+  repeat?: BlockRepeat;
+  dateChange?: { date?: string; endDate?: string | null };
+};
+
 interface Deadline {
   id: string;
   title: string;
@@ -1582,6 +1592,29 @@ export default function App() {
     setTodos(ts => ts.map(t => (t.repeatGroupId === groupId && t.date >= fromDate ? { ...t, ...shared } : t)));
     patchTodosByRepeatGroup(groupId, fromDate, shared).catch(notifyError("반복 할 일 저장 실패"));
   };
+  // 상세 패널에서 날짜/기간을 바꿨을 때 — 반복 그룹에 전파하지 않고 이 할 일 한 건만 옮김.
+  // 날짜가 바뀌면 새 날짜의 맨 뒤로 붙임(moveTodoToDate 와 동일 규칙) — sort_order 를 그대로 두면
+  // 그 날짜의 기존 항목과 값이 겹쳐 목록 순서가 뒤죽박죽이 됨.
+  const updateTodoDate = (id: string, changes: { date?: string; endDate?: string | null }) => {
+    const target = todos.find(t => t.id === id);
+    if (!target) return;
+    const patch: { date?: string; endDate?: string | null; sortOrder?: number } = {};
+    if (changes.date !== undefined && changes.date !== target.date) {
+      patch.date = changes.date;
+      patch.sortOrder = Math.max(
+        -1,
+        ...todos.filter(t => t.date === changes.date && t.id !== id).map(t => t.sortOrder)
+      ) + 1;
+    }
+    if (changes.endDate !== undefined && (changes.endDate ?? null) !== (target.endDate ?? null)) {
+      patch.endDate = changes.endDate ?? null;
+    }
+    if (Object.keys(patch).length === 0) return;
+    setTodos(ts => ts.map(t => (t.id === id ? { ...t, ...patch } : t)));
+    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, ...patch } : prev));
+    updateTodo(id, patch).catch(notifyError("할 일 날짜 저장 실패"));
+  };
+
   // 이 할 일 한 건만 수정 — 반복 그룹 전파 여부는 호출자가 별도로 결정.
   const updateTodoFields = (id: string, changes: BlockDraftFields) => {
     if (Object.keys(changes).length === 0) return;
@@ -2102,14 +2135,19 @@ export default function App() {
               if (changes.title !== undefined && id === justCreatedBlockId) {
                 setJustCreatedBlockId(prev => (prev === id ? null : prev));
               }
+              // 날짜 변경은 이 블록 한 건만 옮김 — 반복 그룹 "이후 전체" 로 전파하면 같은
+              // 그룹이 한 날짜로 뭉쳐버리므로 requestBlockEdit(적용 범위 확인) 경로를 태우지 않음.
+              const newDate = opts.dateChange?.date;
               if (opts.repeat) {
                 // 반복 규칙을 이번에 바꿨다면 이후 인스턴스가 통째로 재생성되며 바뀐 값과
                 // 체크리스트가 함께 복제되므로 적용 범위를 따로 묻지 않음.
                 // changes 는 blocks 상태 갱신을 기다리지 않고 그대로 넘겨야 새 인스턴스가
-                // 수정된 제목/카테고리로 만들어짐.
-                setBlockRepeat(id, opts.repeat, changes);
+                // 수정된 제목/카테고리로 만들어짐. 날짜도 같이 바꿨다면 새 날짜를 기준으로
+                // 인스턴스가 만들어지도록 overrides 에 함께 실어 보냄.
+                setBlockRepeat(id, opts.repeat, newDate ? { ...changes, date: newDate } : changes);
                 return;
               }
+              if (newDate) updateBlock(id, { date: newDate });
               requestBlockEdit(id, changes, opts.checklistChanged);
             }}
             onAddTemplate={addTemplate}
@@ -2240,10 +2278,13 @@ export default function App() {
               if (changes.title !== undefined && id === justCreatedTodoId) {
                 setJustCreatedTodoId(prev => (prev === id ? null : prev));
               }
+              // 블록과 같은 이유로 날짜/기간은 이 할 일 한 건만 옮김.
+              const dc = opts.dateChange;
               if (opts.repeat) {
-                setTodoRepeat(id, opts.repeat, changes);
+                setTodoRepeat(id, opts.repeat, dc ? { ...changes, ...dc } : changes);
                 return;
               }
+              if (dc) updateTodoDate(id, dc);
               requestTodoEdit(id, changes, opts.checklistChanged);
             }}
             onAddTemplate={addTemplate}
@@ -8834,7 +8875,9 @@ function BlockDetailPanel({
   onDelete: () => void;
   // "저장" 한 번에 대응하는 단일 콜백. repeat 이 오면 반복 규칙 (재)적용까지 부모가 처리하고,
   // checklistChanged 는 반복 그룹의 이후 인스턴스에 체크리스트를 다시 깔아야 하는지 여부.
-  onSaveDraft: (changes: BlockDraftFields, opts: { checklistChanged: boolean; repeat?: BlockRepeat }) => void;
+  // dateChange 는 BlockDraftFields 와 따로 넘김 — 날짜는 반복 인스턴스마다 다른 값이라
+  // "이후 전체" 로 전파하면 안 되고, 이 항목 한 건만 옮기는 의미이기 때문.
+  onSaveDraft: (changes: BlockDraftFields, opts: BlockSaveOpts) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
 }) {
   // draft 모델 — 아래 필드는 편집 도중 로컬에만 반영되고, "저장" 버튼을 눌러야만 DB/부모에 커밋됨.
@@ -8843,6 +8886,9 @@ function BlockDetailPanel({
   const [memo, setMemo] = useState(block.memo);
   const [category, setCategory] = useState(block.category);
   const [countInCompletion, setCountInCompletion] = useState(block.countInCompletion !== false);
+  // 날짜도 draft — 시간대(시작/종료 시각)는 그대로 두고 다른 날로 옮기는 용도.
+  // 캘린더에서 드래그로 옮기는 것과 같은 결과이지만, 먼 날짜로 보낼 때 스크롤 없이 지정 가능.
+  const [dateDraft, setDateDraft] = useState(block.date);
   // 헤더 제목 인라인 편집 — 캘린더 직접 생성 블록은 initialEditTitle=true로 넘어와서
   // 패널이 뜨자마자 편집 모드로 진입하고 input에 포커스가 잡힘.
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
@@ -8922,6 +8968,7 @@ function BlockDetailPanel({
     onSaveDraft(changed, {
       checklistChanged: checklistDirty,
       repeat: finalRepeat,
+      dateChange: dateDraft && dateDraft !== block.date ? { date: dateDraft } : undefined,
     });
     onClose();
   };
@@ -9101,12 +9148,21 @@ function BlockDetailPanel({
           <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
         </label>
 
-        {/* 계획 시간 — 블록 전용. todo 상세에는 "날짜" 카드가 이 자리에 옴. */}
+        {/* 계획 시간 — 블록 전용. todo 상세에는 "날짜" 카드가 이 자리에 옴.
+             날짜는 date picker 로 편집(다른 draft 와 같이 "저장" 에서 커밋), 시각은 캘린더에서
+             드래그/리사이즈로 조절하는 값이라 여기선 읽기 전용으로 보여만 줌. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">계획 시간</div>
           <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
-            <div className="text-[11px] text-muted-foreground">
-              {block.date} ({DAYS_KO[parseLocalDate(block.date).getDay()]})
+            <input
+              type="date"
+              value={dateDraft}
+              onChange={e => { if (e.target.value) setDateDraft(e.target.value); }}
+              className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+            />
+            <div className="text-[11px] text-muted-foreground mt-1.5">
+              {dateDraft} ({DAYS_KO[parseLocalDate(dateDraft).getDay()]})
+              {dateDraft !== block.date && <span className="text-primary"> · 저장 시 이동</span>}
             </div>
             <div className="text-sm font-medium mt-0.5">
               {fmtTime(block.startH, block.startM)} – {fmtTime(block.endH, block.endM)}
@@ -9118,7 +9174,7 @@ function BlockDetailPanel({
         {/* 반복 — 계획 시간 바로 아래. 현재 규칙 요약 + 인라인 설정 폼.
              onFormChange 는 "적용" 을 안 누른 채로 폼 값을 채운 뒤 저장을 눌러도 그대로 걸리게 하는 fallback. */}
         <RepeatSection
-          originDate={block.date}
+          originDate={dateDraft || block.date}
           repeat={repeatDraft}
           hasGroup={!!block.repeatGroupId}
           pending={repeatDirty || !!pendingRepeatForm}
@@ -9322,7 +9378,7 @@ function TodoDetailPanel({
   onToggle: () => void;
   onDelete: () => void;
   // BlockDetailPanel 과 동일한 단일 저장 콜백 — 적용 범위 확인을 한 번만 띄우기 위함.
-  onSaveDraft: (changes: BlockDraftFields, opts: { checklistChanged: boolean; repeat?: BlockRepeat }) => void;
+  onSaveDraft: (changes: BlockDraftFields, opts: BlockSaveOpts) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
   onAddChecklistItem: (text: string, parentItemId?: string) => void;
   onToggleChecklistItem: (id: string, completed: boolean) => void;
@@ -9335,6 +9391,12 @@ function TodoDetailPanel({
   const [memo, setMemo] = useState(todo.memo);
   const [category, setCategory] = useState(todo.category);
   const [countInCompletion, setCountInCompletion] = useState(todo.countInCompletion !== false);
+  // 날짜도 draft — 할 일은 하루짜리(시작일만) 또는 기간(시작일~종료일) 둘 다 가능.
+  // 종료일이 비어 있으면 하루짜리. DB 에 종료일이 시작일과 같게 저장된 옛 데이터는 하루짜리로 취급.
+  const [dateDraft, setDateDraft] = useState(todo.date);
+  const [endDateDraft, setEndDateDraft] = useState(
+    todo.endDate && todo.endDate !== todo.date ? todo.endDate : ""
+  );
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
   const [titleDraft, setTitleDraft] = useState(todo.title);
   // 반복도 draft — BlockDetailPanel 과 동일하게 "저장" 에서 필드 커밋 뒤에 적용.
@@ -9390,6 +9452,21 @@ function TodoDetailPanel({
     chooseCategory(name);
   };
 
+  // 시작일 변경 — 기간 할 일이면 기간 길이를 유지한 채 종료일도 같이 밀어준다.
+  // (안 그러면 시작일을 뒤로 옮겼을 때 종료일 < 시작일 인 뒤집힌 기간이 만들어짐)
+  const changeStartDate = (next: string) => {
+    if (!next) return;
+    if (endDateDraft && endDateDraft >= dateDraft) {
+      const span = Math.round(
+        (parseLocalDate(endDateDraft).getTime() - parseLocalDate(dateDraft).getTime()) / 86400000
+      );
+      const d = parseLocalDate(next);
+      d.setDate(d.getDate() + span);
+      setEndDateDraft(toDateStr(d));
+    }
+    setDateDraft(next);
+  };
+
   // 저장 — BlockDetailPanel 과 동일하게 바뀐 draft 를 한 번에 넘김. 닫기는 draft 폐기.
   const handleSaveAndClose = () => {
     const t = titleDraft.trim() || todo.title;
@@ -9398,11 +9475,22 @@ function TodoDetailPanel({
     if (category !== todo.category) changed.category = category;
     if (memo !== todo.memo) changed.memo = memo;
     if (countInCompletion !== (todo.countInCompletion !== false)) changed.countInCompletion = countInCompletion;
+    // 날짜 — 시작일이 바뀌면 종료일도 함께 넘겨서(하루짜리면 null) 기간이 어긋난 채 남지 않게 함.
+    const nextDate = dateDraft || todo.date;
+    const nextEnd = endDateDraft && endDateDraft > nextDate ? endDateDraft : null;
+    const prevEnd = todo.endDate && todo.endDate !== todo.date ? todo.endDate : null;
+    const dateChanged = nextDate !== todo.date;
+    const dateChange = dateChanged
+      ? { date: nextDate, endDate: nextEnd }
+      : nextEnd !== prevEnd
+      ? { endDate: nextEnd }
+      : undefined;
     // "적용" 을 누르지 않고 폼만 채운 상태여도 pendingRepeatForm 을 fallback 으로 사용.
     const finalRepeat = repeatDirty ? repeatDraft : pendingRepeatForm;
     onSaveDraft(changed, {
       checklistChanged: checklistDirty,
       repeat: finalRepeat,
+      dateChange,
     });
     onClose();
   };
@@ -9540,14 +9628,35 @@ function TodoDetailPanel({
           <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
         </label>
 
-        {/* 날짜 */}
+        {/* 날짜 — 시작일은 date picker 로 편집(다른 draft 와 같이 "저장" 에서 커밋).
+             종료일은 비워두면 하루짜리, 채우면 그 날까지 이어지는 기간 할 일이 됨. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">날짜</div>
-          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
-            <div className="text-sm font-medium">
-              {todo.date} ({DAYS_KO[parseLocalDate(todo.date).getDay()]})
-              {todo.endDate && todo.endDate !== todo.date && (
-                <span className="text-muted-foreground"> ~ {todo.endDate}</span>
+          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border space-y-2">
+            <div>
+              <div className="text-[10px] text-muted-foreground mb-1">시작일</div>
+              <input
+                type="date"
+                value={dateDraft}
+                onChange={e => changeStartDate(e.target.value)}
+                className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div>
+              <div className="text-[10px] text-muted-foreground mb-1">종료일 (비우면 하루)</div>
+              <input
+                type="date"
+                value={endDateDraft}
+                min={dateDraft}
+                onChange={e => setEndDateDraft(e.target.value)}
+                className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              {dateDraft} ({DAYS_KO[parseLocalDate(dateDraft).getDay()]})
+              {endDateDraft && endDateDraft > dateDraft && <span> ~ {endDateDraft}</span>}
+              {(dateDraft !== todo.date || endDateDraft !== (todo.endDate && todo.endDate !== todo.date ? todo.endDate : "")) && (
+                <span className="text-primary"> · 저장 시 이동</span>
               )}
             </div>
           </div>
@@ -9556,7 +9665,7 @@ function TodoDetailPanel({
         {/* 반복 — 날짜 바로 아래. 시간 블록과 동일한 규칙/폼(RepeatSection 공용).
              onFormChange 로 "적용" 미클릭 폼 값도 저장 시 자동 반영. */}
         <RepeatSection
-          originDate={todo.date}
+          originDate={dateDraft || todo.date}
           repeat={repeatDraft}
           hasGroup={!!todo.repeatGroupId}
           pending={repeatDirty || !!pendingRepeatForm}
