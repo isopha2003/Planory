@@ -56,7 +56,7 @@ const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
   note_folders:    ["id", "name", "color", "sort_order", "created_at"],
   blocks:          ["id", "template_id", "parent_block_id", "title", "color", "date", "start_time", "end_time", "completed", "completed_at", "memo", "category", "next_block_id", "repeat_group_id", "repeat_rule", "count_in_completion", "created_at"],
   checklist_items: ["id", "block_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
-  deadlines:       ["id", "title", "due_date", "completed", "completed_at", "created_at"],
+  deadlines:       ["id", "title", "due_date", "completed", "completed_at", "color", "created_at"],
   kanban_cards:    ["id", "deadline_id", "status", "title", "content", "color", "sort_order", "created_at"],
   kanban_checklist_items: ["id", "card_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
   todos:           ["id", "title", "date", "end_date", "color", "completed", "completed_at", "memo", "category", "count_in_completion", "sort_order", "repeat_group_id", "repeat_rule", "created_at"],
