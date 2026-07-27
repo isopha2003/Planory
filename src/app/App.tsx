@@ -4537,6 +4537,7 @@ function CalendarSection({
                   templates={templates}
                   todoChecklistItems={todoChecklistItems}
                   viewDays={viewDays}
+                  focusDate={toDateStr(viewDate)}
                   paletteColors={paletteColors}
                   groupMode={todoGroupMode}
                   onChangeGroupMode={setTodoGroupMode}
@@ -4635,7 +4636,7 @@ function CalendarSection({
 // groupMode 에 따라 날짜별(기본) 또는 카테고리별 섹션으로 묶는다. 새 할 일 추가는 섹션 hover 시
 // "+ 새 할 일" 고스트 — 날짜별은 카테고리 픽커를 거치고, 카테고리별은 그 카테고리로 즉시 생성.
 function TodoPanel({
-  todos, templates, todoChecklistItems, viewDays, paletteColors, groupMode, onChangeGroupMode,
+  todos, templates, todoChecklistItems, viewDays, focusDate, paletteColors, groupMode, onChangeGroupMode,
   onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
   deadlines, onToggleDeadline, onSelectDeadline,
   showDayHeader, onGoPrev, onGoNext, onMoveTodo, onReorderTodo,
@@ -4645,6 +4646,9 @@ function TodoPanel({
   templates: Template[];
   todoChecklistItems: TodoChecklistItemT[];
   viewDays: Date[];
+  // 지금 보고 있는 날짜(캘린더의 viewDate). 새 할 일의 기본 날짜로 씀 — 며칠 뒤를 보면서
+  // 할 일을 추가했는데 오늘 날짜로 꽂히면 매번 고쳐야 해서.
+  focusDate: string;
   paletteColors: string[];
   // 섹션 그룹 기준 — date: viewDays 의 각 날짜가 한 섹션, category: 카테고리가 한 섹션(기간 전체).
   groupMode: "date" | "category";
@@ -4725,8 +4729,8 @@ function TodoPanel({
   // "+ 새 할 일" 클릭 시 열리는 추가 폼이 붙는 위치. 날짜 섹션이면 date 고정, 카테고리 섹션이면
   // category 고정, 하단 공통 버튼(__global__)이면 둘 다 자유. 날짜가 자유로우면 addDate 로 선택.
   const [addPicker, setAddPicker] = useState<null | { key: string; date?: string; category?: string }>(null);
-  // 추가 폼의 날짜 선택값 — 폼을 열 때마다 오늘로 리셋.
-  const [addDate, setAddDate] = useState<string>(TODAY_STR);
+  // 추가 폼의 날짜 선택값 — 폼을 열 때마다 보고 있는 날짜로 리셋.
+  const [addDate, setAddDate] = useState<string>(focusDate);
   // 카테고리 선택 UI 안에서 "새 카테고리" 인라인 폼이 열려있는지.
   const [newCatMode, setNewCatMode] = useState(false);
   const [newCatTitle, setNewCatTitle] = useState("");
@@ -4781,9 +4785,9 @@ function TodoPanel({
   const viewDateStrs = viewDays.map(toDateStr);
   const firstDs = viewDateStrs[0];
   const lastDs = viewDateStrs[viewDateStrs.length - 1];
-  // 날짜를 지정할 수 없는 자리(카테고리별 보기)에서 새 할 일을 만들 때 쓰는 기본 날짜 —
-  // 보고 있는 기간 안이면 오늘, 아니면 기간 첫날.
-  const defaultAddDate = TODAY_STR >= firstDs && TODAY_STR <= lastDs ? TODAY_STR : firstDs;
+  // 날짜를 지정할 수 없는 자리(카테고리별 보기)와 추가 폼의 기본 날짜 — 지금 보고 있는 날짜.
+  // 주 보기처럼 여러 날이 함께 보일 때도 viewDate 는 그 기간 안에 있지만, 혹시 벗어나면 기간 첫날.
+  const defaultAddDate = focusDate >= firstDs && focusDate <= lastDs ? focusDate : firstDs;
   // 마감 — 할 일 단독 모드에서만 카드로 노출 (시간 그리드가 함께 보일 땐 그쪽 상단 마감 행이 유일한 소스).
   const rangeDeadlines = showDayHeader
     ? deadlines.filter(d => viewDateStrs.includes(d.dueDate)).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
@@ -5279,11 +5283,11 @@ function TodoPanel({
           {!catDragging && viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && rangeDeadlines.length === 0 && (
             <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없습니다</p>
           )}
-          {/* 빈 날짜 섹션이 없으므로 새 할 일 진입점은 하단 공통 버튼 — 날짜(기본 오늘)와
+          {/* 빈 날짜 섹션이 없으므로 새 할 일 진입점은 하단 공통 버튼 — 날짜(기본: 보고 있는 날짜)와
                카테고리를 폼에서 선택해 추가. */}
           {addPicker?.key === "__global__" ? renderAddPicker() : (
             <button
-              onClick={() => { setAddDate(TODAY_STR); setAddPicker({ key: "__global__" }); setNewCatMode(false); }}
+              onClick={() => { setAddDate(defaultAddDate); setAddPicker({ key: "__global__" }); setNewCatMode(false); }}
               className={ghostCardCls}
               style={ghostShadow}
               title="새 할 일 추가"
@@ -5353,7 +5357,7 @@ function TodoPanel({
                     return;
                   }
                   // 카테고리별 보기에선 섹션이 "날짜" 정보를 주지 못하므로, 드래그해 온 카테고리를
-                  // 그대로 쓰고 날짜만 기본값(오늘 — 기간 밖이면 기간 첫날)으로 채운다.
+                  // 그대로 쓰고 날짜만 기본값(보고 있는 날짜 — 기간 밖이면 기간 첫날)으로 채운다.
                   const category = e.dataTransfer.getData("todoCategory");
                   if (category) {
                     e.preventDefault();
@@ -5400,11 +5404,11 @@ function TodoPanel({
                       <Plus size={12} /> {catDragging ? `새 할 일 추가 (${fmtDateShort(defaultAddDate)})` : "이 카테고리로 이동"}
                     </div>
                   )}
-                  {/* "+ 새 할 일" — 카테고리는 섹션 것으로 고정, 날짜(기본 오늘)만 폼에서 선택. */}
+                  {/* "+ 새 할 일" — 카테고리는 섹션 것으로 고정, 날짜(기본: 보고 있는 날짜)만 폼에서 선택. */}
                   {addPicker?.key === key ? renderAddPicker()
                     : hoverKey === key && tplHoverKey !== key ? (
                       <button
-                        onClick={() => { setAddDate(TODAY_STR); setAddPicker({ key, category: sec.category }); setNewCatMode(false); }}
+                        onClick={() => { setAddDate(defaultAddDate); setAddPicker({ key, category: sec.category }); setNewCatMode(false); }}
                         className={ghostCardCls}
                         style={ghostShadow}
                         title="새 할 일 추가"
