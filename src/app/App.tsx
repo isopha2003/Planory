@@ -97,6 +97,9 @@ type BlockSaveOpts = {
   checklistChanged: boolean;
   repeat?: BlockRepeat;
   dateChange?: { date?: string; endDate?: string | null };
+  // 시간 블록의 시작/종료 시각. 날짜와 같은 이유로 이 블록 한 건에만 적용(캘린더에서
+  // 드래그·리사이즈로 고칠 때와 동일한 범위).
+  timeChange?: { startH: number; startM: number; endH: number; endM: number };
 };
 
 interface Deadline {
@@ -230,6 +233,19 @@ const TIMER_HEARTBEAT_MS = 15000;
 const fmt2 = (n: number) => String(n).padStart(2, "0");
 const fmtTime = (h: number, m: number) => `${fmt2(h)}:${fmt2(m)}`;
 const durMin = (b: Block) => (b.endH * 60 + b.endM) - (b.startH * 60 + b.startM);
+// 하루의 끝(자정)은 블록에서 24:00 = 1440분으로 저장되지만 <input type="time"> 은 24:00 을
+// 표현하지 못하므로 UI 에서만 "00:00" 으로 주고받는다. 아래 두 함수가 그 변환을 담당.
+const MIN_PER_DAY = 24 * 60;
+const toTimeInput = (h: number, m: number) => fmtTime(h % 24, m);
+// "HH:MM" -> 분. 형식이 깨졌으면 null. 종료 시각의 "00:00" 은 호출자가 자정으로 승격시킴.
+const parseTimeInput = (s: string): number | null => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+};
 const DAYS_KO = ["일", "월", "화", "수", "목", "금", "토"];
 const MONTHS_KO = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
 let TODAY_DATE = parseLocalDate(TODAY_STR);
@@ -2137,17 +2153,23 @@ export default function App() {
               }
               // 날짜 변경은 이 블록 한 건만 옮김 — 반복 그룹 "이후 전체" 로 전파하면 같은
               // 그룹이 한 날짜로 뭉쳐버리므로 requestBlockEdit(적용 범위 확인) 경로를 태우지 않음.
-              const newDate = opts.dateChange?.date;
+              // 시각도 같은 범위(캘린더 드래그/리사이즈와 동일하게 이 인스턴스만).
+              // 반복 인스턴스는 시각을 공유하므로(같은 시간대에 반복) 새 인스턴스는 새 시각으로
+              // 만들어져야 함 — 아래 setBlockRepeat 의 overrides 에 함께 실어 보낸다.
+              const moved = { ...opts.timeChange, ...(opts.dateChange?.date ? { date: opts.dateChange.date } : {}) };
+              const hasMove = Object.keys(moved).length > 0;
               if (opts.repeat) {
                 // 반복 규칙을 이번에 바꿨다면 이후 인스턴스가 통째로 재생성되며 바뀐 값과
                 // 체크리스트가 함께 복제되므로 적용 범위를 따로 묻지 않음.
                 // changes 는 blocks 상태 갱신을 기다리지 않고 그대로 넘겨야 새 인스턴스가
-                // 수정된 제목/카테고리로 만들어짐. 날짜도 같이 바꿨다면 새 날짜를 기준으로
-                // 인스턴스가 만들어지도록 overrides 에 함께 실어 보냄.
-                setBlockRepeat(id, opts.repeat, newDate ? { ...changes, date: newDate } : changes);
+                // 수정된 제목/카테고리로 만들어짐.
+                setBlockRepeat(id, opts.repeat, { ...changes, ...moved });
                 return;
               }
-              if (newDate) updateBlock(id, { date: newDate });
+              if (hasMove) {
+                updateBlock(id, moved);
+                setSelectedBlock(prev => (prev?.id === id ? { ...prev, ...moved } : prev));
+              }
               requestBlockEdit(id, changes, opts.checklistChanged);
             }}
             onAddTemplate={addTemplate}
@@ -8886,9 +8908,39 @@ function BlockDetailPanel({
   const [memo, setMemo] = useState(block.memo);
   const [category, setCategory] = useState(block.category);
   const [countInCompletion, setCountInCompletion] = useState(block.countInCompletion !== false);
-  // 날짜도 draft — 시간대(시작/종료 시각)는 그대로 두고 다른 날로 옮기는 용도.
-  // 캘린더에서 드래그로 옮기는 것과 같은 결과이지만, 먼 날짜로 보낼 때 스크롤 없이 지정 가능.
+  // 날짜·시각도 draft — 캘린더에서 드래그/리사이즈로 하는 것과 같은 결과이지만,
+  // 먼 날짜로 보내거나 15분 격자에 안 맞는 시각을 줄 때는 이쪽이 훨씬 빠름.
   const [dateDraft, setDateDraft] = useState(block.date);
+  const [startDraft, setStartDraft] = useState(toTimeInput(block.startH, block.startM));
+  const [endDraft, setEndDraft] = useState(toTimeInput(block.endH, block.endM));
+  // 현재 draft 시각(분). 종료 00:00 은 자정(1440분)으로 승격 — <input type="time"> 이
+  // 24:00 을 표현하지 못해서 UI 에서만 00:00 으로 다루기 때문.
+  const startMinDraft = parseTimeInput(startDraft);
+  const endRaw = parseTimeInput(endDraft);
+  const endMinDraft = endRaw === 0 ? MIN_PER_DAY : endRaw;
+  const draftDur = startMinDraft !== null && endMinDraft !== null ? endMinDraft - startMinDraft : null;
+  // 시작 시각을 옮기면 길이를 유지한 채 종료 시각도 함께 이동(드래그 이동과 동일한 감각).
+  const changeStart = (v: string) => {
+    const s = parseTimeInput(v);
+    setStartDraft(v);
+    if (s === null || draftDur === null || draftDur <= 0) return;
+    const e = Math.min(MIN_PER_DAY, s + draftDur);
+    setEndDraft(toTimeInput(Math.floor(e / 60), e % 60));
+  };
+  // 종료 시각은 길이만 바꿈. 시작보다 이르거나 같아지면 최소 길이(15분)로 되돌려 뒤집힌
+  // 블록이 저장되지 않게 함.
+  const changeEnd = (v: string) => {
+    const raw = parseTimeInput(v);
+    if (raw === null) { setEndDraft(v); return; }
+    const e = raw === 0 ? MIN_PER_DAY : raw;
+    const s = startMinDraft ?? 0;
+    if (e <= s) {
+      const fixed = Math.min(MIN_PER_DAY, s + 15);
+      setEndDraft(toTimeInput(Math.floor(fixed / 60), fixed % 60));
+      return;
+    }
+    setEndDraft(v);
+  };
   // 헤더 제목 인라인 편집 — 캘린더 직접 생성 블록은 initialEditTitle=true로 넘어와서
   // 패널이 뜨자마자 편집 모드로 진입하고 input에 포커스가 잡힘.
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
@@ -8965,10 +9017,21 @@ function BlockDetailPanel({
     // 함께 복제하므로, 적용 범위를 따로 물어보지 않음. "적용" 을 누르지 않고 폼만 채운 상태여도
     // pendingRepeatForm 을 fallback 으로 사용해 사용자의 의도대로 반복이 걸리게 함.
     const finalRepeat = repeatDirty ? repeatDraft : pendingRepeatForm;
+    // 시각은 시작·종료가 모두 유효하고 길이가 양수일 때만 커밋 — 입력이 비었거나 깨진 상태로
+    // 저장을 누르면 그냥 원래 시각을 유지한다.
+    const timeValid = startMinDraft !== null && endMinDraft !== null && endMinDraft > startMinDraft;
+    const timeChanged = timeValid
+      && (startMinDraft !== block.startH * 60 + block.startM || endMinDraft !== block.endH * 60 + block.endM);
     onSaveDraft(changed, {
       checklistChanged: checklistDirty,
       repeat: finalRepeat,
       dateChange: dateDraft && dateDraft !== block.date ? { date: dateDraft } : undefined,
+      timeChange: timeChanged
+        ? {
+            startH: Math.floor(startMinDraft! / 60), startM: startMinDraft! % 60,
+            endH: Math.floor(endMinDraft! / 60), endM: endMinDraft! % 60,
+          }
+        : undefined,
     });
     onClose();
   };
@@ -9149,25 +9212,40 @@ function BlockDetailPanel({
         </label>
 
         {/* 계획 시간 — 블록 전용. todo 상세에는 "날짜" 카드가 이 자리에 옴.
-             날짜는 date picker 로 편집(다른 draft 와 같이 "저장" 에서 커밋), 시각은 캘린더에서
-             드래그/리사이즈로 조절하는 값이라 여기선 읽기 전용으로 보여만 줌. */}
+             날짜·시각 모두 여기서 편집하고 다른 draft 와 같이 "저장" 에서 커밋된다. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">계획 시간</div>
-          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border">
+          <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border space-y-2">
             <input
               type="date"
               value={dateDraft}
               onChange={e => { if (e.target.value) setDateDraft(e.target.value); }}
               className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
             />
-            <div className="text-[11px] text-muted-foreground mt-1.5">
+            <div className="flex items-center gap-1.5">
+              <input
+                type="time"
+                value={startDraft}
+                onChange={e => changeStart(e.target.value)}
+                className="flex-1 min-w-0 text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+              />
+              <span className="text-[11px] text-muted-foreground flex-shrink-0">–</span>
+              <input
+                type="time"
+                value={endDraft}
+                onChange={e => changeEnd(e.target.value)}
+                className="flex-1 min-w-0 text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div className="text-[11px] text-muted-foreground">
               {dateDraft} ({DAYS_KO[parseLocalDate(dateDraft).getDay()]})
-              {dateDraft !== block.date && <span className="text-primary"> · 저장 시 이동</span>}
+              {draftDur !== null && draftDur > 0 && <span> · {draftDur}분</span>}
+              {(dateDraft !== block.date
+                || startDraft !== toTimeInput(block.startH, block.startM)
+                || endDraft !== toTimeInput(block.endH, block.endM)) && (
+                <span className="text-primary"> · 저장 시 적용</span>
+              )}
             </div>
-            <div className="text-sm font-medium mt-0.5">
-              {fmtTime(block.startH, block.startM)} – {fmtTime(block.endH, block.endM)}
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">{durMin(block)}분</div>
           </div>
         </div>
 
@@ -9391,12 +9469,9 @@ function TodoDetailPanel({
   const [memo, setMemo] = useState(todo.memo);
   const [category, setCategory] = useState(todo.category);
   const [countInCompletion, setCountInCompletion] = useState(todo.countInCompletion !== false);
-  // 날짜도 draft — 할 일은 하루짜리(시작일만) 또는 기간(시작일~종료일) 둘 다 가능.
-  // 종료일이 비어 있으면 하루짜리. DB 에 종료일이 시작일과 같게 저장된 옛 데이터는 하루짜리로 취급.
+  // 날짜도 draft. "언제까지" 는 반복 설정이 담당하므로 종료일 입력은 두지 않는다 —
+  // 다른 경로(캘린더 드래그 등)로 만들어진 기간 할 일은 아래에서 기간 길이를 유지한 채 옮김.
   const [dateDraft, setDateDraft] = useState(todo.date);
-  const [endDateDraft, setEndDateDraft] = useState(
-    todo.endDate && todo.endDate !== todo.date ? todo.endDate : ""
-  );
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
   const [titleDraft, setTitleDraft] = useState(todo.title);
   // 반복도 draft — BlockDetailPanel 과 동일하게 "저장" 에서 필드 커밋 뒤에 적용.
@@ -9452,19 +9527,16 @@ function TodoDetailPanel({
     chooseCategory(name);
   };
 
-  // 시작일 변경 — 기간 할 일이면 기간 길이를 유지한 채 종료일도 같이 밀어준다.
+  // 기간(멀티데이) 할 일의 길이 — 날짜를 옮길 때 종료일도 같은 만큼 밀어주기 위한 값.
   // (안 그러면 시작일을 뒤로 옮겼을 때 종료일 < 시작일 인 뒤집힌 기간이 만들어짐)
-  const changeStartDate = (next: string) => {
-    if (!next) return;
-    if (endDateDraft && endDateDraft >= dateDraft) {
-      const span = Math.round(
-        (parseLocalDate(endDateDraft).getTime() - parseLocalDate(dateDraft).getTime()) / 86400000
-      );
-      const d = parseLocalDate(next);
-      d.setDate(d.getDate() + span);
-      setEndDateDraft(toDateStr(d));
-    }
-    setDateDraft(next);
+  const spanDays = todo.endDate && todo.endDate > todo.date
+    ? Math.round((parseLocalDate(todo.endDate).getTime() - parseLocalDate(todo.date).getTime()) / 86400000)
+    : 0;
+  const shiftedEndDate = (start: string): string | null => {
+    if (spanDays <= 0) return null;
+    const d = parseLocalDate(start);
+    d.setDate(d.getDate() + spanDays);
+    return toDateStr(d);
   };
 
   // 저장 — BlockDetailPanel 과 동일하게 바뀐 draft 를 한 번에 넘김. 닫기는 draft 폐기.
@@ -9475,15 +9547,10 @@ function TodoDetailPanel({
     if (category !== todo.category) changed.category = category;
     if (memo !== todo.memo) changed.memo = memo;
     if (countInCompletion !== (todo.countInCompletion !== false)) changed.countInCompletion = countInCompletion;
-    // 날짜 — 시작일이 바뀌면 종료일도 함께 넘겨서(하루짜리면 null) 기간이 어긋난 채 남지 않게 함.
+    // 날짜 — 기간 할 일이면 종료일도 같은 만큼 밀어서 함께 넘김(하루짜리면 null).
     const nextDate = dateDraft || todo.date;
-    const nextEnd = endDateDraft && endDateDraft > nextDate ? endDateDraft : null;
-    const prevEnd = todo.endDate && todo.endDate !== todo.date ? todo.endDate : null;
-    const dateChanged = nextDate !== todo.date;
-    const dateChange = dateChanged
-      ? { date: nextDate, endDate: nextEnd }
-      : nextEnd !== prevEnd
-      ? { endDate: nextEnd }
+    const dateChange = nextDate !== todo.date
+      ? { date: nextDate, endDate: shiftedEndDate(nextDate) }
       : undefined;
     // "적용" 을 누르지 않고 폼만 채운 상태여도 pendingRepeatForm 을 fallback 으로 사용.
     const finalRepeat = repeatDirty ? repeatDraft : pendingRepeatForm;
@@ -9628,36 +9695,22 @@ function TodoDetailPanel({
           <span className="text-[11px] text-foreground">오늘 달성률에 포함</span>
         </label>
 
-        {/* 날짜 — 시작일은 date picker 로 편집(다른 draft 와 같이 "저장" 에서 커밋).
-             종료일은 비워두면 하루짜리, 채우면 그 날까지 이어지는 기간 할 일이 됨. */}
+        {/* 날짜 — date picker 로 편집하고 다른 draft 와 같이 "저장" 에서 커밋.
+             "언제까지 할 것인가" 는 아래 반복 설정의 종료 조건이 담당한다. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">날짜</div>
           <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border space-y-2">
-            <div>
-              <div className="text-[10px] text-muted-foreground mb-1">시작일</div>
-              <input
-                type="date"
-                value={dateDraft}
-                onChange={e => changeStartDate(e.target.value)}
-                className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <div>
-              <div className="text-[10px] text-muted-foreground mb-1">종료일 (비우면 하루)</div>
-              <input
-                type="date"
-                value={endDateDraft}
-                min={dateDraft}
-                onChange={e => setEndDateDraft(e.target.value)}
-                className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
+            <input
+              type="date"
+              value={dateDraft}
+              onChange={e => { if (e.target.value) setDateDraft(e.target.value); }}
+              className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+            />
             <div className="text-[11px] text-muted-foreground">
               {dateDraft} ({DAYS_KO[parseLocalDate(dateDraft).getDay()]})
-              {endDateDraft && endDateDraft > dateDraft && <span> ~ {endDateDraft}</span>}
-              {(dateDraft !== todo.date || endDateDraft !== (todo.endDate && todo.endDate !== todo.date ? todo.endDate : "")) && (
-                <span className="text-primary"> · 저장 시 이동</span>
-              )}
+              {/* 캘린더 드래그 등으로 만들어진 기간 할 일이면 옮겨질 종료일까지 같이 보여줌 */}
+              {shiftedEndDate(dateDraft) && <span> ~ {shiftedEndDate(dateDraft)}</span>}
+              {dateDraft !== todo.date && <span className="text-primary"> · 저장 시 이동</span>}
             </div>
           </div>
         </div>
