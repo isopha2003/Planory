@@ -4554,6 +4554,7 @@ function CalendarSection({
                   showDayHeader={contentView === "todos"}
                   onGoPrev={goPrev}
                   onGoNext={goNext}
+                  onSelectDate={ds => { setViewDate(parseLocalDate(ds)); setCalView("day"); }}
                   onMoveTodo={(id, date) => onMoveTodo(id, date)}
                   onReorderTodo={onReorderTodo}
                   categoryRankFor={categoryRankFor}
@@ -4639,7 +4640,7 @@ function TodoPanel({
   todos, templates, todoChecklistItems, viewDays, focusDate, paletteColors, groupMode, onChangeGroupMode,
   onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
   deadlines, onToggleDeadline, onSelectDeadline,
-  showDayHeader, onGoPrev, onGoNext, onMoveTodo, onReorderTodo,
+  showDayHeader, onGoPrev, onGoNext, onSelectDate, onMoveTodo, onReorderTodo,
   categoryRankFor, globalCategoryOrder, onReorderCategory, onReorderCategoryGlobal,
 }: {
   todos: Todo[];
@@ -4671,6 +4672,8 @@ function TodoPanel({
   showDayHeader?: boolean;
   onGoPrev?: () => void;
   onGoNext?: () => void;
+  // 날짜(요일 헤더 · 날짜 섹션 제목)를 클릭했을 때 그 날짜로 이동 — 시간표 뷰의 요일 헤더와 동일.
+  onSelectDate?: (date: string) => void;
   // 드래그로 todo 를 다른 날짜 섹션으로 옮기기 위한 콜백. undefined 면 드래그 비활성.
   onMoveTodo?: (id: string, date: string) => void;
   // 항목을 다른 항목 앞/뒤로 끼워넣을 때 호출. date 를 주면 그 날짜 기준, 없으면 대상 항목의
@@ -5127,7 +5130,14 @@ function TodoPanel({
             const dow = day.getDay();
             const holiday = getHoliday(ds);
             return (
-              <div key={i} className="flex-1 text-center py-2 min-w-0" title={holiday ?? undefined}>
+              <div
+                key={i}
+                className={`flex-1 text-center py-2 min-w-0 rounded-lg transition-colors ${onSelectDate ? "cursor-pointer hover:bg-muted/40" : ""}`}
+                onClick={onSelectDate ? () => onSelectDate(ds) : undefined}
+                title={onSelectDate
+                  ? (holiday ? `${holiday} — 이 날짜로 이동` : "이 날짜로 이동")
+                  : holiday ?? undefined}
+              >
                 <div className={`text-[10px] ${holiday || (viewDays.length > 1 && dow === 0) ? "text-red-400" : viewDays.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
                   {DAYS_KO[dow]}
                 </div>
@@ -5238,9 +5248,13 @@ function TodoPanel({
                 }}
                 className={`rounded-xl transition-colors ${tplHoverKey === dateStr ? "bg-primary/5" : ""}`}
               >
-                {/* 섹션 헤더 — 날짜 + (오늘) 배지 + 라인 */}
+                {/* 섹션 헤더 — 날짜 + (오늘) 배지 + 라인. 날짜를 누르면 그 날짜로 이동. */}
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-[11px] font-semibold tracking-wide ${isToday ? "text-primary" : isHoliday(dateStr) || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
+                  <span
+                    onClick={onSelectDate ? () => onSelectDate(dateStr) : undefined}
+                    title={onSelectDate ? "이 날짜로 이동" : undefined}
+                    className={`text-[11px] font-semibold tracking-wide rounded px-1 -mx-1 transition-colors ${onSelectDate ? "cursor-pointer hover:bg-muted/60" : ""} ${isToday ? "text-primary" : isHoliday(dateStr) || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}
+                  >
                     {day.getMonth() + 1}월 {day.getDate()}일 ({DAYS_KO[dow]})
                   </span>
                   {getHoliday(dateStr) && (
