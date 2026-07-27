@@ -25,6 +25,7 @@ import {
   patchTodosByRepeatGroup, copyTodoChecklistItemsToTodos, syncTodoChecklistItemsToRepeatGroup,
   insertTodoChecklistItemsForTodo,
   fetchTodaySessions, startTimerSession, endTimerSession, deleteTodaySessions, fetchFocusSecByDate,
+  touchTimerSession, fetchOngoingSessions,
   fetchChecklistItems, createChecklistItem, toggleChecklistItemRow, deleteChecklistItemRow,
   fetchTodoChecklistItems, createTodoChecklistItem, toggleTodoChecklistItemRow, deleteTodoChecklistItemRow,
   fetchAllTodoChecklistItems,
@@ -205,6 +206,10 @@ const formatDDay = (daysLeft: number): string =>
 // (예: TodaySection 안에서 `TODAY_STR` 그대로 사용), `let`로 두고 재할당하면 다음 렌더링부터
 // 모든 곳에서 자동으로 새 값을 읽게 됨. 실제로 리렌더를 발생시키는 건 App()의 tick 로직.
 let TODAY_STR = toDateStr(new Date());
+
+// 실행 중인 타이머 세션의 생존 신호를 남기는 주기. 앱이 비정상 종료되면 세션은 마지막
+// 신호 시각으로 마감되므로, 이 값이 곧 최대 오차이자 DB 쓰기 빈도의 트레이드오프.
+const TIMER_HEARTBEAT_MS = 15000;
 
 const fmt2 = (n: number) => String(n).padStart(2, "0");
 const fmtTime = (h: number, m: number) => `${fmt2(h)}:${fmt2(m)}`;
@@ -569,13 +574,18 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        let today = await fetchTodaySessions(TODAY_STR);
-        // 지난번에 탭이 그냥 닫혀서 정상 종료 못 한 세션(ongoing)이 있으면 지금 시점으로 마감 처리
-        const stale = today.filter(s => s.endReason === "ongoing");
-        for (const s of stale) {
-          await endTimerSession(s.id, "auto");
+        // 지난 실행에서 정상 마감되지 못한 세션 정리 — 날짜 무관하게 전부 훑음.
+        // 예전엔 오늘 날짜 세션만 봐서, 자정을 앱이 꺼진 채로 넘기면 어제 세션이 영원히
+        // 미마감으로 남아 그날 집중 시간이 통계에서 통째로 빠졌음.
+        //
+        // 마감 시각은 "앱이 마지막으로 살아 있던 시각"(last_alive_at). 예전처럼 재실행
+        // 시각으로 닫으면 앱이 꺼져 있던 시간까지 집중 시간에 들어가 몇 시간씩 부풀었음.
+        // last_alive_at 이 없는 예전 로우는 started_at 으로 폴백(0초) — 부풀리는 것보단 안전.
+        const ongoing = await fetchOngoingSessions();
+        for (const s of ongoing) {
+          await endTimerSession(s.id, "auto", s.lastAliveAt ?? s.startedAt);
         }
-        if (stale.length) today = await fetchTodaySessions(TODAY_STR);
+        const today = await fetchTodaySessions(TODAY_STR);
         setSessions(today);
         const totalSec = today.reduce((sum, s) => {
           if (!s.endedAt) return sum;
@@ -590,6 +600,20 @@ export default function App() {
       }
     })();
   }, []);
+
+  // 실행 중인 세션의 "마지막 생존 시각"을 주기적으로 기록.
+  // 앱이 강제 종료되거나 전원이 나가 세션을 마감하지 못했을 때, 다음 실행에서 이 시각으로
+  // 마감해 앱이 꺼져 있던 시간이 집중 시간에 섞이지 않게 함. 오차는 최대 이 주기(15초).
+  // 뽀모도로 휴식 중에는 열린 세션이 없어(currentSessionIdRef=null) 자연히 건너뜀.
+  useEffect(() => {
+    if (timerState !== "running") return;
+    const id = setInterval(() => {
+      const sid = currentSessionIdRef.current;
+      // 실패는 무시 — 다음 주기에 다시 시도되고, 최악의 경우 그만큼만 오차가 생김.
+      if (sid) touchTimerSession(sid).catch(() => {});
+    }, TIMER_HEARTBEAT_MS);
+    return () => clearInterval(id);
+  }, [timerState]);
 
   // 재진입 가드 — 시작/정지 버튼을 rapid-click하거나 메인창/뜬창에서 같은 액션이
   // 동시에 들어오면 startTimerSession/endTimerSession이 중복 발화해 orphan 세션이
@@ -665,7 +689,14 @@ export default function App() {
   // 뜬 타이머 창(별도 webview) 상태 훅을 여기서 관리 — GlobalTimer 내부에서 관리하면
   // 아래 브로드캐스트 effect가 창 오픈 여부를 알 수 없어 항상 매초 emit해야 했음.
   // 이제 창이 닫혀 있을 때는 emit 자체를 스킵.
-  const floatWin = useTimerWindow();
+  // 앱 종료 직전에 실행 중인 세션을 정상 마감 — 종료 시각이 정확해짐.
+  // 여기서 못 잡는 강제 종료·전원 차단은 heartbeat(last_alive_at) 기반 정리가 다음 실행에서 처리.
+  const floatWin = useTimerWindow(async () => {
+    const sid = currentSessionIdRef.current;
+    if (!sid) return;
+    currentSessionIdRef.current = null;
+    try { await endTimerSession(sid, "auto"); } catch (e) { console.error("종료 시 세션 마감 실패", e); }
+  });
 
   // 뜬 타이머 창(별도 webview)과의 상태 동기화 — 창이 열려 있을 때만 매초 브로드캐스트.
   useEffect(() => {

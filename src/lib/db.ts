@@ -107,12 +107,17 @@ CREATE TABLE IF NOT EXISTS kanban_checklist_items (
 -- 기존 사용자의 DB에서 남아있을 수 있는 잔재 테이블을 정리.
 DROP TABLE IF EXISTS schedule_templates;
 
+-- last_alive_at: 실행 중인 세션이 "앱이 마지막으로 살아 있던 시각". 타이머가 도는 동안
+-- 주기적으로 갱신되며, 앱이 정상 종료되지 못했을 때(강제 종료·전원 차단 등) 다음 실행에서
+-- 이 시각으로 세션을 마감하는 데 씀. 없으면 재실행 시각으로 마감돼 앱이 꺼져 있던 시간까지
+-- 집중 시간에 포함되어 버림.
 CREATE TABLE IF NOT EXISTS timer_sessions (
   id TEXT PRIMARY KEY,
   date TEXT NOT NULL,
   started_at TEXT NOT NULL,
   ended_at TEXT,
   end_reason TEXT CHECK (end_reason IN ('manual', 'auto', 'ongoing')),
+  last_alive_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -230,6 +235,13 @@ const DEADLINE_UPGRADES = [
   "ALTER TABLE deadlines ADD COLUMN color TEXT NOT NULL DEFAULT ''",
 ];
 
+// timer_sessions 사후 컬럼 추가 — 위 CREATE TABLE 의 last_alive_at 설명 참고.
+// nullable 로 추가(기존 로우는 NULL) — 이미 끝난 세션엔 의미가 없고, 미마감으로 남아 있던
+// 예전 세션은 값이 없으므로 started_at 으로 폴백해 마감된다(= 0초, 부풀리는 것보단 안전).
+const TIMER_UPGRADES = [
+  "ALTER TABLE timer_sessions ADD COLUMN last_alive_at TEXT",
+];
+
 let dbPromise: Promise<Database> | null = null;
 
 // 첫 호출 시 DB 파일 열고 스키마 초기화, 이후 호출은 같은 인스턴스 반환.
@@ -279,6 +291,9 @@ export function getDb(): Promise<Database> {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
       for (const stmt of DEADLINE_UPGRADES) {
+        try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
+      }
+      for (const stmt of TIMER_UPGRADES) {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
       try {

@@ -6,9 +6,15 @@ import { exit } from "@tauri-apps/plugin-process";
 // 브라우저 Document PiP를 대체하는 진짜 Tauri 자식 창 — 다른 앱 위에서도 계속 떠 있고
 // 테두리가 전혀 없음(frameless/transparent/alwaysOnTop). 상태 동기화는 useTimerBroadcast의
 // emit/listen("timer:state" / "timer:action")로 이루어짐 — 여기선 창 생성/파괴만 다룸.
-export function useTimerWindow() {
+// onBeforeExit — 앱이 닫히기 직전에 await 되는 정리 훅(실행 중인 타이머 세션 마감 등).
+// 여기서 마감하면 종료 시각이 초 단위까지 정확해지고, 강제 종료로 이게 못 돌더라도
+// 세션의 last_alive_at 기반 정리가 다음 실행에서 대신 처리함.
+export function useTimerWindow(onBeforeExit?: () => Promise<void> | void) {
   const [isOpen, setIsOpen] = useState(false);
   const winRef = useRef<WebviewWindow | null>(null);
+  // effect 의 deps 가 []라 최신 콜백을 ref 로 읽음(App 이 매 렌더 새 함수를 넘김).
+  const onBeforeExitRef = useRef(onBeforeExit);
+  onBeforeExitRef.current = onBeforeExit;
 
   const open = async () => {
     const existing = await WebviewWindow.getByLabel("timer");
@@ -63,6 +69,7 @@ export function useTimerWindow() {
     getCurrentWindow()
       .onCloseRequested(async (event) => {
         event.preventDefault();
+        try { await onBeforeExitRef.current?.(); } catch (e) { console.error("종료 전 정리 실패", e); }
         try { await winRef.current?.close(); } catch (e) { console.error("타이머 창 닫기 실패", e); }
         try { await exit(0); } catch (e) { console.error("앱 종료 실패", e); }
       })

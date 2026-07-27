@@ -723,18 +723,47 @@ export async function startTimerSession(date: string) {
   const id = uuid();
   const startedAt = new Date().toISOString();
   await db.execute(
-    "INSERT INTO timer_sessions (id, date, started_at, end_reason) VALUES (?, ?, ?, 'ongoing')",
-    [id, date, startedAt]
+    "INSERT INTO timer_sessions (id, date, started_at, end_reason, last_alive_at) VALUES (?, ?, ?, 'ongoing', ?)",
+    [id, date, startedAt, startedAt]
   );
   return { id, date, startedAt, endedAt: null, endReason: "ongoing" as const };
 }
 
-export async function endTimerSession(id: string, endReason: "manual" | "auto") {
+// 실행 중인 세션의 "마지막 생존 시각" 갱신 — 타이머가 도는 동안 주기적으로 호출.
+// 앱이 정상 종료되지 못했을 때 이 값이 세션의 실제 종료 시각 근사치가 됨.
+export async function touchTimerSession(id: string) {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE timer_sessions SET last_alive_at = ? WHERE id = ?",
+    [new Date().toISOString(), id]
+  );
+}
+
+// endedAt 을 명시하면 그 시각으로 마감 — 미마감 세션을 나중에 정리할 때 "지금"이 아니라
+// 앱이 마지막으로 살아 있던 시각으로 닫기 위해 필요.
+export async function endTimerSession(id: string, endReason: "manual" | "auto", endedAt?: string) {
   const db = await getDb();
   await db.execute(
     "UPDATE timer_sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
-    [new Date().toISOString(), endReason, id]
+    [endedAt ?? new Date().toISOString(), endReason, id]
   );
+}
+
+// 아직 마감되지 않은 세션 전부 — 날짜 무관.
+// 예전엔 시작 시 오늘 날짜 세션만 훑어서, 자정을 앱이 꺼진 채로 넘기면 어제 세션이 영원히
+// 미마감으로 남고 fetchFocusSecByDate(ended_at IS NOT NULL)에서 빠져 그날 집중 시간이
+// 통째로 사라졌음.
+export async function fetchOngoingSessions() {
+  const db = await getDb();
+  const rows = await db.select<any[]>(
+    "SELECT id, date, started_at, last_alive_at FROM timer_sessions WHERE ended_at IS NULL ORDER BY started_at"
+  );
+  return rows.map(s => ({
+    id: s.id as string,
+    date: s.date as string,
+    startedAt: s.started_at as string,
+    lastAliveAt: (s.last_alive_at ?? null) as string | null,
+  }));
 }
 
 // 특정 날짜의 모든 세션을 통째로 삭제 — 오늘 기록 초기화 기능이 호출

@@ -60,7 +60,7 @@ const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
   kanban_checklist_items: ["id", "card_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
   todos:           ["id", "title", "date", "end_date", "color", "completed", "completed_at", "memo", "category", "count_in_completion", "sort_order", "repeat_group_id", "repeat_rule", "created_at"],
   todo_checklist_items: ["id", "todo_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
-  timer_sessions:  ["id", "date", "started_at", "ended_at", "end_reason", "created_at"],
+  timer_sessions:  ["id", "date", "started_at", "ended_at", "end_reason", "last_alive_at", "created_at"],
   notes:           ["id", "title", "content", "category", "folder_id", "sort_order", "is_draft", "created_at", "updated_at"],
 };
 
