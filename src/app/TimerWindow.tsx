@@ -38,6 +38,10 @@ export default function TimerWindow() {
   const isRunning = timerState === "running";
   const isAutoPaused = timerState === "auto-paused";
   const isBreak = pomodoroOn && isRunning && pomPhase === "break";
+  // 뜬 타이머는 다른 앱 위에 항상 떠 있으므로, 돌아가는 동안에는 반투명으로 물러나 아래 화면을
+  // 가리지 않게 하고, 멈춰 있을 때(정지·자동 일시정지)는 눈에 띄도록 또렷하게 보여줌.
+  // 돌아가는 중이라도 마우스를 올리면 원래 선명도로 돌아와 정지 버튼을 정확히 누를 수 있음.
+  const dimmed = isRunning;
 
   const start = () => emit("timer:action", { type: "start" });
   const stop = () => emit("timer:action", { type: "stop" });
@@ -46,9 +50,9 @@ export default function TimerWindow() {
   return (
     <div
       data-tauri-drag-region
-      className={`relative h-screen flex flex-col items-center justify-center gap-1 rounded-xl ${
-        isBreak ? "bg-indigo-50" : isRunning ? "bg-sky-50" : isAutoPaused ? "bg-amber-50" : "bg-muted/40"
-      }`}
+      className={`relative h-screen flex flex-col items-center justify-center gap-1 rounded-xl transition-opacity duration-300 ${
+        isBreak ? "bg-indigo-50" : isRunning ? "bg-sky-50" : isAutoPaused ? "bg-amber-50" : "bg-card border border-border shadow-lg"
+      } ${dimmed ? "opacity-40 hover:opacity-100" : "opacity-100"}`}
     >
       <button
         onClick={closeWindow}
