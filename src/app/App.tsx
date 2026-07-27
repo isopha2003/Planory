@@ -2838,7 +2838,7 @@ function DatePickerField({
               type="button"
               onClick={() => pick(TODAY_STR)}
               className="flex-1 px-2 py-1 text-[11px] rounded-md border border-border hover:bg-muted transition-colors"
-            >오늘</button>
+            >오늘로 이동</button>
             {allowClear && (
               <button
                 type="button"
@@ -4434,7 +4434,7 @@ function CalendarSection({
               <button
                 onClick={() => { setViewDate(TODAY_DATE); setMonthPickerOpen(false); }}
                 className="mt-3 w-full px-3 py-1.5 text-xs rounded-md border border-border hover:bg-muted transition-colors"
-              >{calView === "day" ? "오늘로" : calView === "week" ? "이번 주로" : "이번 달로"}</button>
+              >{calView === "day" ? "오늘로 이동" : calView === "week" ? "이번 주로 이동" : "이번 달로 이동"}</button>
             </div>
           )}
         </div>
