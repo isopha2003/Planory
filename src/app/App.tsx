@@ -2665,6 +2665,194 @@ function CircleProgress({ value, size, strokeWidth = 5 }: { value: number; size:
   );
 }
 
+// ── 공용 날짜 선택기 ───────────────────────────────────────────────
+// 캘린더 헤더의 "0000년 0월" 을 눌렀을 때 뜨는 팝오버와 같은 디자인 —
+// 연도 ±1 · 3×4 월 그리드 · 요일 헤더가 붙은 일 그리드.
+// 예전엔 화면마다 <input type="date"> 를 그대로 써서 OS 기본 달력이 떴는데, 브라우저/OS 마다
+// 생김새가 달라 앱 디자인과 따로 놀았음. 날짜를 고르는 자리는 전부 이 컴포넌트로 통일.
+// (캘린더 헤더의 팝오버는 "월 뷰면 달로 점프, 주 뷰면 그 주로 이동" 같은 뷰 전용 동작이 얽혀
+//  있어 그대로 두고, 여기서는 같은 생김새만 가져옴 — 스타일을 고칠 땐 양쪽을 함께 볼 것.)
+function DatePickerField({
+  value, onChange, placeholder = "날짜 선택", className = "", panel = "fit", allowClear = false, disabled = false,
+}: {
+  value: string;                    // "YYYY-MM-DD". 빈 문자열이면 미선택.
+  onChange: (date: string) => void; // 날짜를 고르면 호출. allowClear 로 비우면 "" 로 호출.
+  placeholder?: string;
+  // 트리거 버튼에 덧붙일 클래스 — 호출부의 기존 톤(크기·배경)을 그대로 유지하기 위한 통로.
+  className?: string;
+  // fit: 팝오버 폭을 트리거에 맞춤(폭 좁은 사이드 패널에서 잘려 나가지 않음)
+  // fixed: 15rem 고정 — 트리거가 인라인 텍스트처럼 좁을 때.
+  panel?: "fit" | "fixed";
+  allowClear?: boolean;             // "비우기" 노출 — 선택 해제가 의미 있는 자리(반복 종료일 등).
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [year, setYear] = useState(() => (value ? parseLocalDate(value) : TODAY_DATE).getFullYear());
+  const [month, setMonth] = useState(() => (value ? parseLocalDate(value) : TODAY_DATE).getMonth());
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  // 열 때마다 현재 값이 있는 달로 맞춤 — 닫았다 다시 열었을 때 엉뚱한 달이 남아 있지 않게.
+  const toggle = () => {
+    if (disabled) return;
+    if (!open) {
+      const d = value ? parseLocalDate(value) : TODAY_DATE;
+      setYear(d.getFullYear());
+      setMonth(d.getMonth());
+    }
+    setOpen(v => !v);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const pick = (date: string) => { onChange(date); setOpen(false); };
+
+  // 일 그리드 셀 — 앞쪽 빈 칸(1일의 요일만큼) + 그 달의 날짜들, 7 배수로 채움.
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells: Array<number | null> = [
+    ...Array<null>(firstDow).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const label = value ? `${value} (${DAYS_KO[parseLocalDate(value).getDay()]})` : placeholder;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={disabled}
+        title={value ? "날짜 변경" : "날짜 선택"}
+        className={`w-full flex items-center gap-1.5 text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      >
+        <Calendar size={12} className="text-muted-foreground flex-shrink-0" />
+        <span className={`flex-1 min-w-0 truncate ${value ? "" : "text-muted-foreground"}`}>{label}</span>
+        <ChevronDown size={11} className={`text-muted-foreground flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div
+          className={`absolute top-full mt-1 z-40 rounded-lg border border-border bg-card shadow-lg p-3 ${
+            panel === "fit" ? "left-0 right-0" : "left-0 w-[15rem]"
+          }`}
+        >
+          {/* 연도 — 화살표로 ±1, 가운데 숫자를 누르면 올해로. */}
+          <div className="flex items-center justify-between mb-3">
+            <button
+              type="button"
+              onClick={() => setYear(y => y - 1)}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title="이전 해"
+            ><ChevronLeft size={14} /></button>
+            <button
+              type="button"
+              onClick={() => setYear(TODAY_DATE.getFullYear())}
+              className="text-sm font-semibold hover:text-primary transition-colors"
+              title="올해로"
+            >{year}년</button>
+            <button
+              type="button"
+              onClick={() => setYear(y => y + 1)}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title="다음 해"
+            ><ChevronRight size={14} /></button>
+          </div>
+
+          {/* 3×4 월 그리드 — 여기선 아래 일 그리드의 달만 바꿈(고르는 건 날짜 단위라). */}
+          <div className="grid grid-cols-4 gap-1.5">
+            {Array.from({ length: 12 }, (_, i) => i).map(mi => {
+              const isSelectedMonth = !!value
+                && parseLocalDate(value).getFullYear() === year
+                && parseLocalDate(value).getMonth() === mi;
+              const isThisMonth = year === TODAY_DATE.getFullYear() && mi === TODAY_DATE.getMonth();
+              const isShown = mi === month;
+              return (
+                <button
+                  key={mi}
+                  type="button"
+                  onClick={() => setMonth(mi)}
+                  className={`px-2 py-1.5 text-xs rounded-md transition-colors ${
+                    isSelectedMonth
+                      ? "bg-primary text-primary-foreground font-medium"
+                      : isShown
+                        ? "bg-muted font-medium text-foreground"
+                        : isThisMonth
+                          ? "ring-1 ring-inset ring-primary/40 hover:bg-muted"
+                          : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                  }`}
+                >{mi + 1}월</button>
+              );
+            })}
+          </div>
+
+          {/* 일 그리드 — 주말·공휴일은 붉은/푸른 톤, 오늘은 링, 선택한 날은 채운 배경. */}
+          <div className="mt-3 pt-3 border-t border-border">
+            <div className="grid grid-cols-7 gap-0.5 mb-1">
+              {DAYS_KO.map((d, i) => (
+                <div key={d} className={`text-[10px] text-center py-0.5 font-medium ${i === 0 ? "text-red-400" : i === 6 ? "text-blue-400" : "text-muted-foreground"}`}>{d}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-0.5">
+              {cells.map((day, idx) => {
+                if (!day) return <div key={`e-${idx}`} />;
+                const cellStr = toDateStr(new Date(year, month, day));
+                const isSelected = cellStr === value;
+                const isTodayCell = cellStr === TODAY_STR;
+                const col = idx % 7;
+                const holiday = getHoliday(cellStr);
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => pick(cellStr)}
+                    title={holiday ?? undefined}
+                    className={`text-[11px] py-1 rounded transition-colors ${
+                      isSelected
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : isTodayCell
+                          ? "ring-1 ring-inset ring-primary/40 hover:bg-muted"
+                          : "hover:bg-muted"
+                    } ${
+                      isSelected ? "" : (holiday || col === 0) ? "text-red-400" : col === 6 ? "text-blue-400" : "text-foreground"
+                    }`}
+                  >{day}</button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 mt-3">
+            <button
+              type="button"
+              onClick={() => pick(TODAY_STR)}
+              className="flex-1 px-2 py-1 text-[11px] rounded-md border border-border hover:bg-muted transition-colors"
+            >오늘</button>
+            {allowClear && (
+              <button
+                type="button"
+                onClick={() => pick("")}
+                className="flex-1 px-2 py-1 text-[11px] rounded-md border border-border text-muted-foreground hover:bg-muted transition-colors"
+              >비우기</button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Today Section ──────────────────────────────────────────────────
 function TodaySection({
   blocks, deadlines, todos, templates, todoChecklistItems, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onReorderTodo, categoryRank, onReorderCategory, onSelect, onSelectTodo, onSelectDeadline, onGoToCalendar,
@@ -5031,11 +5219,10 @@ function TodoPanel({
         {addPicker.date == null && (
           <div className="px-1.5 py-0.5 space-y-0.5">
             <div className="text-[9px] text-muted-foreground uppercase tracking-wide">날짜</div>
-            <input
-              type="date"
+            <DatePickerField
               value={addDate}
-              onChange={e => { if (e.target.value) setAddDate(e.target.value); }}
-              className="w-full text-[11px] px-1.5 py-1 rounded bg-muted outline-none focus:ring-1 focus:ring-ring"
+              onChange={v => { if (v) setAddDate(v); }}
+              className="text-[11px] px-1.5 py-1 rounded bg-muted hover:bg-muted/70"
             />
           </div>
         )}
@@ -5690,8 +5877,13 @@ function MultiRepeatModal({
                 className="w-full px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring" />
             )}
             {endType === "date" && (
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring" />
+              <DatePickerField
+                value={endDate}
+                onChange={setEndDate}
+                placeholder="종료 날짜"
+                allowClear
+                className="px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/70 text-xs"
+              />
             )}
           </div>
         </div>
@@ -5842,11 +6034,11 @@ function DeadlinesSection({
                   placeholder="제목..."
                   className="w-full text-sm px-3 py-2 rounded-lg bg-muted outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
                 />
-                <input
-                  type="date"
+                <DatePickerField
                   value={newDueDate}
-                  onChange={e => setNewDueDate(e.target.value)}
-                  className="w-full text-sm px-3 py-2 rounded-lg bg-muted outline-none focus:ring-2 focus:ring-ring"
+                  onChange={setNewDueDate}
+                  placeholder="마감일 선택"
+                  className="text-sm px-3 py-2 rounded-lg bg-muted hover:bg-muted/70"
                 />
                 <div className="flex gap-2">
                   <button
@@ -6199,15 +6391,11 @@ function KanbanBoard({
               >{deadline.title}</button>
             )}
             <div className="flex items-center gap-1.5">
-              <input
-                type="date"
+              <DatePickerField
                 value={deadline.dueDate}
-                onChange={e => {
-                  const v = e.target.value;
-                  if (v && v !== deadline.dueDate) onUpdateDeadline(deadline.id, { dueDate: v });
-                }}
-                className="mt-0.5 text-[11px] text-muted-foreground bg-transparent outline-none hover:text-foreground focus:text-foreground transition-colors cursor-pointer"
-                title="마감일 변경"
+                onChange={v => { if (v && v !== deadline.dueDate) onUpdateDeadline(deadline.id, { dueDate: v }); }}
+                panel="fixed"
+                className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground rounded px-1 -mx-1 hover:bg-muted/60"
               />
               <div className="relative">
               <button
@@ -8915,8 +9103,13 @@ function RepeatSection({ originDate, repeat, hasGroup, pending, onSetRepeat, onF
                 className="w-full px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring" />
             )}
             {endType === "date" && (
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
-                className="w-full px-3 py-1.5 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring" />
+              <DatePickerField
+                value={endDate}
+                onChange={setEndDate}
+                placeholder="종료 날짜"
+                allowClear
+                className="px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/70 text-xs"
+              />
             )}
           </div>
           <button
@@ -9264,11 +9457,10 @@ function BlockDetailPanel({
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">계획 시간</div>
           <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border space-y-2">
-            <input
-              type="date"
+            <DatePickerField
               value={dateDraft}
-              onChange={e => { if (e.target.value) setDateDraft(e.target.value); }}
-              className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+              onChange={v => { if (v) setDateDraft(v); }}
+              className="text-xs px-2 py-1.5 rounded-md bg-card border border-border hover:bg-muted/40"
             />
             <div className="flex items-center gap-1.5">
               <input
@@ -9287,9 +9479,9 @@ function BlockDetailPanel({
                 className="flex-1 min-w-0 text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
+            {/* 날짜·요일은 위 선택기 라벨에 이미 있으므로 여기선 길이와 변경 예고만. */}
             <div className="text-[11px] text-muted-foreground">
-              {dateDraft} ({DAYS_KO[parseLocalDate(dateDraft).getDay()]})
-              {draftDur !== null && draftDur > 0 && <span> · {draftDur}분</span>}
+              {draftDur !== null && draftDur > 0 && <span>{draftDur}분</span>}
               {(dateDraft !== block.date
                 || startDraft !== toTimeInput(block.startH, block.startM)
                 || endDraft !== toTimeInput(block.endH, block.endM)) && (
@@ -9750,18 +9942,19 @@ function TodoDetailPanel({
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">날짜</div>
           <div className="px-3 py-2.5 rounded-lg bg-muted/40 border border-border space-y-2">
-            <input
-              type="date"
+            <DatePickerField
               value={dateDraft}
-              onChange={e => { if (e.target.value) setDateDraft(e.target.value); }}
-              className="w-full text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
+              onChange={v => { if (v) setDateDraft(v); }}
+              className="text-xs px-2 py-1.5 rounded-md bg-card border border-border hover:bg-muted/40"
             />
-            <div className="text-[11px] text-muted-foreground">
-              {dateDraft} ({DAYS_KO[parseLocalDate(dateDraft).getDay()]})
-              {/* 캘린더 드래그 등으로 만들어진 기간 할 일이면 옮겨질 종료일까지 같이 보여줌 */}
-              {shiftedEndDate(dateDraft) && <span> ~ {shiftedEndDate(dateDraft)}</span>}
-              {dateDraft !== todo.date && <span className="text-primary"> · 저장 시 이동</span>}
-            </div>
+            {/* 날짜·요일은 위 선택기 라벨에 이미 있으므로 여기선 기간과 변경 예고만. */}
+            {(shiftedEndDate(dateDraft) || dateDraft !== todo.date) && (
+              <div className="text-[11px] text-muted-foreground">
+                {/* 캘린더 드래그 등으로 만들어진 기간 할 일이면 옮겨질 종료일까지 같이 보여줌 */}
+                {shiftedEndDate(dateDraft) && <span>~ {shiftedEndDate(dateDraft)}</span>}
+                {dateDraft !== todo.date && <span className="text-primary"> · 저장 시 이동</span>}
+              </div>
+            )}
           </div>
         </div>
 
@@ -9920,18 +10113,17 @@ function DeadlineDetailPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* 마감일 — 네이티브 date picker. draft 로만 반영, 저장 시 커밋. */}
+        {/* 마감일 — 공용 날짜 선택기. draft 로만 반영, 저장 시 커밋. */}
         <div>
           <div className="text-[11px] font-medium text-muted-foreground mb-1.5">마감일</div>
-          <input
-            type="date"
+          <DatePickerField
             value={dueDateDraft}
-            onChange={e => { if (e.target.value) setDueDateDraft(e.target.value); }}
-            className="w-full text-sm px-3 py-2 rounded-lg bg-muted outline-none focus:ring-2 focus:ring-ring"
+            onChange={v => { if (v) setDueDateDraft(v); }}
+            className="text-sm px-3 py-2 rounded-lg bg-muted hover:bg-muted/70"
           />
-          <div className="text-[11px] text-muted-foreground mt-1.5">
-            {dueDateDraft} ({DAYS_KO[parseLocalDate(dueDateDraft).getDay()]})
-          </div>
+          {dueDateDraft !== deadline.dueDate && (
+            <div className="text-[11px] text-primary mt-1.5">저장 시 적용</div>
+          )}
         </div>
 
         {/* 완료 토글 */}
