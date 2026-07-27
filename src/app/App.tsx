@@ -14,12 +14,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   fetchTemplates, createTemplate, deleteTemplateRow, updateTemplateRow, fetchBlocks, insertBlock, patchBlock, deleteBlockRow,
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
+  patchBlocksByRepeatGroup, copyChecklistItemsToBlocks, syncChecklistItemsToRepeatGroup,
   fetchDeadlines, createDeadline, toggleDeadlineRow, updateDeadlineRow, deleteDeadlineRow,
   fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow, bulkUpdateKanbanCardOrder,
   fetchKanbanChecklistItemsByDeadline, createKanbanChecklistItem, toggleKanbanChecklistItemRow, deleteKanbanChecklistItemRow,
   type KanbanCard, type KanbanStatus, type KanbanChecklistItem,
   fetchTodos, createTodo, updateTodo, toggleTodoRow, deleteTodoRow, bulkUpdateTodoOrder, type Todo,
   insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin, deleteTodosByRepeatGroup as apiDeleteTodoRepeatGroup,
+  patchTodosByRepeatGroup, copyTodoChecklistItemsToTodos, syncTodoChecklistItemsToRepeatGroup,
   fetchTodaySessions, startTimerSession, endTimerSession, deleteTodaySessions, fetchFocusSecByDate,
   fetchChecklistItems, createChecklistItem, toggleChecklistItemRow, deleteChecklistItemRow,
   fetchTodoChecklistItems, createTodoChecklistItem, toggleTodoChecklistItemRow, deleteTodoChecklistItemRow,
@@ -70,6 +72,15 @@ interface Block {
   // 빼고 싶을 때만 상세 패널 토글로 false 로 바꿈.
   countInCompletion: boolean;
 }
+
+// 상세 패널이 "저장" 시 커밋하는 draft 필드들 — 블록/할 일 공통이며 Partial<Block>,
+// Partial<Todo> 양쪽에 그대로 대입 가능. 반복 인스턴스가 공유하는 필드이기도 함.
+type BlockDraftFields = {
+  title?: string;
+  category?: string;
+  memo?: string;
+  countInCompletion?: boolean;
+};
 
 interface Deadline {
   id: string;
@@ -1147,11 +1158,14 @@ export default function App() {
     try { setBlocks(await fetchBlocks()); } catch (e) { notifyError("블록 새로고침 실패")(e); }
   };
 
-  const setBlockRepeat = (id: string, repeat: BlockRepeat) => {
+  // overrides — 상세 패널이 "저장" 시점에 함께 넘기는 draft 값(제목/카테고리/메모/달성률 포함).
+  // blocks 상태는 같은 이벤트 안에서 방금 커밋한 값이 아직 반영되기 전이라, 이걸 받지 않으면
+  // 인스턴스가 "수정 직전의 옛 값"으로 복제돼 첫 블록만 새 이름이 되는 문제가 생김.
+  const setBlockRepeat = (id: string, repeat: BlockRepeat, overrides?: Partial<Block>) => {
     const block = blocks.find(b => b.id === id);
     if (!block) return;
     const groupId = `rg-${id}`;
-    const updated = { ...block, repeat, repeatGroupId: groupId };
+    const updated = { ...block, ...overrides, repeat, repeatGroupId: groupId };
     const instances = generateRepeatInstances(updated, repeat);
 
     // optimistic: show immediately with temp ids, then reconcile against the DB
@@ -1162,11 +1176,16 @@ export default function App() {
 
     (async () => {
       try {
-        await patchBlock(id, { repeat, repeatGroupId: groupId });
+        await patchBlock(id, { ...overrides, repeat, repeatGroupId: groupId });
         // 재저장 시 이전 규칙으로 만든 인스턴스가 DB에 남아있으면 새/구가 섞이므로 먼저 정리.
         // origin은 유지하고 그룹의 나머지만 삭제한 뒤 새 인스턴스를 insert.
         await deleteRepeatInstancesExceptOrigin(groupId, id);
-        if (instances.length) await insertBlocksBulk(instances);
+        if (instances.length) {
+          // 체크리스트는 block_id FK 로 묶인 별도 테이블이라 blocks INSERT 만으로는 따라오지 않음.
+          // origin 의 항목을 계층 그대로 각 인스턴스에 복제(완료 여부는 인스턴스마다 새로 시작).
+          const created = await insertBlocksBulk(instances);
+          await copyChecklistItemsToBlocks(id, created.map(b => b.id));
+        }
         await refetchBlocks();
       } catch (e) {
         // 조용히 삼키면 patchBlock만 성공하고 insertBlocksBulk가 실패한 경우 원본에는
@@ -1176,6 +1195,36 @@ export default function App() {
         try { await refetchBlocks(); } catch {}
       }
     })();
+  };
+
+  // 상세 패널 "저장" 전용 블록 수정 — 이 블록이 반복 그룹에 속해 있으면 같은 그룹의
+  // 이 날짜 이후 인스턴스에도 공유 필드(제목/카테고리/메모/달성률 포함)를 함께 반영.
+  // 반복은 "같은 일이 되풀이" 되는 것이라, 이름을 고쳤는데 이후 블록만 옛 이름으로 남으면
+  // 사용자에겐 버그로 보임. 지나간 날짜는 기록이므로 건드리지 않음.
+  const updateBlockFromDetail = (id: string, changes: Partial<Block>) => {
+    updateBlock(id, changes);
+    const origin = blocks.find(b => b.id === id);
+    if (!origin?.repeatGroupId) return;
+    const shared: { title?: string; category?: string; memo?: string; countInCompletion?: boolean } = {};
+    if (changes.title !== undefined) shared.title = changes.title;
+    if (changes.category !== undefined) shared.category = changes.category;
+    if (changes.memo !== undefined) shared.memo = changes.memo;
+    if (changes.countInCompletion !== undefined) shared.countInCompletion = changes.countInCompletion;
+    if (Object.keys(shared).length === 0) return;
+    const groupId = origin.repeatGroupId;
+    const fromDate = origin.date;
+    setBlocks(bs => bs.map(b => (b.repeatGroupId === groupId && b.date >= fromDate ? { ...b, ...shared } : b)));
+    patchBlocksByRepeatGroup(groupId, fromDate, shared).catch(notifyError("반복 블록 저장 실패"));
+  };
+
+  // 상세 패널에서 체크리스트 항목을 추가/삭제하고 "저장" 했을 때, 같은 반복 그룹의 이후
+  // 인스턴스에도 같은 체크리스트를 깔아줌. 반복 규칙을 이번에 새로 적용한 경우엔 인스턴스가
+  // 통째로 재생성되면서 이미 복제되므로 호출하지 않음.
+  const syncBlockChecklistToRepeatGroup = (id: string) => {
+    const origin = blocks.find(b => b.id === id);
+    if (!origin?.repeatGroupId) return;
+    syncChecklistItemsToRepeatGroup(id, origin.repeatGroupId, origin.date)
+      .catch(notifyError("반복 블록 체크리스트 동기화 실패"));
   };
 
   const toggleDeadline = (id: string) => {
@@ -1409,29 +1458,58 @@ export default function App() {
   };
 
   // 할 일 반복 규칙 (재)적용 — setBlockRepeat 과 동일한 optimistic → DB reconcile 흐름.
-  const setTodoRepeat = (id: string, repeat: BlockRepeat) => {
+  // overrides 의 의미도 setBlockRepeat 과 같음(상세 패널의 아직 커밋 전 draft 값).
+  const setTodoRepeat = (id: string, repeat: BlockRepeat, overrides?: Partial<Todo>) => {
     const todo = todos.find(t => t.id === id);
     if (!todo) return;
     const groupId = `trg-${id}`;
-    const updated = { ...todo, repeat, repeatGroupId: groupId };
+    const updated = { ...todo, ...overrides, repeat, repeatGroupId: groupId };
     const instances = generateTodoRepeatInstances(updated, repeat);
     setTodos(ts => {
       const filtered = ts.filter(t => t.repeatGroupId !== groupId || t.id === id);
       return [...filtered.map(t => (t.id === id ? updated : t)), ...instances];
     });
-    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, repeat, repeatGroupId: groupId } : prev));
+    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, ...overrides, repeat, repeatGroupId: groupId } : prev));
     (async () => {
       try {
-        await updateTodo(id, { repeat, repeatGroupId: groupId });
+        await updateTodo(id, { ...overrides, repeat, repeatGroupId: groupId });
         // 규칙 재적용 시 이전 규칙의 인스턴스가 남으면 새/구가 섞이므로 원본만 남기고 정리 후 재삽입.
         await deleteTodoRepeatInstancesExceptOrigin(groupId, id);
-        if (instances.length) await insertTodosBulk(instances);
+        if (instances.length) {
+          await insertTodosBulk(instances);
+          // 체크리스트는 todo_id FK 로 묶인 별도 테이블이라 별도 복제가 필요(블록과 동일).
+          await copyTodoChecklistItemsToTodos(id, instances.map(t => t.id));
+          setTodoChecklistItems(await fetchAllTodoChecklistItems());
+        }
         await refetchTodos();
       } catch (e) {
         notifyError("할 일 반복 저장 실패")(e);
         refetchTodos();
       }
     })();
+  };
+
+  // 반복 그룹 공유 필드 전파 — updateBlockFromDetail 의 todo 대응.
+  const propagateTodoToRepeatGroup = (
+    id: string,
+    shared: { title?: string; category?: string; memo?: string; countInCompletion?: boolean }
+  ) => {
+    const origin = todos.find(t => t.id === id);
+    if (!origin?.repeatGroupId) return;
+    const groupId = origin.repeatGroupId;
+    const fromDate = origin.date;
+    setTodos(ts => ts.map(t => (t.repeatGroupId === groupId && t.date >= fromDate ? { ...t, ...shared } : t)));
+    patchTodosByRepeatGroup(groupId, fromDate, shared).catch(notifyError("반복 할 일 저장 실패"));
+  };
+
+  // syncBlockChecklistToRepeatGroup 의 todo 대응 — App 이 전체 체크리스트를 상태로 들고 있어
+  // 동기화 후 다시 읽어와야 목록/상세에 반영됨.
+  const syncTodoChecklistToRepeatGroup = (id: string) => {
+    const origin = todos.find(t => t.id === id);
+    if (!origin?.repeatGroupId) return;
+    syncTodoChecklistItemsToRepeatGroup(id, origin.repeatGroupId, origin.date)
+      .then(async () => setTodoChecklistItems(await fetchAllTodoChecklistItems()))
+      .catch(notifyError("반복 할 일 체크리스트 동기화 실패"));
   };
 
   // ── todo checklist ────────────────────────────────────────────────
@@ -1745,29 +1823,32 @@ export default function App() {
             }}
             onDelete={() => requestDeleteBlock(selectedBlock.id)}
             onMemoSave={(memo) => {
-              updateBlock(selectedBlock.id, { memo });
+              updateBlockFromDetail(selectedBlock.id, { memo });
               setSelectedBlock({ ...selectedBlock, memo });
             }}
             onCategorySave={(category) => {
-              updateBlock(selectedBlock.id, { category });
+              updateBlockFromDetail(selectedBlock.id, { category });
               setSelectedBlock({ ...selectedBlock, category });
             }}
             onCountInCompletionSave={(v) => {
-              updateBlock(selectedBlock.id, { countInCompletion: v });
+              updateBlockFromDetail(selectedBlock.id, { countInCompletion: v });
               setSelectedBlock({ ...selectedBlock, countInCompletion: v });
             }}
             onTitleSave={(title) => {
-              updateBlock(selectedBlock.id, { title });
+              updateBlockFromDetail(selectedBlock.id, { title });
               setSelectedBlock({ ...selectedBlock, title });
               if (selectedBlock.id === justCreatedBlockId) {
                 setJustCreatedBlockId(prev => (prev === selectedBlock.id ? null : prev));
               }
             }}
             onAddTemplate={addTemplate}
-            onSetRepeat={(repeat) => {
-              setBlockRepeat(selectedBlock.id, repeat);
-              setSelectedBlock({ ...selectedBlock, repeat, repeatGroupId: `rg-${selectedBlock.id}` });
+            // overrides — 같은 "저장" 클릭에서 방금 커밋된 draft 값. blocks 상태 갱신을 기다리지
+            // 않고 넘겨야 새 인스턴스가 수정된 제목/카테고리로 만들어짐.
+            onSetRepeat={(repeat, overrides) => {
+              setBlockRepeat(selectedBlock.id, repeat, overrides);
+              setSelectedBlock({ ...selectedBlock, ...overrides, repeat, repeatGroupId: `rg-${selectedBlock.id}` });
             }}
+            onSyncChecklistToRepeatGroup={() => syncBlockChecklistToRepeatGroup(selectedBlock.id)}
           />
         )}
 
@@ -1849,18 +1930,29 @@ export default function App() {
             onDelete={() => requestDeleteTodo(selectedTodo.id)}
             onTitleSave={(title) => {
               updateTodoTitle(selectedTodo.id, title);
+              propagateTodoToRepeatGroup(selectedTodo.id, { title });
               if (selectedTodo.id === justCreatedTodoId) {
                 setJustCreatedTodoId(prev => (prev === selectedTodo.id ? null : prev));
               }
             }}
-            onMemoSave={(memo) => updateTodoMemo(selectedTodo.id, memo)}
-            onCategorySave={(category) => updateTodoCategory(selectedTodo.id, category)}
-            onCountInCompletionSave={(v) => updateTodoCountInCompletion(selectedTodo.id, v)}
+            onMemoSave={(memo) => {
+              updateTodoMemo(selectedTodo.id, memo);
+              propagateTodoToRepeatGroup(selectedTodo.id, { memo });
+            }}
+            onCategorySave={(category) => {
+              updateTodoCategory(selectedTodo.id, category);
+              propagateTodoToRepeatGroup(selectedTodo.id, { category });
+            }}
+            onCountInCompletionSave={(v) => {
+              updateTodoCountInCompletion(selectedTodo.id, v);
+              propagateTodoToRepeatGroup(selectedTodo.id, { countInCompletion: v });
+            }}
             onAddTemplate={addTemplate}
-            onSetRepeat={(repeat) => setTodoRepeat(selectedTodo.id, repeat)}
+            onSetRepeat={(repeat, overrides) => setTodoRepeat(selectedTodo.id, repeat, overrides)}
             onAddChecklistItem={(text, parentItemId) => addTodoChecklistItem(selectedTodo.id, text, parentItemId)}
             onToggleChecklistItem={(id, completed) => toggleTodoChecklistItem(id, completed)}
             onDeleteChecklistItem={(id) => deleteTodoChecklistItem(id)}
+            onSyncChecklistToRepeatGroup={() => syncTodoChecklistToRepeatGroup(selectedTodo.id)}
           />
         )}
       </div>
@@ -8000,10 +8092,13 @@ function SettingsSection({
 // 색상 팔레트/태그/하위 타임블록/반복 설정/습관 스태킹을 모두 걷어내고
 // 상세 패널 "반복" 섹션 — 계획 시간(블록)/날짜(할 일) 아래에 위치. 현재 규칙 요약을 보여주고,
 // 펼치면 주기(매일/매주/매달/매년)/요일/종료 인라인 폼으로 규칙을 (재)설정한다. 블록·할 일 공용.
-function RepeatSection({ originDate, repeat, hasGroup, onSetRepeat }: {
+// 반복 설정 폼. "적용" 은 상위의 draft 에만 반영되고 실제 인스턴스 생성은 패널 "저장" 에서
+// 일어남 — pending=true 면 아직 저장 전임을 요약줄에 표시.
+function RepeatSection({ originDate, repeat, hasGroup, pending, onSetRepeat }: {
   originDate: string;
   repeat?: BlockRepeat;
   hasGroup?: boolean;
+  pending?: boolean;
   onSetRepeat: (r: BlockRepeat) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -8033,7 +8128,7 @@ function RepeatSection({ originDate, repeat, hasGroup, onSetRepeat }: {
         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-muted hover:bg-muted/70 transition-colors text-left"
       >
         <span className={`flex-1 text-xs truncate ${repeat ? "text-foreground" : "text-muted-foreground"}`}>
-          {hasGroup && "↻ "}{summary}
+          {hasGroup && "↻ "}{summary}{pending && <span className="text-muted-foreground"> · 저장 시 적용</span>}
         </span>
         <ChevronDown size={12} className={`text-muted-foreground flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -8098,6 +8193,7 @@ function RepeatSection({ originDate, repeat, hasGroup, onSetRepeat }: {
 function BlockDetailPanel({
   block, templates, initialEditTitle, paletteColors,
   onClose, onToggle, onDelete, onTitleSave, onMemoSave, onCategorySave, onCountInCompletionSave, onAddTemplate, onSetRepeat,
+  onSyncChecklistToRepeatGroup,
 }: {
   block: Block;
   templates: Template[];
@@ -8111,12 +8207,15 @@ function BlockDetailPanel({
   onCategorySave: (category: string) => void;
   onCountInCompletionSave: (v: boolean) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
-  // 반복 규칙 적용 — setBlockRepeat 으로 반복 그룹을 (재)생성.
-  onSetRepeat: (repeat: BlockRepeat) => void;
+  // 반복 규칙 적용 — setBlockRepeat 으로 반복 그룹을 (재)생성. overrides 는 같은 "저장" 에서
+  // 함께 커밋되는 draft 값으로, 새 인스턴스가 옛 값으로 복제되지 않도록 그대로 넘김.
+  onSetRepeat: (repeat: BlockRepeat, overrides: BlockDraftFields) => void;
+  // 체크리스트 항목을 추가/삭제한 채로 저장했을 때, 같은 반복 그룹의 이후 인스턴스에 동기화.
+  onSyncChecklistToRepeatGroup: () => void;
 }) {
   // draft 모델 — 아래 필드는 편집 도중 로컬에만 반영되고, "저장" 버튼을 눌러야만 DB/부모에 커밋됨.
   // "닫기" 는 draft 를 폐기하며 실제 저장된 값은 그대로 유지. 완료 토글·삭제·체크리스트·새 카테고리
-  // 생성·반복 적용은 개별 명시적 액션이라 기존처럼 즉시 저장.
+  // 생성은 개별 명시적 액션이라 기존처럼 즉시 저장.
   const [memo, setMemo] = useState(block.memo);
   const [category, setCategory] = useState(block.category);
   const [countInCompletion, setCountInCompletion] = useState(block.countInCompletion !== false);
@@ -8124,6 +8223,11 @@ function BlockDetailPanel({
   // 패널이 뜨자마자 편집 모드로 진입하고 input에 포커스가 잡힘.
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
   const [titleDraft, setTitleDraft] = useState(block.title);
+  // 반복 규칙도 draft — 예전엔 "적용" 즉시 인스턴스를 만들어서, 아직 draft 였던 제목/카테고리가
+  // 인스턴스에 반영되지 않고 첫 블록만 새 이름이 되는 문제가 있었음. 이제 "저장" 에서
+  // 필드 커밋 → 반복 생성 순으로 처리하고, "닫기" 는 반복 변경도 함께 폐기.
+  const [repeatDraft, setRepeatDraft] = useState<BlockRepeat | undefined>(block.repeat);
+  const [repeatDirty, setRepeatDirty] = useState(false);
   // 카테고리 드롭다운 열림 여부 · 새 카테고리 인라인 폼 상태 — todo 상세와 동일 로직.
   const [catOpen, setCatOpen] = useState(false);
   const [newCatMode, setNewCatMode] = useState(false);
@@ -8173,17 +8277,30 @@ function BlockDetailPanel({
   };
 
   // 저장 — 바뀐 draft 만 부모에 통보하고 패널 닫음. 닫기는 draft 폐기(호출자 onClose 만 실행).
+  // 반복은 반드시 필드 커밋 뒤에 — 인스턴스는 이번에 바뀐 값까지 반영해 복제되어야 함.
+  // 부모의 blocks 상태는 이 이벤트 안에서 아직 갱신 전이라 바뀐 값을 overrides 로 함께 넘김.
   const handleSaveAndClose = () => {
     const t = titleDraft.trim() || block.title;
-    if (t !== block.title) onTitleSave(t);
-    if (category !== block.category) onCategorySave(category);
-    if (memo !== block.memo) onMemoSave(memo);
-    if (countInCompletion !== (block.countInCompletion !== false)) onCountInCompletionSave(countInCompletion);
+    const changed: BlockDraftFields = {};
+    if (t !== block.title) { onTitleSave(t); changed.title = t; }
+    if (category !== block.category) { onCategorySave(category); changed.category = category; }
+    if (memo !== block.memo) { onMemoSave(memo); changed.memo = memo; }
+    if (countInCompletion !== (block.countInCompletion !== false)) {
+      onCountInCompletionSave(countInCompletion);
+      changed.countInCompletion = countInCompletion;
+    }
+    if (repeatDirty && repeatDraft) onSetRepeat(repeatDraft, changed);
+    // 반복을 이번에 새로 적용했다면 인스턴스가 통째로 재생성되며 체크리스트도 함께 복제되므로
+    // 중복으로 동기화하지 않음.
+    else if (checklistDirty) onSyncChecklistToRepeatGroup();
     onClose();
   };
 
   // 체크리스트 — 이 블록에 소속된 항목만 불러와 관리. 상세 패널이 블록별로 리마운트되므로 로컬 상태.
+  // 항목 자체(추가/삭제)가 바뀌면 저장 시 반복 그룹에 동기화해야 하므로 별도로 표시.
+  // 완료 토글은 인스턴스별 상태라 동기화 대상이 아님.
   const [items, setItems] = useState<ChecklistItemT[]>([]);
+  const [checklistDirty, setChecklistDirty] = useState(false);
   useEffect(() => {
     fetchChecklistItems(block.id).then(setItems).catch(notifyError("체크리스트 불러오기 실패"));
   }, [block.id]);
@@ -8191,6 +8308,7 @@ function BlockDetailPanel({
     try {
       const created = await createChecklistItem(block.id, text, parentItemId);
       setItems(is => [...is, created]);
+      setChecklistDirty(true);
     } catch (e) { notifyError("체크리스트 항목 추가 실패")(e); }
   };
   const toggleChecklistItem = async (id: string, completed: boolean) => {
@@ -8212,6 +8330,7 @@ function BlockDetailPanel({
       }
     }
     setItems(is => is.filter(i => !toRemove.has(i.id)));
+    setChecklistDirty(true);
     try { await deleteChecklistItemRow(id); }
     catch (e) { notifyError("체크리스트 삭제 실패")(e); }
   };
@@ -8361,7 +8480,13 @@ function BlockDetailPanel({
         </div>
 
         {/* 반복 — 계획 시간 바로 아래. 현재 규칙 요약 + 인라인 설정 폼. */}
-        <RepeatSection originDate={block.date} repeat={block.repeat} hasGroup={!!block.repeatGroupId} onSetRepeat={onSetRepeat} />
+        <RepeatSection
+          originDate={block.date}
+          repeat={repeatDraft}
+          hasGroup={!!block.repeatGroupId}
+          pending={repeatDirty}
+          onSetRepeat={r => { setRepeatDraft(r); setRepeatDirty(true); }}
+        />
 
         {/* Memo */}
         <div>
@@ -8510,7 +8635,7 @@ function NewChecklistItemForm({
 function TodoDetailPanel({
   todo, templates, initialEditTitle, paletteColors, checklistItems,
   onClose, onToggle, onDelete, onTitleSave, onMemoSave, onCategorySave, onCountInCompletionSave, onAddTemplate, onSetRepeat,
-  onAddChecklistItem, onToggleChecklistItem, onDeleteChecklistItem,
+  onAddChecklistItem, onToggleChecklistItem, onDeleteChecklistItem, onSyncChecklistToRepeatGroup,
 }: {
   todo: Todo;
   templates: Template[];
@@ -8527,20 +8652,27 @@ function TodoDetailPanel({
   onCategorySave: (category: string) => void;
   onCountInCompletionSave: (v: boolean) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
-  // 반복 규칙 적용 — setTodoRepeat 으로 반복 그룹을 (재)생성.
-  onSetRepeat: (repeat: BlockRepeat) => void;
+  // 반복 규칙 적용 — setTodoRepeat 으로 반복 그룹을 (재)생성. overrides 는 BlockDetailPanel 과 동일.
+  onSetRepeat: (repeat: BlockRepeat, overrides: BlockDraftFields) => void;
   onAddChecklistItem: (text: string, parentItemId?: string) => void;
   onToggleChecklistItem: (id: string, completed: boolean) => void;
   onDeleteChecklistItem: (id: string) => void;
+  // 체크리스트 항목을 추가/삭제한 채로 저장했을 때, 같은 반복 그룹의 이후 인스턴스에 동기화.
+  onSyncChecklistToRepeatGroup: () => void;
 }) {
   // draft 모델 — 아래 필드는 편집 도중 로컬에만 반영되고, "저장" 눌러야만 부모(DB)에 커밋됨.
-  // "닫기" 는 draft 를 폐기하고 저장된 값을 그대로 둠. 완료 토글·삭제·체크리스트·새 카테고리 생성·
-  // 반복 적용은 개별 명시적 액션이라 기존처럼 즉시 저장.
+  // "닫기" 는 draft 를 폐기하고 저장된 값을 그대로 둠. 완료 토글·삭제·체크리스트·새 카테고리
+  // 생성은 개별 명시적 액션이라 기존처럼 즉시 저장.
   const [memo, setMemo] = useState(todo.memo);
   const [category, setCategory] = useState(todo.category);
   const [countInCompletion, setCountInCompletion] = useState(todo.countInCompletion !== false);
   const [editingTitle, setEditingTitle] = useState(!!initialEditTitle);
   const [titleDraft, setTitleDraft] = useState(todo.title);
+  // 반복도 draft — BlockDetailPanel 과 동일하게 "저장" 에서 필드 커밋 뒤에 적용.
+  const [repeatDraft, setRepeatDraft] = useState<BlockRepeat | undefined>(todo.repeat);
+  const [repeatDirty, setRepeatDirty] = useState(false);
+  // 체크리스트 항목 추가/삭제 여부 — 저장 시 반복 그룹 동기화가 필요한지 판단(완료 토글은 제외).
+  const [checklistDirty, setChecklistDirty] = useState(false);
   // 카테고리 드롭다운 열림 여부 · 새 카테고리 인라인 폼 상태.
   const [catOpen, setCatOpen] = useState(false);
   const [newCatMode, setNewCatMode] = useState(false);
@@ -8588,12 +8720,20 @@ function TodoDetailPanel({
   };
 
   // 저장 — 바뀐 draft 만 부모에 통보하고 패널 닫음. 닫기는 draft 폐기.
+  // 반복은 필드 커밋 뒤에, 바뀐 값을 overrides 로 함께 넘겨 적용(BlockDetailPanel 과 동일).
   const handleSaveAndClose = () => {
     const t = titleDraft.trim() || todo.title;
-    if (t !== todo.title) onTitleSave(t);
-    if (category !== todo.category) onCategorySave(category);
-    if (memo !== todo.memo) onMemoSave(memo);
-    if (countInCompletion !== (todo.countInCompletion !== false)) onCountInCompletionSave(countInCompletion);
+    const changed: BlockDraftFields = {};
+    if (t !== todo.title) { onTitleSave(t); changed.title = t; }
+    if (category !== todo.category) { onCategorySave(category); changed.category = category; }
+    if (memo !== todo.memo) { onMemoSave(memo); changed.memo = memo; }
+    if (countInCompletion !== (todo.countInCompletion !== false)) {
+      onCountInCompletionSave(countInCompletion);
+      changed.countInCompletion = countInCompletion;
+    }
+    if (repeatDirty && repeatDraft) onSetRepeat(repeatDraft, changed);
+    // 반복을 새로 적용했다면 인스턴스 재생성 때 체크리스트도 복제되므로 중복 동기화하지 않음.
+    else if (checklistDirty) onSyncChecklistToRepeatGroup();
     onClose();
   };
 
@@ -8744,7 +8884,13 @@ function TodoDetailPanel({
         </div>
 
         {/* 반복 — 날짜 바로 아래. 시간 블록과 동일한 규칙/폼(RepeatSection 공용). */}
-        <RepeatSection originDate={todo.date} repeat={todo.repeat} hasGroup={!!todo.repeatGroupId} onSetRepeat={onSetRepeat} />
+        <RepeatSection
+          originDate={todo.date}
+          repeat={repeatDraft}
+          hasGroup={!!todo.repeatGroupId}
+          pending={repeatDirty}
+          onSetRepeat={r => { setRepeatDraft(r); setRepeatDirty(true); }}
+        />
 
         {/* Memo */}
         <div>
@@ -8768,10 +8914,10 @@ function TodoDetailPanel({
                 items={checklistItems}
                 depth={0}
                 onToggle={onToggleChecklistItem}
-                onDelete={onDeleteChecklistItem}
+                onDelete={id => { onDeleteChecklistItem(id); setChecklistDirty(true); }}
               />
             ))}
-            <NewChecklistItemForm onAdd={text => onAddChecklistItem(text)} />
+            <NewChecklistItemForm onAdd={text => { onAddChecklistItem(text); setChecklistDirty(true); }} />
           </div>
         </div>
 

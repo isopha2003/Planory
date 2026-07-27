@@ -261,6 +261,30 @@ export async function deleteRepeatInstancesExceptOrigin(repeatGroupId: string, o
   );
 }
 
+// 반복 그룹이 공유하는 필드를 fromDate 이후 인스턴스 전체에 일괄 반영.
+// 상세 패널에서 origin 블록의 제목/카테고리/메모/달성률 포함을 바꿨을 때 사용 — 예전엔
+// origin 한 건만 UPDATE 해서 "이름을 고쳤는데 이후 반복 블록은 옛 이름 그대로" 인 상태가 됨.
+// 과거 날짜 인스턴스는 지나간 기록이므로 건드리지 않음(반복 삭제 모달의 "이후 전체" 와 같은 기준).
+export async function patchBlocksByRepeatGroup(
+  repeatGroupId: string,
+  fromDate: string,
+  changes: { title?: string; category?: string; memo?: string; countInCompletion?: boolean }
+) {
+  const sets: string[] = [];
+  const vals: any[] = [];
+  if (changes.title !== undefined) { sets.push("title = ?"); vals.push(changes.title); }
+  if (changes.category !== undefined) { sets.push("category = ?"); vals.push(changes.category ?? ""); }
+  if (changes.memo !== undefined) { sets.push("memo = ?"); vals.push(changes.memo); }
+  if (changes.countInCompletion !== undefined) { sets.push("count_in_completion = ?"); vals.push(changes.countInCompletion ? 1 : 0); }
+  if (sets.length === 0) return;
+  const db = await getDb();
+  vals.push(repeatGroupId, fromDate);
+  await db.execute(
+    `UPDATE blocks SET ${sets.join(", ")} WHERE repeat_group_id = ? AND date >= ?`,
+    vals
+  );
+}
+
 export async function insertBlocksBulk(blocks: any[]) {
   if (blocks.length === 0) return [];
   const db = await getDb();
@@ -623,6 +647,27 @@ export async function deleteTodoRepeatInstancesExceptOrigin(repeatGroupId: strin
   await db.execute("DELETE FROM todos WHERE repeat_group_id = ? AND id != ?", [repeatGroupId, originId]);
 }
 
+// patchBlocksByRepeatGroup 의 todo 대응 — 반복 그룹이 공유하는 필드를 fromDate 이후 전체에 반영.
+export async function patchTodosByRepeatGroup(
+  repeatGroupId: string,
+  fromDate: string,
+  changes: { title?: string; category?: string; memo?: string; countInCompletion?: boolean }
+): Promise<void> {
+  const sets: string[] = [];
+  const vals: any[] = [];
+  if (changes.title !== undefined) { sets.push("title = ?"); vals.push(changes.title); }
+  if (changes.category !== undefined) { sets.push("category = ?"); vals.push(changes.category ?? ""); }
+  if (changes.memo !== undefined) { sets.push("memo = ?"); vals.push(changes.memo); }
+  if (changes.countInCompletion !== undefined) { sets.push("count_in_completion = ?"); vals.push(changes.countInCompletion ? 1 : 0); }
+  if (sets.length === 0) return;
+  const db = await getDb();
+  vals.push(repeatGroupId, fromDate);
+  await db.execute(
+    `UPDATE todos SET ${sets.join(", ")} WHERE repeat_group_id = ? AND date >= ?`,
+    vals
+  );
+}
+
 // 다수 todo 의 date + sort_order 을 한 트랜잭션으로 갱신. 드래그로 순서 바꾸거나
 // 컬럼(날짜) 을 옮길 때 재정렬 결과를 한 번에 반영해 부분 반영을 피함.
 export async function bulkUpdateTodoOrder(items: { id: string; date: string; sortOrder: number }[]): Promise<void> {
@@ -866,6 +911,74 @@ export async function deleteFolder(id: string): Promise<void> {
 }
 
 // ── checklist_items (체크리스트형 자식 — 무제한 중첩) ─────────────
+// 체크리스트 로우를 부모 → 자식 순서로 정렬. parent_item_id 가 같은 테이블을 참조하는 FK 라
+// 복제할 때 부모가 먼저 INSERT 되어야 함. 부모가 목록에 없는 고아 항목은 루트로 승격시켜 유실 방지.
+function orderChecklistRowsByDepth<T extends { id: string; parent_item_id: string | null }>(rows: T[]): T[] {
+  const known = new Set(rows.map(r => r.id));
+  const byParent = new Map<string | null, T[]>();
+  for (const r of rows) {
+    const key = r.parent_item_id && known.has(r.parent_item_id) ? r.parent_item_id : null;
+    const list = byParent.get(key);
+    if (list) list.push(r); else byParent.set(key, [r]);
+  }
+  const out: T[] = [];
+  const seen = new Set<string>();
+  const walk = (parent: string | null) => {
+    for (const r of byParent.get(parent) ?? []) {
+      if (seen.has(r.id)) continue;   // 데이터가 꼬여 순환이 생겨도 무한 재귀로 가지 않도록 방어
+      seen.add(r.id);
+      out.push(r);
+      walk(r.id);
+    }
+  };
+  walk(null);
+  return out;
+}
+
+// origin 블록의 체크리스트를 반복 인스턴스들에 계층 그대로 복제.
+// 반복 인스턴스는 blocks 로우만 복사되고 체크리스트는 block_id FK 로 묶인 별도 테이블이라,
+// 이 복제가 없으면 "체크리스트가 첫 블록에만 있는" 상태가 됨. 완료 여부는 인스턴스마다 새로 시작.
+export async function copyChecklistItemsToBlocks(originBlockId: string, targetBlockIds: string[]) {
+  if (targetBlockIds.length === 0) return;
+  const db = await getDb();
+  const rows = await db.select<any[]>(
+    "SELECT id, parent_item_id, text, sort_order FROM checklist_items WHERE block_id = ? ORDER BY created_at",
+    [originBlockId]
+  );
+  if (rows.length === 0) return;
+  const ordered = orderChecklistRowsByDepth(rows);
+  for (const targetId of targetBlockIds) {
+    // 인스턴스마다 원본 항목 id → 새 id 매핑을 새로 만들어 부모 참조를 같은 인스턴스 안으로 묶음.
+    const idMap = new Map<string, string>();
+    for (const r of ordered) idMap.set(r.id, uuid());
+    for (const r of ordered) {
+      await db.execute(
+        "INSERT INTO checklist_items (id, block_id, parent_item_id, text, completed, sort_order) VALUES (?, ?, ?, ?, 0, ?)",
+        [idMap.get(r.id), targetId, r.parent_item_id ? idMap.get(r.parent_item_id) ?? null : null, r.text, r.sort_order ?? 0]
+      );
+    }
+  }
+}
+
+// 이미 만들어진 반복 그룹의 "이후" 인스턴스 체크리스트를 origin 기준으로 재동기화.
+// 항목마다 인스턴스 간 대응을 추적할 키가 없어서, 대상 인스턴스의 체크리스트를 통째로 지우고
+// origin 것을 다시 복제하는 방식으로 맞춤 — 추가/삭제가 모두 같은 방식으로 반영됨.
+// 완료 여부는 초기화되지만 대상이 origin 날짜 이후(아직 지나지 않은) 인스턴스라 실질 손실은 없음.
+export async function syncChecklistItemsToRepeatGroup(originBlockId: string, repeatGroupId: string, fromDate: string) {
+  const db = await getDb();
+  const targets = await db.select<any[]>(
+    "SELECT id FROM blocks WHERE repeat_group_id = ? AND date >= ? AND id != ?",
+    [repeatGroupId, fromDate, originBlockId]
+  );
+  if (targets.length === 0) return;
+  const ids = targets.map(r => r.id as string);
+  await db.execute(
+    `DELETE FROM checklist_items WHERE block_id IN (${ids.map(() => "?").join(",")})`,
+    ids
+  );
+  await copyChecklistItemsToBlocks(originBlockId, ids);
+}
+
 export async function fetchChecklistItems(blockId: string) {
   const db = await getDb();
   const rows = await db.select<any[]>(
@@ -914,6 +1027,44 @@ export async function deleteChecklistItemRow(id: string) {
 }
 
 // ── todo_checklist_items (Todo 체크리스트 — blocks 와 동일한 구조/시맨틱) ────
+// copyChecklistItemsToBlocks 의 todo 대응 — 반복 인스턴스에 체크리스트를 계층 그대로 복제.
+export async function copyTodoChecklistItemsToTodos(originTodoId: string, targetTodoIds: string[]) {
+  if (targetTodoIds.length === 0) return;
+  const db = await getDb();
+  const rows = await db.select<any[]>(
+    "SELECT id, parent_item_id, text, sort_order FROM todo_checklist_items WHERE todo_id = ? ORDER BY created_at",
+    [originTodoId]
+  );
+  if (rows.length === 0) return;
+  const ordered = orderChecklistRowsByDepth(rows);
+  for (const targetId of targetTodoIds) {
+    const idMap = new Map<string, string>();
+    for (const r of ordered) idMap.set(r.id, uuid());
+    for (const r of ordered) {
+      await db.execute(
+        "INSERT INTO todo_checklist_items (id, todo_id, parent_item_id, text, completed, sort_order) VALUES (?, ?, ?, ?, 0, ?)",
+        [idMap.get(r.id), targetId, r.parent_item_id ? idMap.get(r.parent_item_id) ?? null : null, r.text, r.sort_order ?? 0]
+      );
+    }
+  }
+}
+
+// syncChecklistItemsToRepeatGroup 의 todo 대응.
+export async function syncTodoChecklistItemsToRepeatGroup(originTodoId: string, repeatGroupId: string, fromDate: string) {
+  const db = await getDb();
+  const targets = await db.select<any[]>(
+    "SELECT id FROM todos WHERE repeat_group_id = ? AND date >= ? AND id != ?",
+    [repeatGroupId, fromDate, originTodoId]
+  );
+  if (targets.length === 0) return;
+  const ids = targets.map(r => r.id as string);
+  await db.execute(
+    `DELETE FROM todo_checklist_items WHERE todo_id IN (${ids.map(() => "?").join(",")})`,
+    ids
+  );
+  await copyTodoChecklistItemsToTodos(originTodoId, ids);
+}
+
 // UI 는 동일한 ChecklistNode 로 렌더링. row 형태를 맞추기 위해 blockId 대신 todoId 를
 // 그대로 필드명으로 씀 — 호출자(App)가 컴포넌트에 넘길 때 정규화.
 export async function fetchTodoChecklistItems(todoId: string) {
