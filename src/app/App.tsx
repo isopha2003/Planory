@@ -4768,36 +4768,39 @@ function CalendarSection({
            바깥 클릭 리스너가 닫음(useEffect). mousedown 시 setCtxMenu(null) 이 발화하니
            메뉴 내부 클릭엔 stopPropagation 로 닫힘 방지. */}
       {ctxMenu && (
-        /* 최대한 컴팩트하게 — 텍스트/아이콘 모두 축소. */
+        /* 항목 크기는 앱의 다른 드롭다운(카테고리 선택 등)과 동일한 text-[11px] + px-2 py-1.5.
+           ⚠ 글자 크기는 반드시 각 <button> 에 직접 걸 것 — theme.css 의 @layer base 에
+           `button { font-size: var(--text-base) }` 가 있어서, 부모(div)에만 크기를 주면
+           상속보다 이 규칙이 이겨 버튼만 16px 로 튀어나온다(이 메뉴가 실제로 그랬음). */
         <div
           onMouseDown={e => e.stopPropagation()}
-          className="fixed z-50 min-w-[56px] bg-card border border-border rounded-md shadow-md p-0.5 text-[8px] leading-none"
+          className="fixed z-50 min-w-[110px] bg-card border border-border rounded-lg shadow-lg p-1 space-y-0.5"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
         >
-          <div className="px-1 py-0.5 text-[7px] text-muted-foreground tracking-wide">
-            {selectedIds.size}개
+          <div className="px-2 py-1 text-[10px] text-muted-foreground tracking-wide">
+            {selectedIds.size}개 선택됨
           </div>
           <button
             onClick={() => { setShowMultiRepeat(true); setCtxMenu(null); }}
-            className="w-full text-left px-1 py-0.5 rounded hover:bg-muted transition-colors flex items-center gap-1"
-          >↻ 반복</button>
+            className="w-full text-left text-[11px] px-2 py-1.5 rounded hover:bg-muted transition-colors flex items-center gap-2"
+          ><span className="w-3 text-center flex-shrink-0">↻</span> 반복</button>
           <button
             onClick={() => {
               const picked = topLevelBlocks.filter(b => selectedIds.has(b.id));
               if (picked.length > 0) setBlockClipboard(picked);
               setCtxMenu(null);
             }}
-            className="w-full text-left px-1 py-0.5 rounded hover:bg-muted transition-colors flex items-center gap-1"
-          ><Copy size={8} /> 복사</button>
+            className="w-full text-left text-[11px] px-2 py-1.5 rounded hover:bg-muted transition-colors flex items-center gap-2"
+          ><Copy size={12} className="flex-shrink-0" /> 복사</button>
           <button
             onClick={() => {
               onPasteBlocks(blockClipboard, toDateStr(viewDate));
               setCtxMenu(null);
             }}
             disabled={blockClipboard.length === 0}
-            className="w-full text-left px-1 py-0.5 rounded hover:bg-muted transition-colors flex items-center gap-1 disabled:opacity-40 disabled:hover:bg-transparent"
-          ><Plus size={8} /> 붙임</button>
-          <div className="h-px bg-border my-0.5" />
+            className="w-full text-left text-[11px] px-2 py-1.5 rounded hover:bg-muted transition-colors flex items-center gap-2 disabled:opacity-40 disabled:hover:bg-transparent"
+          ><Plus size={12} className="flex-shrink-0" /> 붙여넣기</button>
+          <div className="h-px bg-border/60 my-0.5" />
           <button
             onClick={() => {
               const ids = Array.from(selectedIds);
@@ -4805,8 +4808,8 @@ function CalendarSection({
               setSelectedIds(new Set());
               setCtxMenu(null);
             }}
-            className="w-full text-left px-1 py-0.5 rounded hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-1"
-          ><Trash2 size={8} /> 삭제</button>
+            className="w-full text-left text-[11px] px-2 py-1.5 rounded hover:bg-destructive/10 text-destructive transition-colors flex items-center gap-2"
+          ><Trash2 size={12} className="flex-shrink-0" /> 삭제</button>
         </div>
       )}
 
