@@ -30,6 +30,7 @@ const TABLES = [
   "kanban_checklist_items",
   "todos",
   "todo_checklist_items",
+  "todo_category_orders",
   "timer_sessions",
   "notes",
 ] as const;
@@ -51,7 +52,7 @@ const REQUIRED_TABLES: readonly TableName[] = [
 // ⚠ db.ts 에 컬럼을 추가하면 여기에도 추가할 것 — 빠뜨리면 복원 시 그 컬럼 값이
 //   조용히 버려져 데이터가 손상된다(예전에 kind/category 등이 실제로 누락돼 있었음).
 const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
-  block_templates: ["id", "title", "color", "tags", "kind", "created_at"],
+  block_templates: ["id", "title", "color", "tags", "kind", "sort_order", "created_at"],
   note_folders:    ["id", "name", "color", "sort_order", "created_at"],
   blocks:          ["id", "template_id", "parent_block_id", "title", "color", "date", "start_time", "end_time", "completed", "completed_at", "memo", "category", "next_block_id", "repeat_group_id", "repeat_rule", "count_in_completion", "created_at"],
   checklist_items: ["id", "block_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
@@ -60,6 +61,7 @@ const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
   kanban_checklist_items: ["id", "card_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
   todos:           ["id", "title", "date", "end_date", "color", "completed", "completed_at", "memo", "category", "count_in_completion", "sort_order", "repeat_group_id", "repeat_rule", "created_at"],
   todo_checklist_items: ["id", "todo_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
+  todo_category_orders: ["date", "category", "sort_order"],
   timer_sessions:  ["id", "date", "started_at", "ended_at", "end_reason", "last_alive_at", "created_at"],
   notes:           ["id", "title", "content", "category", "folder_id", "sort_order", "is_draft", "created_at", "updated_at"],
 };

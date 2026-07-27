@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS block_templates (
   -- 'time' = 시간대별 블록 템플릿(기본, 드래그해서 시간표에 배치),
   -- 'todo' = 시간대 없이 할 일 목록에 놓을 일정 템플릿.
   kind TEXT NOT NULL DEFAULT 'time',
+  -- 사용자 지정 표시 순서. kind='todo'(=카테고리) 에서는 할 일 목록의 그룹 순서로도 쓰임 —
+  -- 할 일 순서를 바꾸면서 "이후 날짜 모두" 를 고르면 이 값이 갱신된다.
+  sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -166,6 +169,17 @@ CREATE TABLE IF NOT EXISTS todos (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 특정 날짜에만 적용되는 카테고리 표시 순서(전역 순서 override).
+-- 할 일 목록에서 카테고리 순서를 바꿀 때 "이 날짜만" 을 고르면 그 날짜의 카테고리 순서를
+-- 통째로 여기에 기록하고, "이후 날짜 모두" 를 고르면 block_templates.sort_order(전역 기본
+-- 순서)를 갱신하면서 그 날짜 이후의 override 행들을 지운다. 행이 없는 날짜는 전역 순서를 따름.
+CREATE TABLE IF NOT EXISTS todo_category_orders (
+  date TEXT NOT NULL,
+  category TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (date, category)
+);
+
 CREATE INDEX IF NOT EXISTS todos_date_idx ON todos (date);
 
 CREATE INDEX IF NOT EXISTS blocks_date_idx ON blocks (date);
@@ -196,9 +210,26 @@ const NOTE_UPGRADES = [
 ];
 
 // 기존 설치에서 block_templates 에 kind 컬럼을 사후 추가. 이미 있으면 조용히 실패.
+// sort_order: 카테고리(kind='todo') 의 사용자 지정 순서. 사후 추가 시 전부 0 이 되는데,
+// 그러면 정렬이 created_at 순으로 바뀌어 기존 화면 순서(카테고리 이름순)와 달라진다 —
+// 아래 BLOCK_TEMPLATE_BACKFILL 에서 이름순으로 한 번 채워 기존 순서를 그대로 이어받는다.
 const BLOCK_TEMPLATE_UPGRADES = [
   "ALTER TABLE block_templates ADD COLUMN kind TEXT NOT NULL DEFAULT 'time'",
+  "ALTER TABLE block_templates ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
 ];
+
+// sort_order 가 전부 0(= 컬럼이 방금 추가됐거나 아직 아무도 순서를 바꾸지 않음)일 때만
+// 이름 오름차순으로 0..n-1 을 채움. 한 번이라도 순서를 바꾸면 0 이 아닌 값이 생겨 다시 돌지 않음.
+// 한글 음절은 코드포인트 순서가 가나다순과 일치하므로 기존 localeCompare("ko") 정렬과 사실상 동일.
+const BLOCK_TEMPLATE_BACKFILL = `
+  UPDATE block_templates SET sort_order = (
+    SELECT COUNT(*) FROM block_templates b2
+    WHERE b2.kind = block_templates.kind
+      AND (b2.title < block_templates.title
+           OR (b2.title = block_templates.title AND b2.id < block_templates.id))
+  )
+  WHERE NOT EXISTS (SELECT 1 FROM block_templates b3 WHERE b3.sort_order <> 0)
+`;
 
 // blocks 사후 컬럼 추가.
 // count_in_completion: 오늘 달성률 계산에 이 블록을 포함할지 토글. 기본 1(포함).
@@ -281,6 +312,8 @@ export function getDb(): Promise<Database> {
       for (const stmt of BLOCK_TEMPLATE_UPGRADES) {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
+      // 새로 만들어진 DB 면 테이블이 아직 없어서 조용히 실패 — 어차피 채울 행도 없음.
+      try { await db.execute(BLOCK_TEMPLATE_BACKFILL); } catch { /* fresh install: block_templates 아직 없음 */ }
       for (const stmt of BLOCK_UPGRADES) {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }

@@ -62,13 +62,15 @@ export function rowToBlock(row: any) {
 export type TemplateKind = "time" | "todo";
 export async function fetchTemplates() {
   const db = await getDb();
-  const rows = await db.select<any[]>("SELECT * FROM block_templates ORDER BY created_at");
+  // sort_order = 사용자 지정 순서(카테고리 그룹 순서). 값이 같으면 만든 순서로 안정 정렬.
+  const rows = await db.select<any[]>("SELECT * FROM block_templates ORDER BY sort_order, created_at");
   return rows.map(t => ({
     id: t.id,
     title: t.title,
     color: t.color,
     tags: jsonOrEmpty(t.tags),
     kind: (t.kind === "todo" ? "todo" : "time") as TemplateKind,
+    sortOrder: t.sort_order ?? 0,
   }));
 }
 
@@ -76,11 +78,26 @@ export async function createTemplate(t: { title: string; color: string; tags: st
   const db = await getDb();
   const id = uuid();
   const kind: TemplateKind = t.kind === "todo" ? "todo" : "time";
-  await db.execute(
-    "INSERT INTO block_templates (id, title, color, tags, kind) VALUES (?, ?, ?, ?, ?)",
-    [id, t.title, t.color, JSON.stringify(t.tags), kind]
+  // 같은 kind 의 맨 뒤로 — 새 카테고리가 기존 순서 사이에 끼어들지 않게.
+  const [{ n }] = await db.select<any[]>(
+    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM block_templates WHERE kind = ?",
+    [kind]
   );
-  return { id, title: t.title, color: t.color, tags: t.tags, kind };
+  const sortOrder: number = n ?? 0;
+  await db.execute(
+    "INSERT INTO block_templates (id, title, color, tags, kind, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+    [id, t.title, t.color, JSON.stringify(t.tags), kind, sortOrder]
+  );
+  return { id, title: t.title, color: t.color, tags: t.tags, kind, sortOrder };
+}
+
+// 카테고리(템플릿) 표시 순서를 한 번에 저장 — 드래그 재정렬 결과 커밋용.
+export async function bulkUpdateTemplateOrder(items: { id: string; sortOrder: number }[]): Promise<void> {
+  if (items.length === 0) return;
+  const db = await getDb();
+  for (const it of items) {
+    await db.execute("UPDATE block_templates SET sort_order = ? WHERE id = ?", [it.sortOrder, it.id]);
+  }
 }
 
 // 블록 템플릿 삭제 — 이 템플릿으로 만들어진 기존 블록은 그대로 남고 template_id만
@@ -693,6 +710,41 @@ export async function bulkUpdateTodoOrder(items: { id: string; date: string; sor
       [it.date, it.sortOrder, it.id]
     );
   }
+}
+
+// ── todo_category_orders (날짜별 카테고리 순서 override) ──────────
+// 할 일 목록의 카테고리 그룹 순서는 기본적으로 block_templates.sort_order(전역)를 따르고,
+// 사용자가 "이 날짜만" 을 고른 날짜에 한해 이 테이블의 순서가 우선한다.
+
+// 전체를 { 날짜: [카테고리, ...] } 형태로 한 번에 로드 — 날짜당 카테고리 몇 개 수준의
+// 작은 테이블이라 앱 시작 시 통째로 캐시해두고 쓴다.
+export async function fetchTodoCategoryOrders(): Promise<Record<string, string[]>> {
+  const db = await getDb();
+  const rows = await db.select<any[]>("SELECT * FROM todo_category_orders ORDER BY date, sort_order");
+  const out: Record<string, string[]> = {};
+  for (const r of rows) {
+    (out[r.date] ??= []).push(r.category);
+  }
+  return out;
+}
+
+// 한 날짜의 카테고리 순서를 통째로 교체(부분 갱신하지 않음 — 순서는 목록 전체가 하나의 값).
+export async function saveTodoCategoryOrder(date: string, categories: string[]): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM todo_category_orders WHERE date = ?", [date]);
+  for (let i = 0; i < categories.length; i++) {
+    await db.execute(
+      "INSERT INTO todo_category_orders (date, category, sort_order) VALUES (?, ?, ?)",
+      [date, categories[i], i]
+    );
+  }
+}
+
+// "이후 날짜 모두" 로 전역 순서를 바꿀 때, 그 날짜 이후에 걸려 있던 날짜별 override 를 제거.
+// 그대로 두면 전역 순서를 바꿔도 override 가 이긴 날짜들만 옛 순서로 남아 "일괄 적용" 이 안 됨.
+export async function clearTodoCategoryOrdersFrom(date: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM todo_category_orders WHERE date >= ?", [date]);
 }
 
 export async function toggleTodoRow(id: string, completed: boolean): Promise<void> {
