@@ -1780,15 +1780,71 @@ export default function App() {
     applyGlobalCategoryOrder(p.order, p.date);
   };
 
-  // 두 todo 의 자리를 교체 — 같은 컬럼이면 sort_order 만, 다른 컬럼이면 date + sort_order 둘 다.
-  const swapTodos = (aId: string, bId: string) => {
-    const a = todos.find(t => t.id === aId);
-    const b = todos.find(t => t.id === bId);
-    if (!a || !b || a.id === b.id) return;
-    reorderTodos([
-      { id: a.id, date: b.date, sortOrder: b.sortOrder },
-      { id: b.id, date: a.date, sortOrder: a.sortOrder },
-    ]);
+  // ── 할 일 항목 순서 ──────────────────────────────────────────
+  // 멀티데이(endDate) todo 는 걸치는 모든 날짜에 나타남 — 날짜 섹션 계산에 공통으로 씀.
+  const coversDateStr = (t: Todo, ds: string) => t.date === ds || (!!t.endDate && ds >= t.date && ds <= t.endDate);
+
+  // 순서를 바꾼 항목이 반복 할 일이면 "이후 날짜에도 같은 순서로?" 를 묻는 모달 상태.
+  // groups = 기준 날짜에서 그 카테고리에 있는 반복 그룹들의 순서(이후 날짜에 이 순서를 투영).
+  const [todoOrderPrompt, setTodoOrderPrompt] = useState<
+    { date: string; title: string; category: string; groups: string[] } | null
+  >(null);
+
+  // 드래그로 할 일을 다른 항목 앞/뒤에 끼워넣기 — 자리 맞바꾸기가 아니라 삽입.
+  // 대상이 다른 날짜면 그 날짜로 이동까지 겸한다(카테고리별 보기는 한 섹션에 여러 날짜가 섞임).
+  // 그 날짜의 표시 순서대로 sort_order 를 0..n-1 로 다시 매겨 순서를 정규화.
+  const reorderTodoBeside = (movedId: string, targetId: string, place: "before" | "after", dateHint?: string) => {
+    const moved = todos.find(t => t.id === movedId);
+    const target = todos.find(t => t.id === targetId);
+    if (!moved || !target || moved.id === target.id) return;
+    // 날짜 섹션 안에서의 드롭이면 그 섹션 날짜가 기준(멀티데이 항목 위에 놓아도 그 날짜 유지).
+    // 카테고리별 보기처럼 섹션에 날짜 개념이 없으면 대상 항목의 날짜로 옮긴다.
+    const date = dateHint ?? target.date;
+    const rest = sortTodosByCategory(
+      todos.filter(t => coversDateStr(t, date) && t.id !== movedId),
+      categoryRankFor(date),
+    );
+    const at = rest.findIndex(t => t.id === targetId);
+    if (at < 0) return;
+    const next = [...rest];
+    next.splice(place === "before" ? at : at + 1, 0, { ...moved, date });
+    reorderTodos(next.map((t, i) => ({ id: t.id, date: t.id === movedId ? date : t.date, sortOrder: i })));
+
+    // 반복 할 일이고 뒤따르는 인스턴스가 있으면 적용 범위를 물어본다. 순서 변경 자체는 이미
+    // 반영됐고, 모달은 "이후 날짜에도 투영할지" 만 결정 — 취소하면 이 날짜만 바뀐 상태로 유지.
+    const category = (moved.category ?? "").trim();
+    if (!hasFollowingInGroup(todos, { ...moved, date })) return;
+    const groups = next
+      .filter(t => (t.category ?? "").trim() === category && t.repeatGroupId)
+      .map(t => t.repeatGroupId!);
+    if (groups.length < 2) return;
+    setTodoOrderPrompt({ date, title: moved.title, category, groups });
+  };
+
+  // "이후 날짜 모두" — 기준 날짜의 반복 그룹 순서를 이후 날짜들에 투영.
+  // 날짜마다 항목 구성이 다르므로 "그 날짜에서 반복 인스턴스들이 이미 차지한 자리" 는 그대로 두고,
+  // 그 자리들에 놓일 인스턴스만 기준 순서대로 다시 배치한다(반복이 아닌 항목은 건드리지 않음).
+  const applyTodoOrderToFollowing = (fromDate: string, category: string, groups: string[]) => {
+    const groupRank = new Map(groups.map((g, i) => [g, i]));
+    const targets: { id: string; date: string; sortOrder: number }[] = [];
+    const laterDates = Array.from(new Set(todos.filter(t => t.date > fromDate).map(t => t.date)));
+    for (const d of laterDates) {
+      const list = sortTodosByCategory(todos.filter(t => coversDateStr(t, d)), categoryRankFor(d));
+      const slots: number[] = [];
+      const movable: Todo[] = [];
+      list.forEach((t, i) => {
+        if ((t.category ?? "").trim() === category && t.repeatGroupId && groupRank.has(t.repeatGroupId)) {
+          slots.push(i);
+          movable.push(t);
+        }
+      });
+      if (movable.length < 2) continue;
+      movable.sort((a, b) => groupRank.get(a.repeatGroupId!)! - groupRank.get(b.repeatGroupId!)!);
+      const next = [...list];
+      slots.forEach((s, i) => { next[s] = movable[i]; });
+      next.forEach((t, i) => targets.push({ id: t.id, date: t.date, sortOrder: i }));
+    }
+    if (targets.length > 0) reorderTodos(targets);
   };
 
   const todayBlocks = blocks.filter(b => b.date === TODAY_STR && !b.parentBlockId);
@@ -1935,7 +1991,7 @@ export default function App() {
               onDeleteTodo={requestDeleteTodo}
               onAddTodo={addTodo}
               onReorderTodos={reorderTodos}
-              onSwapTodo={swapTodos}
+              onReorderTodo={reorderTodoBeside}
               categoryRank={categoryRankFor(TODAY_STR)}
               onReorderCategory={requestCategoryReorder}
               onSelect={openBlockDetail}
@@ -1981,7 +2037,7 @@ export default function App() {
               onDeleteTodo={requestDeleteTodo}
               onUpdateTodoTitle={(id, title) => requestTodoEdit(id, { title })}
               onMoveTodo={moveTodoToDate}
-              onSwapTodo={swapTodos}
+              onReorderTodo={reorderTodoBeside}
               onToggleTodo={toggleTodo}
               onUpdateTodoCategory={(id, category) => requestTodoEdit(id, { category })}
               categoryRankFor={categoryRankFor}
@@ -2123,6 +2179,21 @@ export default function App() {
             onClose={() => setCategoryOrderPrompt(null)}
             onApplyDay={() => commitCategoryReorder("day")}
             onApplyFollowing={() => commitCategoryReorder("following")}
+          />
+        )}
+
+        {/* 반복 할 일의 순서를 바꿨을 때 — 이후 인스턴스에도 같은 순서로 맞출지 확인.
+             순서 변경 자체는 이미 반영된 상태라, 닫으면 "이 날짜만" 과 같은 결과. */}
+        {todoOrderPrompt && (
+          <TodoOrderScopeModal
+            date={todoOrderPrompt.date}
+            title={todoOrderPrompt.title}
+            onClose={() => setTodoOrderPrompt(null)}
+            onApplyFollowing={() => {
+              const p = todoOrderPrompt;
+              setTodoOrderPrompt(null);
+              applyTodoOrderToFollowing(p.date, p.category, p.groups);
+            }}
           />
         )}
 
@@ -2522,7 +2593,7 @@ function CircleProgress({ value, size, strokeWidth = 5 }: { value: number; size:
 
 // ── Today Section ──────────────────────────────────────────────────
 function TodaySection({
-  blocks, deadlines, todos, templates, todoChecklistItems, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onSwapTodo, categoryRank, onReorderCategory, onSelect, onSelectTodo, onSelectDeadline, onGoToCalendar,
+  blocks, deadlines, todos, templates, todoChecklistItems, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onReorderTodo, categoryRank, onReorderCategory, onSelect, onSelectTodo, onSelectDeadline, onGoToCalendar,
 }: {
   blocks: Block[];
   deadlines: Deadline[];
@@ -2536,7 +2607,8 @@ function TodaySection({
   onDeleteTodo: (id: string) => void;
   onAddTodo: (t: { title: string; date: string; endDate?: string | null }) => void;
   onReorderTodos?: (targets: { id: string; date: string; sortOrder: number }[]) => void;
-  onSwapTodo?: (aId: string, bId: string) => void;
+  // 항목을 다른 항목 앞/뒤로 끼워넣기. undefined 면 드래그 비활성.
+  onReorderTodo?: (movedId: string, targetId: string, place: "before" | "after", date?: string) => void;
   // 오늘 날짜 기준 카테고리 표시 순서(전역 순서 + 오늘 날짜 override 반영).
   categoryRank: CategoryRank;
   // 다른 카테고리 그룹으로 끌어다 놓았을 때 — 카테고리 순서 변경 범위를 묻는다.
@@ -2563,7 +2635,8 @@ function TodaySection({
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const [todoDraft, setTodoDraft] = useState("");
   const [dragTodoId, setDragTodoId] = useState<string | null>(null);
-  const [swapTargetId, setSwapTargetId] = useState<string | null>(null);
+  // 드래그 중 "어느 카드의 앞/뒤에 끼워넣을지" — 카드 경계에 표시선을 그리는 데도 씀.
+  const [dropTarget, setDropTarget] = useState<{ id: string; place: "before" | "after" } | null>(null);
   // 카테고리 순서(사용자 지정) → 같은 카테고리 안에서는 sort_order 순.
   const todoGroups = groupTodosByCategory(todos, categoryRank);
 
@@ -2663,49 +2736,57 @@ function TodaySection({
                   const clDone = clItems.filter(c => c.completed).length;
                   return (
                   <div key={t.id}
-                    draggable={!!onSwapTodo}
+                    draggable={!!onReorderTodo}
                     onDragStart={e => {
-                      if (!onSwapTodo) return;
+                      if (!onReorderTodo) return;
                       e.dataTransfer.setData("todoId", t.id);
                       e.dataTransfer.effectAllowed = "move";
                       setDragTodoId(t.id);
                     }}
-                    onDragEnd={() => { setDragTodoId(null); setSwapTargetId(null); }}
+                    onDragEnd={() => { setDragTodoId(null); setDropTarget(null); }}
                     onDragOver={e => {
-                      if (!onSwapTodo || !dragTodoId || dragTodoId === t.id) return;
+                      if (!onReorderTodo || !dragTodoId || dragTodoId === t.id) return;
                       e.preventDefault();
                       e.dataTransfer.dropEffect = "move";
-                      setSwapTargetId(t.id);
+                      // 카드 위쪽 절반이면 앞에, 아래쪽 절반이면 뒤에 끼워넣기.
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setDropTarget({ id: t.id, place: e.clientY < rect.top + rect.height / 2 ? "before" : "after" });
                     }}
-                    onDragLeave={() => { setSwapTargetId(prev => prev === t.id ? null : prev); }}
+                    onDragLeave={() => { setDropTarget(prev => prev?.id === t.id ? null : prev); }}
                     onDrop={e => {
-                      if (!onSwapTodo) return;
+                      if (!onReorderTodo) return;
                       const otherId = e.dataTransfer.getData("todoId");
                       if (!otherId || otherId === t.id) return;
                       e.preventDefault();
-                      // 다른 카테고리 그룹으로 끌어다 놓은 건 항목 교체가 아니라 그룹 순서 변경 —
+                      const place = dropTarget?.id === t.id ? dropTarget.place : "before";
+                      setDragTodoId(null); setDropTarget(null);
+                      // 다른 카테고리 그룹으로 끌어다 놓은 건 항목 순서가 아니라 그룹 순서 변경 —
                       // 캘린더 할 일 목록과 동일하게 적용 범위를 묻는다(오늘 날짜 기준).
                       const src = todos.find(x => x.id === otherId);
                       const srcCat = (src?.category ?? "").trim();
                       const dstCat = (t.category ?? "").trim();
                       if (onReorderCategory && src && srcCat && dstCat && srcCat !== dstCat) {
-                        setDragTodoId(null); setSwapTargetId(null);
                         onReorderCategory(TODAY_STR, srcCat, dstCat);
                         return;
                       }
-                      onSwapTodo(otherId, t.id);
-                      setDragTodoId(null); setSwapTargetId(null);
+                      onReorderTodo(otherId, t.id, place, TODAY_STR);
                     }}
                     onClick={() => onSelectTodo?.(t)}
-                    className={`group/todo flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
-                      onSelectTodo ? "cursor-pointer" : onSwapTodo ? "cursor-grab active:cursor-grabbing" : ""
+                    className={`group/todo relative flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
+                      onSelectTodo ? "cursor-pointer" : onReorderTodo ? "cursor-grab active:cursor-grabbing" : ""
                     } ${
                       t.completed ? "bg-muted/40 border-transparent opacity-60"
-                        : swapTargetId === t.id ? "bg-primary/10 border-primary ring-1 ring-primary/40"
                         : dragTodoId === t.id ? "bg-card border-primary/40 opacity-50"
                         : "bg-card border-border hover:border-primary/40"
                     }`}
                   >
+                    {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
+                    {dropTarget?.id === t.id && (
+                      <span
+                        aria-hidden
+                        className={`absolute left-2 right-2 h-0.5 rounded-full bg-primary ${dropTarget.place === "before" ? "-top-1" : "-bottom-1"}`}
+                      />
+                    )}
                     <button onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }} className="flex-shrink-0 mt-0.5">
                       {t.completed
                         ? <CheckCircle2 size={16} style={{ color }} />
@@ -2831,7 +2912,7 @@ function CalendarSection({
   onAddTemplate, onDeleteBlockTemplate, onUpdateBlockTemplate,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat, pushUndo,
-  todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onSwapTodo, onToggleTodo, onUpdateTodoCategory,
+  todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onReorderTodo, onToggleTodo, onUpdateTodoCategory,
   categoryRankFor, globalCategoryOrder, onReorderCategory, onReorderCategoryGlobal,
 }: {
   blocks: Block[];
@@ -2869,7 +2950,7 @@ function CalendarSection({
   onDeleteTodo: (id: string) => void;
   onUpdateTodoTitle: (id: string, title: string) => void;
   onMoveTodo: (id: string, newDate: string) => void;
-  onSwapTodo: (aId: string, bId: string) => void;
+  onReorderTodo: (movedId: string, targetId: string, place: "before" | "after", date?: string) => void;
   onToggleTodo: (id: string) => void;
   onUpdateTodoCategory: (id: string, category: string) => void;
   // 날짜별 카테고리 표시 순서 — 그 날짜 전용 순서가 있으면 그것, 없으면 전역 기본 순서.
@@ -4407,7 +4488,7 @@ function CalendarSection({
                   onGoPrev={goPrev}
                   onGoNext={goNext}
                   onMoveTodo={(id, date) => onMoveTodo(id, date)}
-                  onSwapTodo={onSwapTodo}
+                  onReorderTodo={onReorderTodo}
                   categoryRankFor={categoryRankFor}
                   globalCategoryOrder={globalCategoryOrder}
                   onReorderCategory={onReorderCategory}
@@ -4491,7 +4572,7 @@ function TodoPanel({
   todos, templates, todoChecklistItems, viewDays, paletteColors, groupMode, onChangeGroupMode,
   onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
   deadlines, onToggleDeadline, onSelectDeadline,
-  showDayHeader, onGoPrev, onGoNext, onMoveTodo, onSwapTodo,
+  showDayHeader, onGoPrev, onGoNext, onMoveTodo, onReorderTodo,
   categoryRankFor, globalCategoryOrder, onReorderCategory, onReorderCategoryGlobal,
 }: {
   todos: Todo[];
@@ -4522,8 +4603,9 @@ function TodoPanel({
   onGoNext?: () => void;
   // 드래그로 todo 를 다른 날짜 섹션으로 옮기기 위한 콜백. undefined 면 드래그 비활성.
   onMoveTodo?: (id: string, date: string) => void;
-  // 두 todo 가 서로 자리를 교체할 때 호출. 위에 겹쳐 드랍하면 발화.
-  onSwapTodo?: (aId: string, bId: string) => void;
+  // 항목을 다른 항목 앞/뒤로 끼워넣을 때 호출. date 를 주면 그 날짜 기준, 없으면 대상 항목의
+  // 날짜로 이동까지 겸함(카테고리별 보기처럼 섹션에 날짜 개념이 없는 경우).
+  onReorderTodo?: (movedId: string, targetId: string, place: "before" | "after", date?: string) => void;
   // 카테고리 표시 순서 — 날짜별 보기는 날짜마다 다를 수 있어 함수로 받음.
   categoryRankFor: (date: string) => CategoryRank;
   // 전역 기본 순서 — 카테고리별 보기의 섹션 순서/재정렬 기준(특정 날짜 개념이 없는 화면).
@@ -4534,7 +4616,8 @@ function TodoPanel({
   onReorderCategoryGlobal: (order: string[]) => void;
 }) {
   const [dragTodoId, setDragTodoId] = useState<string | null>(null);
-  const [swapTargetId, setSwapTargetId] = useState<string | null>(null);
+  // 드래그 중 "어느 카드의 앞/뒤에 끼워넣을지" — 카드 경계에 표시선을 그리는 데도 씀.
+  const [dropTarget, setDropTarget] = useState<{ id: string; place: "before" | "after" } | null>(null);
   // 드래그 중 마우스가 hover 중인 섹션 키(날짜별=dateStr, 카테고리별="cat:이름") — 드랍 프리뷰 강조용.
   const [tplHoverKey, setTplHoverKey] = useState<string | null>(null);
   // 사이드바 카테고리를 끌고 있는 중인지. 날짜별 그룹은 "할 일이 있는 날"만 섹션을 그리기 때문에
@@ -4737,27 +4820,30 @@ function TodoPanel({
           e.dataTransfer.effectAllowed = "move";
           setDragTodoId(t.id);
         }}
-        onDragEnd={() => { setDragTodoId(null); setSwapTargetId(null); }}
+        onDragEnd={() => { setDragTodoId(null); setDropTarget(null); }}
         onDragOver={e => {
-          if (!onSwapTodo) return;
+          if (!onReorderTodo) return;
           if (!dragTodoId || dragTodoId === t.id) return;
-          // 다른 todo 위 hover — 이 todo 위로 스왑 준비. 섹션의 drop 이 뜨지 않도록 stop.
+          // 다른 todo 위 hover — 이 카드의 앞/뒤 어디에 끼워넣을지 결정(위 절반=앞).
+          // 섹션의 drop(날짜 이동) 이 뜨지 않도록 stop.
           e.preventDefault();
           e.stopPropagation();
           e.dataTransfer.dropEffect = "move";
-          setSwapTargetId(t.id);
+          const rect = e.currentTarget.getBoundingClientRect();
+          setDropTarget({ id: t.id, place: e.clientY < rect.top + rect.height / 2 ? "before" : "after" });
         }}
-        onDragLeave={() => { setSwapTargetId(prev => prev === t.id ? null : prev); }}
+        onDragLeave={() => { setDropTarget(prev => prev?.id === t.id ? null : prev); }}
         onDrop={e => {
-          if (!onSwapTodo) return;
+          if (!onReorderTodo) return;
           const otherId = e.dataTransfer.getData("todoId");
           if (!otherId || otherId === t.id) return;
           e.preventDefault();
           e.stopPropagation();
-          setDragTodoId(null); setSwapTargetId(null);
-          // 날짜별 보기에서 "같은 날짜 · 다른 카테고리" 로 옮긴 건 개별 항목 교체가 아니라
+          const place = dropTarget?.id === t.id ? dropTarget.place : "before";
+          setDragTodoId(null); setDropTarget(null);
+          // 날짜별 보기에서 "같은 날짜 · 다른 카테고리" 로 옮긴 건 개별 항목 순서가 아니라
           // 카테고리 구간 자체를 옮기려는 동작 — 적용 범위(이 날짜만/이후 전체)를 묻는다.
-          // (한쪽이 미분류면 순서 대상이 아니므로 기존 교체 동작 유지 — 미분류는 항상 마지막.)
+          // (한쪽이 미분류면 순서 대상이 아니므로 항목 끼워넣기로 처리 — 미분류는 항상 마지막.)
           const src = todos.find(x => x.id === otherId);
           const srcCat = (src?.category ?? "").trim();
           const dstCat = (t.category ?? "").trim();
@@ -4765,7 +4851,7 @@ function TodoPanel({
             onReorderCategory(opts.sectionDate, srcCat, dstCat);
             return;
           }
-          onSwapTodo(otherId, t.id);
+          onReorderTodo(otherId, t.id, place, opts.sectionDate);
         }}
         onClick={() => {
           if (onSelectTodo) onSelectTodo(t);
@@ -4776,12 +4862,18 @@ function TodoPanel({
           onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
         } ${
           t.completed ? "opacity-60"
-            : swapTargetId === t.id ? "ring-2 ring-primary ring-offset-1"
             : dragTodoId === t.id ? "opacity-50"
             : "hover:shadow-sm"
         }`}
         title="클릭: 상세 열기 · 더블클릭: 제목 편집"
       >
+        {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
+        {dropTarget?.id === t.id && (
+          <span
+            aria-hidden
+            className={`absolute left-2 right-2 h-0.5 rounded-full bg-primary ${dropTarget.place === "before" ? "-top-1" : "-bottom-1"}`}
+          />
+        )}
         {t.countInCompletion !== false ? (
           <button
             onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }}
@@ -5300,6 +5392,44 @@ function RepeatDeleteModal({
         </div>
         <div className="flex items-center gap-2 mt-4">
           <button onClick={onClose} className="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors">취소</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 반복 할 일의 순서를 바꿨을 때 적용 범위를 고르는 모달. 카테고리 순서 모달과 달리 순서 변경은
+// 이미 반영된 뒤라, 여기서는 "이후 반복 인스턴스에도 같은 순서로 맞출지" 만 결정한다.
+function TodoOrderScopeModal({
+  date, title, onClose, onApplyFollowing,
+}: {
+  date: string;
+  title: string;
+  onClose: () => void;
+  onApplyFollowing: () => void;
+}) {
+  const d = parseLocalDate(date);
+  const dateLabel = `${d.getMonth() + 1}월 ${d.getDate()}일 (${DAYS_KO[d.getDay()]})`;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="w-80 bg-card border border-border rounded-xl p-4 shadow-lg" onClick={e => e.stopPropagation()}>
+        <div className="text-sm font-semibold mb-1">반복 할 일 순서 변경</div>
+        <div className="text-[11px] text-muted-foreground mb-4 truncate">"{title || "제목 없음"}" 의 자리를 옮겼습니다</div>
+        <div className="space-y-2">
+          <button
+            onClick={onClose}
+            className="w-full text-left px-3 py-2.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors"
+          >
+            <div className="font-medium">이 날짜만 적용</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">{dateLabel} 의 순서만 바뀌고 다른 날짜는 그대로</div>
+          </button>
+          <button
+            onClick={onApplyFollowing}
+            className="w-full text-left px-3 py-2.5 rounded-lg border border-primary/40 text-xs hover:bg-primary/10 transition-colors"
+          >
+            <div className="font-medium">이후 날짜 모두 적용</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">이 날짜 이후의 같은 반복 할 일들도 같은 순서로 정렬</div>
+          </button>
         </div>
       </div>
     </div>
