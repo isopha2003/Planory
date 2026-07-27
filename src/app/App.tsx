@@ -246,6 +246,13 @@ const groupTodosByCategory = <T extends { category?: string; sortOrder: number }
   return groups;
 };
 
+// 사이드바 카테고리(템플릿) 드래그인지 판별. dragover 단계에선 dataTransfer 의 "값" 을 읽을 수
+// 없고 "키 목록(types)" 만 볼 수 있으며, Chromium 은 이 키를 전부 소문자로 정규화하므로 소문자 비교.
+const isCategoryDrag = (e: React.DragEvent) => {
+  const types = e.dataTransfer.types;
+  return types.includes("todotemplateid") || types.includes("todocategory");
+};
+
 // 미분류(카테고리 없음) todo 의 색상 — 회색 톤. 카테고리를 지정하지 않은 상태에서만 사용.
 const UNCATEGORIZED_TODO_COLOR = "#94A3B8";
 
@@ -4383,10 +4390,14 @@ function TodoPanel({
   const [swapTargetId, setSwapTargetId] = useState<string | null>(null);
   // 드래그 중 마우스가 hover 중인 섹션 키(날짜별=dateStr, 카테고리별="cat:이름") — 드랍 프리뷰 강조용.
   const [tplHoverKey, setTplHoverKey] = useState<string | null>(null);
+  // 사이드바 카테고리를 끌고 있는 중인지. 날짜별 그룹은 "할 일이 있는 날"만 섹션을 그리기 때문에
+  // 이 플래그가 없으면 빈 날짜엔 드랍할 자리 자체가 없음 → 드래그 중에는 모든 날짜를 펼침.
+  // ⚠ dragover 단계에선 dataTransfer 값을 읽을 수 없어(브라우저 보안) types 로만 판별.
+  const [catDragging, setCatDragging] = useState(false);
   // 사용자가 드래그를 섹션 밖에서 놓거나 Esc 로 취소한 경우 tplHoverKey 가 stuck 되지 않도록
   // 전역 dragend/drop 리스너로 안전망 클리어.
   useEffect(() => {
-    const clear = () => setTplHoverKey(null);
+    const clear = () => { setTplHoverKey(null); setCatDragging(false); };
     window.addEventListener("dragend", clear);
     window.addEventListener("drop", clear);
     return () => {
@@ -4474,6 +4485,9 @@ function TodoPanel({
   const viewDateStrs = viewDays.map(toDateStr);
   const firstDs = viewDateStrs[0];
   const lastDs = viewDateStrs[viewDateStrs.length - 1];
+  // 날짜를 지정할 수 없는 자리(카테고리별 보기)에서 새 할 일을 만들 때 쓰는 기본 날짜 —
+  // 보고 있는 기간 안이면 오늘, 아니면 기간 첫날.
+  const defaultAddDate = TODAY_STR >= firstDs && TODAY_STR <= lastDs ? TODAY_STR : firstDs;
   // 마감 — 할 일 단독 모드에서만 카드로 노출 (시간 그리드가 함께 보일 땐 그쪽 상단 마감 행이 유일한 소스).
   const rangeDeadlines = showDayHeader
     ? deadlines.filter(d => viewDateStrs.includes(d.dueDate)).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
@@ -4795,7 +4809,14 @@ function TodoPanel({
           )}
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div
+        className="flex-1 overflow-y-auto p-6"
+        // 패널 어디에 들어오든 "카테고리 드래그 중" 을 감지 — 섹션이 하나도 없는 빈 기간에도
+        // 리스트 영역 자체가 이벤트를 받으므로 드랍 자리를 펼칠 수 있음.
+        onDragOver={e => { if (isCategoryDrag(e)) setCatDragging(true); }}
+        onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCatDragging(false); }}
+        onDrop={() => setCatDragging(false)}
+      >
         <div className="max-w-lg w-full mx-auto">
           {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼 오른쪽 끝을 카드 컬럼 오른쪽 끝에 맞춤.
                ⚠ translate 로 옮기면 새 stacking context 가 생겨 아래 카드가 드롭다운을 가림 —
@@ -4829,8 +4850,10 @@ function TodoPanel({
           </div>
           <div className="space-y-6">
           {groupMode === "date" ? <>
-          {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출. */}
+          {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출.
+               단, 카테고리를 끌고 있는 동안에는 모든 날짜를 펼쳐 드랍 자리를 만든다. */}
           {viewDays.filter(d => {
+            if (catDragging) return true;
             const ds = toDateStr(d);
             return todos.some(t => coversDate(t, ds)) || rangeDeadlines.some(dl => dl.dueDate === ds);
           }).map((day) => {
@@ -4845,14 +4868,12 @@ function TodoPanel({
                 onMouseLeave={() => setHoverKey(prev => prev === dateStr ? null : prev)}
                 onDragOver={e => {
                   // 카테고리(todoTemplateId/todoCategory) 나 기존 todo(todoId) 를 이 섹션에 놓을 수 있게 허용.
-                  // ⚠ Chromium 의 dataTransfer.types 는 소문자로 정규화됨 → 반드시 소문자 비교.
-                  const types = e.dataTransfer.types;
-                  const isCat = types.includes("todotemplateid") || types.includes("todocategory");
-                  const isTodo = types.includes("todoid");
+                  const isCat = isCategoryDrag(e);
+                  const isTodo = e.dataTransfer.types.includes("todoid");
                   if (isCat || isTodo) {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = isTodo ? "move" : "copy";
-                    if (isCat) setTplHoverKey(dateStr);
+                    if (isCat) { setCatDragging(true); setTplHoverKey(dateStr); }
                   }
                 }}
                 onDragLeave={e => {
@@ -4861,7 +4882,7 @@ function TodoPanel({
                   }
                 }}
                 onDrop={e => {
-                  setTplHoverKey(null);
+                  setTplHoverKey(null); setCatDragging(false);
                   // 카테고리 드래그 → 빈 제목의 새 할 일 + 상세 패널 자동 오픈(제목 편집 상태).
                   // 색은 렌더링 시 카테고리에서 자동 조회되므로 여기서 전달하지 않음.
                   const category = e.dataTransfer.getData("todoCategory");
@@ -4895,12 +4916,17 @@ function TodoPanel({
                   {/* 마감 — 해당 날짜 섹션의 가장 상단에 카드로 노출. */}
                   {rangeDeadlines.filter(dl => dl.dueDate === dateStr).map(renderDeadlineCard)}
                   {dayTodos.map(t => renderTodoCard(t, { showCategory: true }))}
-                  {/* 카테고리 드래그 hover 시 드랍 위치 프리뷰 */}
-                  {tplHoverKey === dateStr && (
+                  {/* 카테고리 드래그 중 드랍 자리 — hover 중인 섹션은 강조, 나머지는 옅은 자리 표시.
+                       (항목이 있는 날은 카드들이 이미 드랍 면적을 만들어 주므로 자리 표시 생략) */}
+                  {tplHoverKey === dateStr ? (
                     <div className="flex items-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-primary/50 bg-primary/5 text-xs text-primary">
                       <Plus size={12} /> 여기에 새 할 일 추가
                     </div>
-                  )}
+                  ) : catDragging && dayTodos.length === 0 ? (
+                    <div className="flex items-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-border text-xs text-muted-foreground/60">
+                      <Plus size={12} /> 여기에 놓기
+                    </div>
+                  ) : null}
                   {/* "+ 새 할 일" — hover 고스트 클릭 → 카테고리 픽커(날짜는 이 섹션으로 고정). */}
                   {addPicker?.key === dateStr ? renderAddPicker()
                     : hoverKey === dateStr && tplHoverKey !== dateStr ? (
@@ -4917,7 +4943,7 @@ function TodoPanel({
               </div>
             );
           })}
-          {viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && rangeDeadlines.length === 0 && (
+          {!catDragging && viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && rangeDeadlines.length === 0 && (
             <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없습니다</p>
           )}
           {/* 빈 날짜 섹션이 없으므로 새 할 일 진입점은 하단 공통 버튼 — 날짜(기본 오늘)와
@@ -4954,6 +4980,14 @@ function TodoPanel({
                 onMouseEnter={() => setHoverKey(key)}
                 onMouseLeave={() => setHoverKey(prev => prev === key ? null : prev)}
                 onDragOver={e => {
+                  // 사이드바 카테고리 드래그 → 그 카테고리의 새 할 일 추가(날짜는 오늘/기간 첫날).
+                  if (isCategoryDrag(e)) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    setCatDragging(true);
+                    setTplHoverKey(key);
+                    return;
+                  }
                   // todo 드래그 → 이 카테고리 섹션에 드랍하면 카테고리 변경.
                   if (!onChangeCategory) return;
                   if (e.dataTransfer.types.includes("todoid")) {
@@ -4968,7 +5002,15 @@ function TodoPanel({
                   }
                 }}
                 onDrop={e => {
-                  setTplHoverKey(null);
+                  setTplHoverKey(null); setCatDragging(false);
+                  // 카테고리별 보기에선 섹션이 "날짜" 정보를 주지 못하므로, 드래그해 온 카테고리를
+                  // 그대로 쓰고 날짜만 기본값(오늘 — 기간 밖이면 기간 첫날)으로 채운다.
+                  const category = e.dataTransfer.getData("todoCategory");
+                  if (category) {
+                    e.preventDefault();
+                    onAdd({ title: "새 할 일", date: defaultAddDate, category }, { openInline: true });
+                    return;
+                  }
                   const todoId = e.dataTransfer.getData("todoId");
                   if (todoId && onChangeCategory) {
                     e.preventDefault();
@@ -4988,10 +5030,10 @@ function TodoPanel({
                   {sec.todos.length === 0 && hoverKey !== key && tplHoverKey !== key && (
                     <div className="text-[11px] text-muted-foreground/50 px-1">항목 없음</div>
                   )}
-                  {/* todo 드래그 hover 시 — 이 카테고리로 변경 프리뷰 */}
+                  {/* 드래그 hover 프리뷰 — todo 드래그면 카테고리 이동, 카테고리 드래그면 새 할 일 추가 */}
                   {tplHoverKey === key && (
                     <div className="flex items-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-primary/50 bg-primary/5 text-xs text-primary">
-                      <Plus size={12} /> 이 카테고리로 이동
+                      <Plus size={12} /> {catDragging ? `새 할 일 추가 (${fmtDateShort(defaultAddDate)})` : "이 카테고리로 이동"}
                     </div>
                   )}
                   {/* "+ 새 할 일" — 카테고리는 섹션 것으로 고정, 날짜(기본 오늘)만 폼에서 선택. */}
