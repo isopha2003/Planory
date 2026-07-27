@@ -8258,12 +8258,16 @@ function SettingsSection({
 // 펼치면 주기(매일/매주/매달/매년)/요일/종료 인라인 폼으로 규칙을 (재)설정한다. 블록·할 일 공용.
 // 반복 설정 폼. "적용" 은 상위의 draft 에만 반영되고 실제 인스턴스 생성은 패널 "저장" 에서
 // 일어남 — pending=true 면 아직 저장 전임을 요약줄에 표시.
-function RepeatSection({ originDate, repeat, hasGroup, pending, onSetRepeat }: {
+function RepeatSection({ originDate, repeat, hasGroup, pending, onSetRepeat, onFormChange }: {
   originDate: string;
   repeat?: BlockRepeat;
   hasGroup?: boolean;
   pending?: boolean;
   onSetRepeat: (r: BlockRepeat) => void;
+  // 폼 값이 유효하고 초기값과 달라지면 매번 호출. 부모가 "저장" 시 이 값을 fallback 으로 삼아
+  // 사용자가 "적용" 을 안 누르고 바로 "저장" 을 눌러도 그 폼 상태로 반복이 걸리게 함.
+  // 초기값으로 되돌아가거나 유효하지 않으면 undefined 로 알려서 fallback 을 해제.
+  onFormChange?: (r: BlockRepeat | undefined) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<"daily" | "weekly" | "monthly" | "yearly">(repeat?.type ?? "daily");
@@ -8284,6 +8288,33 @@ function RepeatSection({ originDate, repeat, hasGroup, pending, onSetRepeat }: {
         repeat.endType === "count" ? ` · ${repeat.endCount}회`
         : repeat.endType === "date" ? ` · ${repeat.endDate}까지` : ""}`
     : "반복 없음";
+  // 마운트 시점의 폼 값 — "사용자가 손댔는가" 를 판정하는 기준. 폼 값이 이 값과 같으면
+  // 사용자가 안 만졌거나 원래대로 되돌린 상태라 반복을 새로 걸지 않음.
+  const initialFormRef = useRef({
+    type: repeat?.type ?? "daily" as "daily" | "weekly" | "monthly" | "yearly",
+    days: repeat?.days ?? [] as number[],
+    endType: repeat?.endType ?? "none" as "none" | "count" | "date",
+    endCount: repeat?.endCount ?? 10,
+    endDate: repeat?.endDate ?? "",
+  });
+  // 폼 값이 바뀔 때마다 부모에 pending 상태를 알림 — "적용" 을 안 눌러도 "저장" 하면 반영되게 함.
+  // 종료 타입에 따라 endCount/endDate 는 실제 rule 에 영향이 없으니 비교에서 제외.
+  useEffect(() => {
+    if (!onFormChange) return;
+    const init = initialFormRef.current;
+    const daysChanged = type === "weekly"
+      && (days.length !== init.days.length || days.some((d, i) => d !== init.days[i]));
+    const endValChanged = endType === "count"
+      ? endCount !== init.endCount
+      : endType === "date"
+      ? endDate !== init.endDate
+      : false;
+    const typeChanged = type !== init.type;
+    const endTypeChanged = endType !== init.endType;
+    const dirty = typeChanged || endTypeChanged || daysChanged || endValChanged;
+    const valid = (type !== "weekly" || days.length > 0) && !(endType === "date" && !endDate);
+    onFormChange(dirty && valid ? { type, days, endType, endCount, endDate } : undefined);
+  }, [type, days, endType, endCount, endDate, onFormChange]);
   return (
     <div>
       <div className="text-[11px] font-medium text-muted-foreground mb-1.5">반복</div>
@@ -8385,6 +8416,11 @@ function BlockDetailPanel({
   // 필드 커밋 → 반복 생성 순으로 처리하고, "닫기" 는 반복 변경도 함께 폐기.
   const [repeatDraft, setRepeatDraft] = useState<BlockRepeat | undefined>(block.repeat);
   const [repeatDirty, setRepeatDirty] = useState(false);
+  // 반복 폼에 값은 채웠지만 "적용" 을 안 누르고 "저장" 을 눌러도 그 값으로 걸리도록 하는 fallback.
+  // "적용" 을 눌러 repeatDirty=true 가 되면 repeatDraft 가 우선. 그 이전엔 이 값을 사용.
+  // 예전엔 종료 날짜 등 폼 값을 입력만 하고 "적용" 을 안 누른 채 "저장" 하면 반복이 아예 안 걸려서
+  // 제목/체크리스트가 반복 블록에 반영되지 않는 것처럼 보였음.
+  const [pendingRepeatForm, setPendingRepeatForm] = useState<BlockRepeat | undefined>(undefined);
   // 카테고리 드롭다운 열림 여부 · 새 카테고리 인라인 폼 상태 — todo 상세와 동일 로직.
   const [catOpen, setCatOpen] = useState(false);
   const [newCatMode, setNewCatMode] = useState(false);
@@ -8443,11 +8479,13 @@ function BlockDetailPanel({
     if (category !== block.category) changed.category = category;
     if (memo !== block.memo) changed.memo = memo;
     if (countInCompletion !== (block.countInCompletion !== false)) changed.countInCompletion = countInCompletion;
+    // 반복 규칙을 이번에 바꿨다면 부모가 인스턴스를 통째로 재생성하며 바뀐 값과 체크리스트를
+    // 함께 복제하므로, 적용 범위를 따로 물어보지 않음. "적용" 을 누르지 않고 폼만 채운 상태여도
+    // pendingRepeatForm 을 fallback 으로 사용해 사용자의 의도대로 반복이 걸리게 함.
+    const finalRepeat = repeatDirty ? repeatDraft : pendingRepeatForm;
     onSaveDraft(changed, {
       checklistChanged: checklistDirty,
-      // 반복 규칙을 이번에 바꿨다면 부모가 인스턴스를 통째로 재생성하며 바뀐 값과 체크리스트를
-      // 함께 복제하므로, 적용 범위를 따로 물어보지 않음.
-      repeat: repeatDirty ? repeatDraft : undefined,
+      repeat: finalRepeat,
     });
     onClose();
   };
@@ -8641,13 +8679,15 @@ function BlockDetailPanel({
           </div>
         </div>
 
-        {/* 반복 — 계획 시간 바로 아래. 현재 규칙 요약 + 인라인 설정 폼. */}
+        {/* 반복 — 계획 시간 바로 아래. 현재 규칙 요약 + 인라인 설정 폼.
+             onFormChange 는 "적용" 을 안 누른 채로 폼 값을 채운 뒤 저장을 눌러도 그대로 걸리게 하는 fallback. */}
         <RepeatSection
           originDate={block.date}
           repeat={repeatDraft}
           hasGroup={!!block.repeatGroupId}
-          pending={repeatDirty}
-          onSetRepeat={r => { setRepeatDraft(r); setRepeatDirty(true); }}
+          pending={repeatDirty || !!pendingRepeatForm}
+          onSetRepeat={r => { setRepeatDraft(r); setRepeatDirty(true); setPendingRepeatForm(undefined); }}
+          onFormChange={setPendingRepeatForm}
         />
 
         {/* Memo */}
@@ -8864,6 +8904,8 @@ function TodoDetailPanel({
   // 반복도 draft — BlockDetailPanel 과 동일하게 "저장" 에서 필드 커밋 뒤에 적용.
   const [repeatDraft, setRepeatDraft] = useState<BlockRepeat | undefined>(todo.repeat);
   const [repeatDirty, setRepeatDirty] = useState(false);
+  // BlockDetailPanel 과 동일 — "적용" 을 안 눌러도 저장 시 폼 값으로 반복이 걸리도록 하는 fallback.
+  const [pendingRepeatForm, setPendingRepeatForm] = useState<BlockRepeat | undefined>(undefined);
   // 체크리스트 항목 추가/삭제 여부 — 저장 시 반복 그룹 동기화가 필요한지 판단(완료 토글은 제외).
   const [checklistDirty, setChecklistDirty] = useState(false);
   // 카테고리 드롭다운 열림 여부 · 새 카테고리 인라인 폼 상태.
@@ -8920,9 +8962,11 @@ function TodoDetailPanel({
     if (category !== todo.category) changed.category = category;
     if (memo !== todo.memo) changed.memo = memo;
     if (countInCompletion !== (todo.countInCompletion !== false)) changed.countInCompletion = countInCompletion;
+    // "적용" 을 누르지 않고 폼만 채운 상태여도 pendingRepeatForm 을 fallback 으로 사용.
+    const finalRepeat = repeatDirty ? repeatDraft : pendingRepeatForm;
     onSaveDraft(changed, {
       checklistChanged: checklistDirty,
-      repeat: repeatDirty ? repeatDraft : undefined,
+      repeat: finalRepeat,
     });
     onClose();
   };
@@ -9073,13 +9117,15 @@ function TodoDetailPanel({
           </div>
         </div>
 
-        {/* 반복 — 날짜 바로 아래. 시간 블록과 동일한 규칙/폼(RepeatSection 공용). */}
+        {/* 반복 — 날짜 바로 아래. 시간 블록과 동일한 규칙/폼(RepeatSection 공용).
+             onFormChange 로 "적용" 미클릭 폼 값도 저장 시 자동 반영. */}
         <RepeatSection
           originDate={todo.date}
           repeat={repeatDraft}
           hasGroup={!!todo.repeatGroupId}
-          pending={repeatDirty}
-          onSetRepeat={r => { setRepeatDraft(r); setRepeatDirty(true); }}
+          pending={repeatDirty || !!pendingRepeatForm}
+          onSetRepeat={r => { setRepeatDraft(r); setRepeatDirty(true); setPendingRepeatForm(undefined); }}
+          onFormChange={setPendingRepeatForm}
         />
 
         {/* Memo */}
