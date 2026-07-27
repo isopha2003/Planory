@@ -325,7 +325,10 @@ export async function insertBlocksBulk(blocks: any[]) {
   }
   const placeholders = ids.map(() => "?").join(",");
   const rows = await db.select<any[]>(`${BLOCK_SELECT} WHERE b.id IN (${placeholders})`, ids);
-  return rows.map(rowToBlock);
+  // IN(...) 의 결과 순서는 보장되지 않음. 호출자(붙여넣기·삭제 복원)가 입력 배열과 인덱스로
+  // 짝을 지어 체크리스트를 옮기므로 입력 순서대로 되돌려줌.
+  const byId = new Map(rows.map(r => [r.id as string, rowToBlock(r)]));
+  return ids.map(id => byId.get(id)).filter((b): b is ReturnType<typeof rowToBlock> => !!b);
 }
 
 // ── deadlines ───────────────────────────────────────────────────
@@ -911,52 +914,105 @@ export async function deleteFolder(id: string): Promise<void> {
 }
 
 // ── checklist_items (체크리스트형 자식 — 무제한 중첩) ─────────────
-// 체크리스트 로우를 부모 → 자식 순서로 정렬. parent_item_id 가 같은 테이블을 참조하는 FK 라
-// 복제할 때 부모가 먼저 INSERT 되어야 함. 부모가 목록에 없는 고아 항목은 루트로 승격시켜 유실 방지.
-function orderChecklistRowsByDepth<T extends { id: string; parent_item_id: string | null }>(rows: T[]): T[] {
-  const known = new Set(rows.map(r => r.id));
+// 블록/할 일이 복제되거나(반복·붙여넣기) 삭제 후 복원될 때 옮겨 담는 체크리스트 스냅샷.
+// 체크리스트는 block_id / todo_id FK 로 묶인 별도 테이블이라 blocks·todos 로우만 복사·복원하는
+// 경로에서는 전부 유실됨 — 아래 헬퍼들을 통해 모든 경로에서 함께 따라가게 함.
+export interface ChecklistSnapshot {
+  id: string;
+  parentItemId?: string;
+  text: string;
+  completed: boolean;
+  sortOrder: number;
+}
+
+const rowToChecklistSnapshot = (r: any): ChecklistSnapshot => ({
+  id: r.id,
+  parentItemId: r.parent_item_id ?? undefined,
+  text: r.text,
+  completed: !!r.completed,
+  sortOrder: r.sort_order ?? 0,
+});
+
+// 항목을 부모 → 자식 순서로 정렬. parent_item_id 가 같은 테이블을 참조하는 FK 라 삽입할 때
+// 부모가 먼저 들어가야 함. 부모가 목록에 없는 고아 항목은 루트로 승격시켜 유실을 막음.
+function orderChecklistByDepth<T extends { id: string; parentItemId?: string }>(items: T[]): T[] {
+  const known = new Set(items.map(i => i.id));
   const byParent = new Map<string | null, T[]>();
-  for (const r of rows) {
-    const key = r.parent_item_id && known.has(r.parent_item_id) ? r.parent_item_id : null;
+  for (const i of items) {
+    const key = i.parentItemId && known.has(i.parentItemId) ? i.parentItemId : null;
     const list = byParent.get(key);
-    if (list) list.push(r); else byParent.set(key, [r]);
+    if (list) list.push(i); else byParent.set(key, [i]);
   }
   const out: T[] = [];
   const seen = new Set<string>();
   const walk = (parent: string | null) => {
-    for (const r of byParent.get(parent) ?? []) {
-      if (seen.has(r.id)) continue;   // 데이터가 꼬여 순환이 생겨도 무한 재귀로 가지 않도록 방어
-      seen.add(r.id);
-      out.push(r);
-      walk(r.id);
+    for (const i of byParent.get(parent) ?? []) {
+      if (seen.has(i.id)) continue;   // 데이터가 꼬여 순환이 생겨도 무한 재귀로 가지 않도록 방어
+      seen.add(i.id);
+      out.push(i);
+      walk(i.id);
     }
   };
   walk(null);
   return out;
 }
 
-// origin 블록의 체크리스트를 반복 인스턴스들에 계층 그대로 복제.
-// 반복 인스턴스는 blocks 로우만 복사되고 체크리스트는 block_id FK 로 묶인 별도 테이블이라,
-// 이 복제가 없으면 "체크리스트가 첫 블록에만 있는" 상태가 됨. 완료 여부는 인스턴스마다 새로 시작.
-export async function copyChecklistItemsToBlocks(originBlockId: string, targetBlockIds: string[]) {
-  if (targetBlockIds.length === 0) return;
+// 여러 블록의 체크리스트를 한 번에 읽어 blockId → 항목 배열 맵으로 반환.
+// 붙여넣기나 다중 삭제처럼 여러 블록의 체크리스트를 한꺼번에 스냅샷해야 할 때 사용.
+export async function fetchChecklistItemsByBlocks(blockIds: string[]): Promise<Map<string, ChecklistSnapshot[]>> {
+  const out = new Map<string, ChecklistSnapshot[]>();
+  if (blockIds.length === 0) return out;
   const db = await getDb();
   const rows = await db.select<any[]>(
-    "SELECT id, parent_item_id, text, sort_order FROM checklist_items WHERE block_id = ? ORDER BY created_at",
-    [originBlockId]
+    `SELECT * FROM checklist_items WHERE block_id IN (${blockIds.map(() => "?").join(",")}) ORDER BY created_at`,
+    blockIds
   );
-  if (rows.length === 0) return;
-  const ordered = orderChecklistRowsByDepth(rows);
+  for (const r of rows) {
+    const list = out.get(r.block_id);
+    if (list) list.push(rowToChecklistSnapshot(r));
+    else out.set(r.block_id, [rowToChecklistSnapshot(r)]);
+  }
+  return out;
+}
+
+// 스냅샷 항목들을 특정 블록에 새 id 로 삽입(계층 유지).
+// resetCompleted=true 는 복제용(반복 인스턴스·붙여넣기) — 완료 상태를 초기화해서 새로 시작.
+// false 는 삭제 undo 복원용 — 지우기 직전 상태를 그대로 되살림.
+export async function insertChecklistItemsForBlock(
+  blockId: string,
+  items: ChecklistSnapshot[],
+  opts?: { resetCompleted?: boolean }
+) {
+  if (items.length === 0) return;
+  const db = await getDb();
+  const keepCompleted = opts?.resetCompleted !== true;
+  const ordered = orderChecklistByDepth(items);
+  // 대상마다 원본 항목 id → 새 id 매핑을 새로 만들어 부모 참조를 같은 블록 안으로 묶음.
+  const idMap = new Map<string, string>();
+  for (const it of ordered) idMap.set(it.id, uuid());
+  for (const it of ordered) {
+    await db.execute(
+      "INSERT INTO checklist_items (id, block_id, parent_item_id, text, completed, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        idMap.get(it.id),
+        blockId,
+        it.parentItemId ? idMap.get(it.parentItemId) ?? null : null,
+        it.text,
+        keepCompleted && it.completed ? 1 : 0,
+        it.sortOrder,
+      ]
+    );
+  }
+}
+
+// origin 블록의 체크리스트를 대상 블록들에 계층 그대로 복제(완료 상태는 초기화).
+// 반복 인스턴스 생성·붙여넣기 등 "같은 블록을 새로 만드는" 경로에서 공통으로 사용.
+export async function copyChecklistItemsToBlocks(originBlockId: string, targetBlockIds: string[]) {
+  if (targetBlockIds.length === 0) return;
+  const items = await fetchChecklistItems(originBlockId);
+  if (items.length === 0) return;
   for (const targetId of targetBlockIds) {
-    // 인스턴스마다 원본 항목 id → 새 id 매핑을 새로 만들어 부모 참조를 같은 인스턴스 안으로 묶음.
-    const idMap = new Map<string, string>();
-    for (const r of ordered) idMap.set(r.id, uuid());
-    for (const r of ordered) {
-      await db.execute(
-        "INSERT INTO checklist_items (id, block_id, parent_item_id, text, completed, sort_order) VALUES (?, ?, ?, ?, 0, ?)",
-        [idMap.get(r.id), targetId, r.parent_item_id ? idMap.get(r.parent_item_id) ?? null : null, r.text, r.sort_order ?? 0]
-      );
-    }
+    await insertChecklistItemsForBlock(targetId, items, { resetCompleted: true });
   }
 }
 
@@ -1027,25 +1083,40 @@ export async function deleteChecklistItemRow(id: string) {
 }
 
 // ── todo_checklist_items (Todo 체크리스트 — blocks 와 동일한 구조/시맨틱) ────
-// copyChecklistItemsToBlocks 의 todo 대응 — 반복 인스턴스에 체크리스트를 계층 그대로 복제.
+// 아래 두 함수는 blocks 쪽 insertChecklistItemsForBlock / copyChecklistItemsToBlocks 와
+// 1:1 대응. 스냅샷 타입(ChecklistSnapshot)도 그대로 공유.
+export async function insertTodoChecklistItemsForTodo(
+  todoId: string,
+  items: ChecklistSnapshot[],
+  opts?: { resetCompleted?: boolean }
+) {
+  if (items.length === 0) return;
+  const db = await getDb();
+  const keepCompleted = opts?.resetCompleted !== true;
+  const ordered = orderChecklistByDepth(items);
+  const idMap = new Map<string, string>();
+  for (const it of ordered) idMap.set(it.id, uuid());
+  for (const it of ordered) {
+    await db.execute(
+      "INSERT INTO todo_checklist_items (id, todo_id, parent_item_id, text, completed, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        idMap.get(it.id),
+        todoId,
+        it.parentItemId ? idMap.get(it.parentItemId) ?? null : null,
+        it.text,
+        keepCompleted && it.completed ? 1 : 0,
+        it.sortOrder,
+      ]
+    );
+  }
+}
+
 export async function copyTodoChecklistItemsToTodos(originTodoId: string, targetTodoIds: string[]) {
   if (targetTodoIds.length === 0) return;
-  const db = await getDb();
-  const rows = await db.select<any[]>(
-    "SELECT id, parent_item_id, text, sort_order FROM todo_checklist_items WHERE todo_id = ? ORDER BY created_at",
-    [originTodoId]
-  );
-  if (rows.length === 0) return;
-  const ordered = orderChecklistRowsByDepth(rows);
+  const items = await fetchTodoChecklistItems(originTodoId);
+  if (items.length === 0) return;
   for (const targetId of targetTodoIds) {
-    const idMap = new Map<string, string>();
-    for (const r of ordered) idMap.set(r.id, uuid());
-    for (const r of ordered) {
-      await db.execute(
-        "INSERT INTO todo_checklist_items (id, todo_id, parent_item_id, text, completed, sort_order) VALUES (?, ?, ?, ?, 0, ?)",
-        [idMap.get(r.id), targetId, r.parent_item_id ? idMap.get(r.parent_item_id) ?? null : null, r.text, r.sort_order ?? 0]
-      );
-    }
+    await insertTodoChecklistItemsForTodo(targetId, items, { resetCompleted: true });
   }
 }
 

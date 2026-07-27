@@ -15,6 +15,7 @@ import {
   fetchTemplates, createTemplate, deleteTemplateRow, updateTemplateRow, fetchBlocks, insertBlock, patchBlock, deleteBlockRow,
   deleteBlocksByRepeatGroup as apiDeleteRepeatGroup, deleteRepeatInstancesExceptOrigin, insertBlocksBulk,
   patchBlocksByRepeatGroup, copyChecklistItemsToBlocks, syncChecklistItemsToRepeatGroup,
+  fetchChecklistItemsByBlocks, insertChecklistItemsForBlock, type ChecklistSnapshot,
   fetchDeadlines, createDeadline, toggleDeadlineRow, updateDeadlineRow, deleteDeadlineRow,
   fetchKanbanCards, createKanbanCard, updateKanbanCard, deleteKanbanCardRow, bulkUpdateKanbanCardOrder,
   fetchKanbanChecklistItemsByDeadline, createKanbanChecklistItem, toggleKanbanChecklistItemRow, deleteKanbanChecklistItemRow,
@@ -22,6 +23,7 @@ import {
   fetchTodos, createTodo, updateTodo, toggleTodoRow, deleteTodoRow, bulkUpdateTodoOrder, type Todo,
   insertTodosBulk, deleteTodoRepeatInstancesExceptOrigin, deleteTodosByRepeatGroup as apiDeleteTodoRepeatGroup,
   patchTodosByRepeatGroup, copyTodoChecklistItemsToTodos, syncTodoChecklistItemsToRepeatGroup,
+  insertTodoChecklistItemsForTodo,
   fetchTodaySessions, startTimerSession, endTimerSession, deleteTodaySessions, fetchFocusSecByDate,
   fetchChecklistItems, createChecklistItem, toggleChecklistItemRow, deleteChecklistItemRow,
   fetchTodoChecklistItems, createTodoChecklistItem, toggleTodoChecklistItemRow, deleteTodoChecklistItemRow,
@@ -865,9 +867,31 @@ export default function App() {
   const updateBlockLocal = (id: string, changes: Partial<Block>) =>
     setBlocks(bs => bs.map(b => b.id === id ? { ...b, ...changes } : b));
 
+  // 반복 그룹이 공유하는 필드 — 이 중 하나라도 바뀌면 같은 그룹의 이후 인스턴스에도 전파.
+  // 시간·날짜·색은 인스턴스마다 달라야 하므로 대상이 아님.
+  const pickRepeatSharedFields = (changes: { title?: string; category?: string; memo?: string; countInCompletion?: boolean }) => {
+    const shared: BlockDraftFields = {};
+    if (changes.title !== undefined) shared.title = changes.title;
+    if (changes.category !== undefined) shared.category = changes.category;
+    if (changes.memo !== undefined) shared.memo = changes.memo;
+    if (changes.countInCompletion !== undefined) shared.countInCompletion = changes.countInCompletion;
+    return shared;
+  };
+
   const updateBlock = (id: string, changes: Partial<Block>) => {
     updateBlockLocal(id, changes);
     patchBlock(id, changes).catch(notifyError("블록 저장 실패"));
+    // 반복은 "같은 일이 되풀이" 되는 것이라, 이름을 고쳤는데 이후 블록만 옛 이름으로 남으면
+    // 사용자에겐 버그로 보임. 상세 패널·인라인 편집 등 어떤 경로로 들어와도 같게 동작하도록
+    // 전파를 여기(모든 블록 수정의 공통 진입점)에 둠. 지나간 날짜는 기록이므로 건드리지 않음.
+    const shared = pickRepeatSharedFields(changes);
+    if (Object.keys(shared).length === 0) return;
+    const origin = blocksRefTop.current.find(b => b.id === id) ?? blocks.find(b => b.id === id);
+    if (!origin?.repeatGroupId) return;
+    const groupId = origin.repeatGroupId;
+    const fromDate = origin.date;
+    setBlocks(bs => bs.map(b => (b.repeatGroupId === groupId && b.date >= fromDate ? { ...b, ...shared } : b)));
+    patchBlocksByRepeatGroup(groupId, fromDate, shared).catch(notifyError("반복 블록 저장 실패"));
   };
 
   const deleteBlock = (id: string) => {
@@ -891,11 +915,19 @@ export default function App() {
       return bs.filter(b => !toDelete.has(b.id));
     });
     setSelectedBlock(prev => prev?.id === id ? null : prev);
-    deleteBlockRow(id).catch(notifyError("블록 삭제 실패"));
+    // 체크리스트는 block_id FK CASCADE 로 함께 지워지므로, 되살릴 수 있게 삭제 직전에 읽어둠.
+    // undo 는 이 홀더를 나중에 읽으므로 스냅샷이 채워지기 전에 pushUndo 해도 안전하고,
+    // 등록 순서(= undo 스택 순서)도 사용자 액션 순서 그대로 유지됨.
+    const checklistSnapshot: { items: ChecklistSnapshot[] } = { items: [] };
+    fetchChecklistItems(id)
+      .then(items => { checklistSnapshot.items = items; })
+      .catch(() => {})
+      .finally(() => { deleteBlockRow(id).catch(notifyError("블록 삭제 실패")); });
     if (snapshot) {
       pushUndo(async () => {
         try {
           const restored = await insertBlock({ ...snapshot, parentBlockId: undefined, nextBlockId: undefined, templateId: undefined });
+          await insertChecklistItemsForBlock(restored.id, checklistSnapshot.items);
           setBlocks(bs => [...bs, restored]);
         } catch (e) { notifyError("복구 실패")(e); }
       });
@@ -993,7 +1025,18 @@ export default function App() {
     // 겹침이 있어도 자동 이동/차단/알림 없이 원래 시간 그대로 삽입 — 사용자가 원하는
     // 대로 그냥 붙여넣기. 겹친 블록은 캘린더에서 시각적으로 겹쳐 보이며 드래그로 정리 가능.
     try {
+      // 복사한 블록의 체크리스트도 함께 복제 — 블록만 복사되면 "붙여넣었더니 체크리스트가
+      // 사라진" 상태가 됨. insertBlocksBulk 는 입력 순서를 지켜 돌려주므로 인덱스로 짝지음.
+      // 다시 실행(redo) 때도 같은 스냅샷을 쓰므로 원본이 그새 지워져도 복제가 유지됨.
+      const sourceChecklists = await fetchChecklistItemsByBlocks(source.map(b => b.id));
+      const applyChecklists = async (inserted: Block[]) => {
+        for (let i = 0; i < inserted.length; i++) {
+          const items = sourceChecklists.get(source[i]?.id ?? "");
+          if (items?.length) await insertChecklistItemsForBlock(inserted[i].id, items, { resetCompleted: true });
+        }
+      };
       const real = await insertBlocksBulk(candidates);
+      await applyChecklists(real);
       setBlocks(bs => [...bs, ...real]);
       const ids = real.map(b => b.id);
       pushUndo(
@@ -1004,6 +1047,7 @@ export default function App() {
         async () => {
           try {
             const restored = await insertBlocksBulk(real);
+            await applyChecklists(restored);
             setBlocks(bs => [...bs, ...restored]);
           } catch (e) { notifyError("붙여넣기 다시 실행 실패")(e); }
         },
@@ -1019,11 +1063,18 @@ export default function App() {
     if (targets.length === 0) return;
     setBlocks(bs => bs.filter(b => !ids.includes(b.id)));
     setSelectedBlock(prev => (prev && ids.includes(prev.id) ? null : prev));
+    // 단건 삭제와 마찬가지로 CASCADE 로 사라질 체크리스트를 먼저 스냅샷.
+    let checklists = new Map<string, ChecklistSnapshot[]>();
+    try { checklists = await fetchChecklistItemsByBlocks(targets.map(t => t.id)); } catch {}
     for (const id of ids) { deleteBlockRow(id).catch(notifyError("블록 삭제 실패")); }
     // 실행 취소: 원래 블록들 다시 insert. FK 없는 필드만 복원(연결/부모 관계는 컴플렉스라 생략).
     pushUndo(async () => {
       try {
         const restored = await insertBlocksBulk(targets.map(t => ({ ...t, parentBlockId: undefined, nextBlockId: undefined, templateId: undefined })));
+        for (let i = 0; i < restored.length; i++) {
+          const items = checklists.get(targets[i]?.id ?? "");
+          if (items?.length) await insertChecklistItemsForBlock(restored[i].id, items);
+        }
         setBlocks(bs => [...bs, ...restored]);
       } catch (e) { notifyError("복구 실패")(e); }
     });
@@ -1197,26 +1248,6 @@ export default function App() {
     })();
   };
 
-  // 상세 패널 "저장" 전용 블록 수정 — 이 블록이 반복 그룹에 속해 있으면 같은 그룹의
-  // 이 날짜 이후 인스턴스에도 공유 필드(제목/카테고리/메모/달성률 포함)를 함께 반영.
-  // 반복은 "같은 일이 되풀이" 되는 것이라, 이름을 고쳤는데 이후 블록만 옛 이름으로 남으면
-  // 사용자에겐 버그로 보임. 지나간 날짜는 기록이므로 건드리지 않음.
-  const updateBlockFromDetail = (id: string, changes: Partial<Block>) => {
-    updateBlock(id, changes);
-    const origin = blocks.find(b => b.id === id);
-    if (!origin?.repeatGroupId) return;
-    const shared: { title?: string; category?: string; memo?: string; countInCompletion?: boolean } = {};
-    if (changes.title !== undefined) shared.title = changes.title;
-    if (changes.category !== undefined) shared.category = changes.category;
-    if (changes.memo !== undefined) shared.memo = changes.memo;
-    if (changes.countInCompletion !== undefined) shared.countInCompletion = changes.countInCompletion;
-    if (Object.keys(shared).length === 0) return;
-    const groupId = origin.repeatGroupId;
-    const fromDate = origin.date;
-    setBlocks(bs => bs.map(b => (b.repeatGroupId === groupId && b.date >= fromDate ? { ...b, ...shared } : b)));
-    patchBlocksByRepeatGroup(groupId, fromDate, shared).catch(notifyError("반복 블록 저장 실패"));
-  };
-
   // 상세 패널에서 체크리스트 항목을 추가/삭제하고 "저장" 했을 때, 같은 반복 그룹의 이후
   // 인스턴스에도 같은 체크리스트를 깔아줌. 반복 규칙을 이번에 새로 적용한 경우엔 인스턴스가
   // 통째로 재생성되면서 이미 복제되므로 호출하지 않음.
@@ -1377,12 +1408,19 @@ export default function App() {
     const snapshot = todos.find(t => t.id === id);
     setTodos(ts => ts.filter(t => t.id !== id));
     setSelectedTodo(prev => (prev?.id === id ? null : prev));
-    deleteTodoRow(id).catch(notifyError("todo 삭제 실패"));
+    // 블록 삭제와 동일 — CASCADE 로 사라질 체크리스트를 먼저 읽어두고 undo 때 되살림.
+    const checklistSnapshot: { items: ChecklistSnapshot[] } = { items: [] };
+    fetchTodoChecklistItems(id)
+      .then(items => { checklistSnapshot.items = items; })
+      .catch(() => {})
+      .finally(() => { deleteTodoRow(id).catch(notifyError("todo 삭제 실패")); });
     if (snapshot) {
       pushUndo(async () => {
         try {
           const restored = await createTodo({ title: snapshot.title, date: snapshot.date, endDate: snapshot.endDate, color: snapshot.color, memo: snapshot.memo, category: snapshot.category, countInCompletion: snapshot.countInCompletion });
+          await insertTodoChecklistItemsForTodo(restored.id, checklistSnapshot.items);
           setTodos(ts => [...ts, restored]);
+          setTodoChecklistItems(await fetchAllTodoChecklistItems());
         } catch (e) { notifyError("todo 복구 실패")(e); }
       });
     }
@@ -1414,25 +1452,39 @@ export default function App() {
       apiDeleteTodoRepeatGroup(groupId, fromDate).catch(notifyError("반복 할 일 삭제 실패"));
     }
   };
+  // 반복 그룹 공유 필드 전파 — 블록의 updateBlock 안 로직과 같은 규칙(이후 인스턴스에만 반영).
+  // 상세 패널·리스트 인라인 편집 등 어떤 경로로 들어와도 동일하게 동작하도록 update* 마다 호출.
+  const propagateTodoToRepeatGroup = (id: string, shared: BlockDraftFields) => {
+    const origin = todos.find(t => t.id === id);
+    if (!origin?.repeatGroupId) return;
+    const groupId = origin.repeatGroupId;
+    const fromDate = origin.date;
+    setTodos(ts => ts.map(t => (t.repeatGroupId === groupId && t.date >= fromDate ? { ...t, ...shared } : t)));
+    patchTodosByRepeatGroup(groupId, fromDate, shared).catch(notifyError("반복 할 일 저장 실패"));
+  };
   const updateTodoTitle = (id: string, title: string) => {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, title } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, title } : prev));
     updateTodo(id, { title }).catch(notifyError("todo 저장 실패"));
+    propagateTodoToRepeatGroup(id, { title });
   };
   const updateTodoMemo = (id: string, memo: string) => {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, memo } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, memo } : prev));
     updateTodo(id, { memo }).catch(notifyError("todo 메모 저장 실패"));
+    propagateTodoToRepeatGroup(id, { memo });
   };
   const updateTodoCategory = (id: string, category: string) => {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, category } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, category } : prev));
     updateTodo(id, { category }).catch(notifyError("todo 카테고리 저장 실패"));
+    propagateTodoToRepeatGroup(id, { category });
   };
   const updateTodoCountInCompletion = (id: string, countInCompletion: boolean) => {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, countInCompletion } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, countInCompletion } : prev));
     updateTodo(id, { countInCompletion }).catch(notifyError("todo 달성률 설정 저장 실패"));
+    propagateTodoToRepeatGroup(id, { countInCompletion });
   };
 
   const refetchTodos = async () => {
@@ -1487,19 +1539,6 @@ export default function App() {
         refetchTodos();
       }
     })();
-  };
-
-  // 반복 그룹 공유 필드 전파 — updateBlockFromDetail 의 todo 대응.
-  const propagateTodoToRepeatGroup = (
-    id: string,
-    shared: { title?: string; category?: string; memo?: string; countInCompletion?: boolean }
-  ) => {
-    const origin = todos.find(t => t.id === id);
-    if (!origin?.repeatGroupId) return;
-    const groupId = origin.repeatGroupId;
-    const fromDate = origin.date;
-    setTodos(ts => ts.map(t => (t.repeatGroupId === groupId && t.date >= fromDate ? { ...t, ...shared } : t)));
-    patchTodosByRepeatGroup(groupId, fromDate, shared).catch(notifyError("반복 할 일 저장 실패"));
   };
 
   // syncBlockChecklistToRepeatGroup 의 todo 대응 — App 이 전체 체크리스트를 상태로 들고 있어
@@ -1823,19 +1862,19 @@ export default function App() {
             }}
             onDelete={() => requestDeleteBlock(selectedBlock.id)}
             onMemoSave={(memo) => {
-              updateBlockFromDetail(selectedBlock.id, { memo });
+              updateBlock(selectedBlock.id, {memo });
               setSelectedBlock({ ...selectedBlock, memo });
             }}
             onCategorySave={(category) => {
-              updateBlockFromDetail(selectedBlock.id, { category });
+              updateBlock(selectedBlock.id, {category });
               setSelectedBlock({ ...selectedBlock, category });
             }}
             onCountInCompletionSave={(v) => {
-              updateBlockFromDetail(selectedBlock.id, { countInCompletion: v });
+              updateBlock(selectedBlock.id, {countInCompletion: v });
               setSelectedBlock({ ...selectedBlock, countInCompletion: v });
             }}
             onTitleSave={(title) => {
-              updateBlockFromDetail(selectedBlock.id, { title });
+              updateBlock(selectedBlock.id, {title });
               setSelectedBlock({ ...selectedBlock, title });
               if (selectedBlock.id === justCreatedBlockId) {
                 setJustCreatedBlockId(prev => (prev === selectedBlock.id ? null : prev));
@@ -1930,23 +1969,13 @@ export default function App() {
             onDelete={() => requestDeleteTodo(selectedTodo.id)}
             onTitleSave={(title) => {
               updateTodoTitle(selectedTodo.id, title);
-              propagateTodoToRepeatGroup(selectedTodo.id, { title });
               if (selectedTodo.id === justCreatedTodoId) {
                 setJustCreatedTodoId(prev => (prev === selectedTodo.id ? null : prev));
               }
             }}
-            onMemoSave={(memo) => {
-              updateTodoMemo(selectedTodo.id, memo);
-              propagateTodoToRepeatGroup(selectedTodo.id, { memo });
-            }}
-            onCategorySave={(category) => {
-              updateTodoCategory(selectedTodo.id, category);
-              propagateTodoToRepeatGroup(selectedTodo.id, { category });
-            }}
-            onCountInCompletionSave={(v) => {
-              updateTodoCountInCompletion(selectedTodo.id, v);
-              propagateTodoToRepeatGroup(selectedTodo.id, { countInCompletion: v });
-            }}
+            onMemoSave={(memo) => updateTodoMemo(selectedTodo.id, memo)}
+            onCategorySave={(category) => updateTodoCategory(selectedTodo.id, category)}
+            onCountInCompletionSave={(v) => updateTodoCountInCompletion(selectedTodo.id, v)}
             onAddTemplate={addTemplate}
             onSetRepeat={(repeat, overrides) => setTodoRepeat(selectedTodo.id, repeat, overrides)}
             onAddChecklistItem={(text, parentItemId) => addTodoChecklistItem(selectedTodo.id, text, parentItemId)}
