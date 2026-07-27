@@ -1314,7 +1314,9 @@ export default function App() {
     // 같은 블록이 두 벌씩 생김).
     const groupId = block.repeatGroupId ?? `rg-${id}`;
     // 규칙 재적용은 이 블록 날짜 이후에만 영향 — 지나간 인스턴스는 기록이라 그대로 둠.
-    const fromDate = block.date;
+    // 같은 저장에서 날짜를 앞당겼다면 새 날짜부터 훑어야 함 — 옛 날짜만 기준으로 잡으면
+    // 새 날짜~옛 날짜 사이에 남아 있던 기존 인스턴스가 정리되지 않아 그 구간이 겹쳐 보인다.
+    const fromDate = overrides?.date && overrides.date < block.date ? overrides.date : block.date;
     const updated = { ...block, ...overrides, repeat, repeatGroupId: groupId };
     const instances = generateRepeatInstances(updated, repeat);
 
@@ -1678,7 +1680,8 @@ export default function App() {
     if (!todo) return;
     // setBlockRepeat 과 같은 이유로 기존 그룹을 재사용하고, 이 할 일 날짜 이후에만 반영.
     const groupId = todo.repeatGroupId ?? `trg-${id}`;
-    const fromDate = todo.date;
+    // setBlockRepeat 과 같은 이유로, 날짜를 앞당긴 저장이면 새 날짜부터 정리한다.
+    const fromDate = overrides?.date && overrides.date < todo.date ? overrides.date : todo.date;
     const updated = { ...todo, ...overrides, repeat, repeatGroupId: groupId };
     const instances = generateTodoRepeatInstances(updated, repeat);
     setTodos(ts => {
@@ -2707,12 +2710,20 @@ function DatePickerField({
     const onDocMouseDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    // Esc 는 capture 단계에서 잡고 전파를 끊는다 — 이 선택기를 감싸고 있는 폼(예: 할 일 추가
+    // 폼)도 document 에 Esc 리스너를 달아두는 경우가 있어서, 그냥 두면 달력만 닫으려 한 Esc 에
+    // 폼까지 함께 닫힘. capture 리스너는 target 에 도달하기 전에 실행되므로 여기서 끊으면
+    // 바깥의 bubble 단계 리스너에는 이벤트가 가지 않는다.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
+    };
     document.addEventListener("mousedown", onDocMouseDown);
-    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
       document.removeEventListener("mousedown", onDocMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [open]);
 
@@ -5209,7 +5220,8 @@ function TodoPanel({
   };
 
   // "+ 새 할 일" 클릭 시 열리는 추가 폼. 날짜가 자유로우면(전역/카테고리 섹션) 날짜 입력을 먼저
-  // 보여주고(기본 오늘), 카테고리가 자유로우면 카테고리 목록을, 고정이면 추가 버튼만 보여준다.
+  // 보여주고(기본값은 지금 보고 있는 날짜), 카테고리가 자유로우면 카테고리 목록을,
+  // 고정이면 추가 버튼만 보여준다.
   const renderAddPicker = () => {
     if (!addPicker) return null;
     const effDate = addPicker.date ?? addDate;
@@ -6865,26 +6877,33 @@ function GrassSection({
   ];
   while (dayStrings.length % 7 !== 0) dayStrings.push(null);
 
-  // 그 날짜의 완료된 항목(시간 블록 + 할 일)과 총 집중 시간(분)을 실제 데이터에서 계산.
-  // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
+  // 날짜별 완료 항목(시간 블록 + 할 일) 인덱스.
   //
   // 날짜 기준은 "체크한 시각(completed_at)" 이 아니라 항목 자신의 예정 날짜 — 27일자 할 일을
   // 28일에 체크했다고 28일 칸에 찍히면 그날의 계획과 기록이 어긋나 보인다. 시간 블록이 원래
   // b.date 를 쓰던 것과 같은 기준이고, 순수한 "YYYY-MM-DD" 비교라 시간대 변환이 끼어들 여지도 없음.
   // 마감은 이 캘린더에 넣지 않음(별도 마감 화면에서 관리).
-  const activitiesOn = (dateStr: string): DayActivity[] => [
-    // 오늘 분기도 반드시 date 필터를 함께 걸어야 함. 예전엔 `b.completed`만 걸어서
-    // 지난 몇 달간의 모든 완료 블록이 오늘 셀에 activities로 나오고, activeDays 계산도
-    // 왜곡되던 버그가 있었음.
-    ...blocks
-      .filter(b => b.date === dateStr && b.completed)
-      .map(b => ({ title: b.title, color: getCategoryColor(templates, b.category) })),
-    // 할 일도 완료됐으면 종류 구분 없이 같은 모양으로 나열. 색만 카테고리를 따라감.
-    ...todos
-      .filter(t => t.date === dateStr && t.completed)
-      .map(t => ({ title: t.title, color: getCategoryColor(templates, t.category) })),
-  ];
+  //
+  // ⚠ 날짜마다 blocks/todos 전체를 훑지 말고 한 번에 인덱스를 만들 것 — getDayData 는 달력 칸
+  // 42개뿐 아니라 연속 일수 계산에서 최대 366번, 월간 통계에서 두 번 더 호출된다. 훑기로 두면
+  // 항목이 쌓인 사용자에게서 렌더마다 수십만~수백만 번의 비교가 발생.
+  //
+  // ⚠ 완료 여부와 함께 반드시 날짜로도 걸러야 함. 예전엔 오늘 칸에 한해 `b.completed` 만 걸어서
+  // 지난 몇 달의 모든 완료 블록이 오늘 칸에 쏟아지고 activeDays 도 왜곡되던 버그가 있었음.
+  const activityIndex: Record<string, DayActivity[]> = {};
+  for (const b of blocks) {
+    if (!b.completed) continue;
+    (activityIndex[b.date] ??= []).push({ title: b.title, color: getCategoryColor(templates, b.category) });
+  }
+  // 할 일도 완료됐으면 종류 구분 없이 같은 모양으로 나열. 색만 카테고리를 따라감.
+  for (const t of todos) {
+    if (!t.completed) continue;
+    (activityIndex[t.date] ??= []).push({ title: t.title, color: getCategoryColor(templates, t.category) });
+  }
 
+  // 그 날짜의 완료 항목과 총 집중 시간(분).
+  // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
+  const EMPTY_ACTIVITIES: DayActivity[] = [];
   const getDayData = (dateStr: string): {
     activities: DayActivity[];
     focusMin: number;
@@ -6892,15 +6911,15 @@ function GrassSection({
   } => {
     if (dateStr === TODAY_STR) {
       return {
-        activities: activitiesOn(dateStr),
+        activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
         focusMin: focusedMin,
         goalMet: focusedMin >= goalMin && goalMin > 0,
       };
     }
-    if (dateStr > TODAY_STR) return { activities: [], focusMin: 0, goalMet: false };
+    if (dateStr > TODAY_STR) return { activities: EMPTY_ACTIVITIES, focusMin: 0, goalMet: false };
     const fm = Math.floor((focusSecByDate[dateStr] ?? 0) / 60);
     return {
-      activities: activitiesOn(dateStr),
+      activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
       focusMin: fm,
       goalMet: fm >= goalMin && goalMin > 0,
     };
