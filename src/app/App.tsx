@@ -236,6 +236,9 @@ const durMin = (b: Block) => (b.endH * 60 + b.endM) - (b.startH * 60 + b.startM)
 // 하루의 끝(자정)은 블록에서 24:00 = 1440분으로 저장되지만 <input type="time"> 은 24:00 을
 // 표현하지 못하므로 UI 에서만 "00:00" 으로 주고받는다. 아래 두 함수가 그 변환을 담당.
 const MIN_PER_DAY = 24 * 60;
+// 시각 입력의 스텝 — 캘린더 드래그/리사이즈의 스냅 간격과 같은 15분. <input type="time"> 에
+// step 으로 걸면 스피너·피커가 15분 단위로만 움직인다(직접 타이핑은 그대로 자유).
+const TIME_STEP_MIN = 15;
 const toTimeInput = (h: number, m: number) => fmtTime(h % 24, m);
 // "HH:MM" -> 분. 형식이 깨졌으면 null. 종료 시각의 "00:00" 은 호출자가 자정으로 승격시킴.
 const parseTimeInput = (s: string): number | null => {
@@ -8935,7 +8938,7 @@ function BlockDetailPanel({
     const e = raw === 0 ? MIN_PER_DAY : raw;
     const s = startMinDraft ?? 0;
     if (e <= s) {
-      const fixed = Math.min(MIN_PER_DAY, s + 15);
+      const fixed = Math.min(MIN_PER_DAY, s + TIME_STEP_MIN);
       setEndDraft(toTimeInput(Math.floor(fixed / 60), fixed % 60));
       return;
     }
@@ -9225,6 +9228,7 @@ function BlockDetailPanel({
             <div className="flex items-center gap-1.5">
               <input
                 type="time"
+                step={TIME_STEP_MIN * 60}
                 value={startDraft}
                 onChange={e => changeStart(e.target.value)}
                 className="flex-1 min-w-0 text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
@@ -9232,6 +9236,7 @@ function BlockDetailPanel({
               <span className="text-[11px] text-muted-foreground flex-shrink-0">–</span>
               <input
                 type="time"
+                step={TIME_STEP_MIN * 60}
                 value={endDraft}
                 onChange={e => changeEnd(e.target.value)}
                 className="flex-1 min-w-0 text-xs px-2 py-1.5 rounded-md bg-card border border-border outline-none focus:ring-2 focus:ring-ring"
