@@ -2427,7 +2427,9 @@ function TodaySection({
 }) {
   const sorted = [...blocks].sort((a, b) => a.startH * 60 + a.startM - (b.startH * 60 + b.startM));
   const done = blocks.filter(b => b.completed).length;
-  const overdueDeadlines = deadlines.filter(d => d.dueDate < TODAY_STR);
+  const overdueDeadlines = deadlines
+    .filter(d => d.dueDate < TODAY_STR)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   // 오늘부터 7일 뒤(포함) 까지의 마감만 노출 — 달력 주(월~일) 가 아니라 슬라이딩 7일 창.
   // 화면에 매일 "일주일 내 임박한 마감" 만 유지돼 오늘 기준으로 급함을 판단하기 좋음.
   const oneWeekAheadStr = (() => {
@@ -5197,7 +5199,9 @@ function DeadlinesSection({
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
 }) {
-  const active = deadlines.filter(d => !d.completed);
+  // 마감이 임박한(=남은 날짜가 적은) 순서로 정렬. DB 조회는 due_date 순이지만
+  // 추가/날짜 수정은 로컬 state 를 그대로 갈아끼우므로 여기서 매번 다시 정렬해야 함.
+  const active = deadlines.filter(d => !d.completed).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const overdue = active.filter(d => d.dueDate < TODAY_STR);
   const upcoming = active.filter(d => d.dueDate >= TODAY_STR);
   const completed = deadlines.filter(d => d.completed);
