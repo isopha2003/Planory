@@ -1541,7 +1541,7 @@ export default function App() {
       return;
     }
     const tempId = `temp-${crypto.randomUUID()}`;
-    setTodos(ts => [...ts, { id: tempId, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, memo: "", category, countInCompletion: true, sortOrder: nextSort }]);
+    setTodos(ts => [...ts, { id: tempId, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, completedAt: null, memo: "", category, countInCompletion: true, sortOrder: nextSort }]);
     createTodo(t)
       .then(real => {
         setTodos(ts => ts.map(x => (x.id === tempId ? { ...real, sortOrder: nextSort } : x)));
@@ -1556,8 +1556,11 @@ export default function App() {
     const target = todos.find(t => t.id === id);
     if (!target) return;
     const nextCompleted = !target.completed;
-    setTodos(ts => ts.map(t => t.id === id ? { ...t, completed: nextCompleted } : t));
-    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, completed: nextCompleted } : prev));
+    // completedAt 도 함께 — 활동 기록 캘린더가 이 값으로 "끝낸 날" 칸을 정하므로 DB 만 쓰고
+    // 로컬 상태를 안 바꾸면 새로고침 전까지 표시가 안 됨(마감 토글과 동일).
+    const completedAt = nextCompleted ? new Date().toISOString() : null;
+    setTodos(ts => ts.map(t => t.id === id ? { ...t, completed: nextCompleted, completedAt } : t));
+    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, completed: nextCompleted, completedAt } : prev));
     toggleTodoRow(id, nextCompleted).catch(notifyError("todo 완료 저장 실패"));
   };
   const deleteTodo = (id: string) => {
@@ -1666,7 +1669,7 @@ export default function App() {
         d.setDate(d.getDate() + spanDays);
         end = toDateStr(d);
       }
-      return { ...todo, id: crypto.randomUUID(), date: ds, endDate: end, completed: false, repeatGroupId: groupId, repeat };
+      return { ...todo, id: crypto.randomUUID(), date: ds, endDate: end, completed: false, completedAt: null, repeatGroupId: groupId, repeat };
     });
   };
 
@@ -2116,6 +2119,7 @@ export default function App() {
               completionRate={completionRate}
               blocks={blocks.filter(b => !b.parentBlockId)}
               deadlines={deadlines}
+              todos={todos}
               templates={templates}
               timerSec={timerSec}
               totalPlanMin={totalPlanMin}
@@ -6618,21 +6622,22 @@ function KanbanBoard({
 }
 
 // ── Activity Record Section (v3: monthly calendar) ────────────────
-// 활동 기록 캘린더 한 칸에 나열되는 항목 — 완료한 시간 블록 또는 완료한 마감.
-// kind 는 표시용(마감은 마름모 점)이자 "무엇이 집계됐는지" 를 코드에서 구분하기 위한 값.
-type DayActivity = { title: string; color: string; kind: "block" | "deadline" };
+// 활동 기록 캘린더 한 칸에 나열되는 항목 — 완료한 시간 블록 · 마감 · 할 일.
+// kind 는 표시용(마감=마름모, 할 일=사각, 블록=원)이자 코드에서 출처를 구분하기 위한 값.
+type DayActivity = { title: string; color: string; kind: "block" | "deadline" | "todo" };
 // 완료한 마감의 기본 점 색 — 마감에 커스텀 색이 없을 때. D-day 톤은 "남은 날" 에 따라
 // 계속 변하는 값이라 이미 끝난 기록에 쓰면 볼 때마다 색이 달라져서 고정색을 씀.
 const DEADLINE_DONE_COLOR = "#10B981"; // emerald-500
 
 function GrassSection({
-  completionRate, blocks, deadlines, templates, timerSec, totalPlanMin, focusSecByDate,
+  completionRate, blocks, deadlines, todos, templates, timerSec, totalPlanMin, focusSecByDate,
 }: {
   completionRate: number;
   blocks: Block[];
-  // 완료한 마감도 그날의 활동으로 함께 표시 — 예전엔 blocks 만 받아서 마감을 아무리 끝내도
-  // 활동 기록 캘린더에는 아무것도 안 뜨는 상태였음.
+  // 완료한 마감·할 일도 그날의 활동으로 함께 표시 — 예전엔 blocks 만 받아서 마감이나 할 일을
+  // 아무리 끝내도 활동 기록 캘린더에는 아무것도 안 뜨는 상태였음.
   deadlines: Deadline[];
+  todos: Todo[];
   templates: Template[];
   timerSec: number;
   totalPlanMin: number;
@@ -6692,11 +6697,27 @@ function GrassSection({
     });
   }
 
-  // 그 날짜의 완료된 블록·마감 목록과 총 집중 시간(분)을 실제 데이터에서 계산.
+  // 완료한 할 일도 같은 방식으로 "끝낸 날" 기준. 예정일(t.date)이 아니라 실제로 체크한 날에
+  // 찍는 이유: 이 캘린더는 계획표가 아니라 "그날 무엇을 했나" 의 기록이라, 미뤘다가 끝낸
+  // 할 일이 예정일 칸에 찍히면 정작 일한 날은 빈 칸으로 남음. 마감과 동일한 기준.
+  // 점 색은 할 일 목록과 같이 카테고리 색을 따라감.
+  const todosByDoneDate: Record<string, DayActivity[]> = {};
+  for (const t of todos) {
+    if (!t.completed) continue;
+    const ds = t.completedAt ? toDateStr(new Date(t.completedAt)) : t.date;
+    (todosByDoneDate[ds] ??= []).push({
+      title: t.title,
+      color: getCategoryColor(templates, t.category),
+      kind: "todo",
+    });
+  }
+
+  // 그 날짜의 완료된 블록·마감·할 일 목록과 총 집중 시간(분)을 실제 데이터에서 계산.
   // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
-  // 마감은 칸이 잘려도(MAX_SHOWN) 보이도록 블록보다 앞에 둠.
+  // 칸에는 3개까지만 보이므로(MAX_SHOWN) 개수가 적고 존재감이 큰 마감·할 일을 블록보다 앞에 둠.
   const activitiesOn = (dateStr: string): DayActivity[] => [
     ...(deadlinesByDoneDate[dateStr] ?? []),
+    ...(todosByDoneDate[dateStr] ?? []),
     // 오늘 분기도 반드시 date 필터를 함께 걸어야 함. 예전엔 `b.completed`만 걸어서
     // 지난 몇 달간의 모든 완료 블록이 오늘 셀에 activities로 나오고, activeDays 계산도
     // 왜곡되던 버그가 있었음.
@@ -6843,14 +6864,24 @@ function GrassSection({
             </button>
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold">{viewYear}년 {viewMonth + 1}월</span>
-              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              {/* 범례 — 배경(목표 달성일)과 점 모양(마감/할 일/블록) 두 가지를 설명.
+                   좁은 창에서도 헤더가 밀리지 않게 flex-wrap. */}
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <span className="inline-block size-2.5 rounded-sm bg-sky-100 border border-sky-300" />
                   목표 달성일
                 </span>
                 <span className="flex items-center gap-1">
                   <span className="inline-block size-1.5 rotate-45 rounded-[1px]" style={{ backgroundColor: DEADLINE_DONE_COLOR }} />
-                  마감 완료
+                  마감
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block size-1.5 rounded-[1px] bg-muted-foreground/60" />
+                  할 일
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block size-1.5 rounded-full bg-muted-foreground/60" />
+                  시간 블록
                 </span>
               </div>
             </div>
@@ -6946,11 +6977,19 @@ function GrassSection({
                         <div
                           key={ai}
                           className="flex items-center gap-1 min-w-0"
-                          title={act.kind === "deadline" ? `마감 완료 — ${act.title}` : act.title}
+                          title={
+                            act.kind === "deadline" ? `마감 완료 — ${act.title}`
+                              : act.kind === "todo" ? `할 일 완료 — ${act.title}`
+                              : act.title
+                          }
                         >
-                          {/* 마감은 마름모, 시간 블록은 동그라미 — 같은 줄에 섞여도 구분되게 */}
+                          {/* 마감=마름모, 할 일=사각, 시간 블록=원 — 같은 줄에 섞여도 구분되게 */}
                           <span
-                            className={`size-1.5 flex-shrink-0 ${act.kind === "deadline" ? "rotate-45 rounded-[1px]" : "rounded-full"}`}
+                            className={`size-1.5 flex-shrink-0 ${
+                              act.kind === "deadline" ? "rotate-45 rounded-[1px]"
+                                : act.kind === "todo" ? "rounded-[1px]"
+                                : "rounded-full"
+                            }`}
                             style={{ backgroundColor: act.color }}
                           />
                           <span className="text-[9px] leading-tight truncate text-foreground/70">{act.title}</span>

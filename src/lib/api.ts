@@ -578,6 +578,9 @@ export interface Todo {
   endDate: string | null;
   color: string;
   completed: boolean;
+  // 완료 처리한 시각(ISO). 활동 기록 캘린더가 "끝낸 날" 칸에 표시하는 기준. 미완료면 null.
+  // deadlines.completedAt 과 동일한 취급 — 값이 없는 옛 데이터는 예정 날짜로 폴백.
+  completedAt: string | null;
   memo: string;
   category: string;
   // 오늘 달성률 계산에 이 할 일을 포함할지. 기본 true.
@@ -600,6 +603,7 @@ export async function fetchTodos(): Promise<Todo[]> {
     endDate: r.end_date ?? null,
     color: r.color ?? DEFAULT_TODO_COLOR,
     completed: !!r.completed,
+    completedAt: r.completed_at ?? null,
     memo: r.memo ?? "",
     category: r.category ?? "",
     countInCompletion: r.count_in_completion === undefined || r.count_in_completion === null ? true : !!r.count_in_completion,
@@ -620,7 +624,7 @@ export async function createTodo(t: { title: string; date: string; endDate?: str
     "INSERT INTO todos (id, title, date, end_date, color, completed, memo, category, count_in_completion, sort_order) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 0)",
     [id, t.title, t.date, t.endDate ?? null, color, memo, category, countInCompletion ? 1 : 0]
   );
-  return { id, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, memo, category, countInCompletion, sortOrder: 0 };
+  return { id, title: t.title, date: t.date, endDate: t.endDate ?? null, color, completed: false, completedAt: null, memo, category, countInCompletion, sortOrder: 0 };
 }
 
 export async function updateTodo(id: string, changes: { title?: string; date?: string; endDate?: string | null; color?: string; memo?: string; category?: string; countInCompletion?: boolean; sortOrder?: number; repeatGroupId?: string | null; repeat?: RepeatRule | null }): Promise<void> {
