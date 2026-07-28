@@ -6935,31 +6935,62 @@ function GrassSection({
 
   // 그 날짜의 완료 항목과 총 집중 시간(분).
   // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
-  // progress: 그날 집중 시간 ÷ 목표 (%, 100 상한). 달력 칸에서 날짜 옆에 작게 표시.
+  // 날짜별 "그날 계획한 항목" 집계 — 달성 판정(칸 색칠·연속 일수)용.
+  // 위 activityIndex 는 완료한 것만 모으므로 "전부 완료했는지"는 알 수 없어 따로 센다.
+  // 오늘 화면의 달성률과 같은 기준: countInCompletion === false 인 항목은 분모에서 제외.
+  const planIndex: Record<string, { total: number; done: number }> = {};
+  const countPlan = (date: string, done: boolean) => {
+    const e = (planIndex[date] ??= { total: 0, done: 0 });
+    e.total++;
+    if (done) e.done++;
+  };
+  for (const b of blocks) {
+    if (b.countInCompletion === false) continue;
+    countPlan(b.date, b.completed);
+  }
+  for (const t of todos) {
+    if (t.countInCompletion === false) continue;
+    // 여러 날에 걸친 할 일은 걸친 날마다 그날의 계획으로 셈 — 오늘 화면(todayTodos)과 같은 기준.
+    if (t.endDate && t.endDate > t.date) {
+      const cur = parseLocalDate(t.date);
+      const end = parseLocalDate(t.endDate);
+      for (let i = 0; i < 366 && cur <= end; i++) {
+        countPlan(toDateStr(cur), t.completed);
+        cur.setDate(cur.getDate() + 1);
+      }
+    } else {
+      countPlan(t.date, t.completed);
+    }
+  }
+  // 그날 계획한 항목을 전부 끝냈는가. 항목이 하나도 없는 날은 "달성"으로 치지 않음 —
+  // 안 그러면 앱을 쓰기 전의 빈 과거 날짜가 전부 달성으로 칠해지고 연속 일수도 무한이 됨.
+  const allPlanDone = (dateStr: string) => {
+    const p = planIndex[dateStr];
+    return !!p && p.total > 0 && p.done === p.total;
+  };
+
   const EMPTY_ACTIVITIES: DayActivity[] = [];
-  const dayProgress = (focusMin: number) =>
-    goalMin > 0 ? Math.min(Math.round((focusMin / goalMin) * 100), 100) : 0;
+  // goalMet — "그날 할 일을 전부 완료" 또는 "목표 집중 시간 달성" 중 하나면 달성.
+  // ⚠ 예전엔 집중 시간 조건만 봐서, 타이머를 안 돌린 날은 할 일을 다 끝내도 칸이 안 칠해지고
+  // 연속 일수에도 안 잡혔음(사용자가 타이머 없이 공부한 날이 통째로 누락).
   const getDayData = (dateStr: string): {
     activities: DayActivity[];
     focusMin: number;
-    progress: number;
     goalMet: boolean;
   } => {
     if (dateStr === TODAY_STR) {
       return {
         activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
         focusMin: focusedMin,
-        progress: dayProgress(focusedMin),
-        goalMet: focusedMin >= goalMin && goalMin > 0,
+        goalMet: allPlanDone(dateStr) || (focusedMin >= goalMin && goalMin > 0),
       };
     }
-    if (dateStr > TODAY_STR) return { activities: EMPTY_ACTIVITIES, focusMin: 0, progress: 0, goalMet: false };
+    if (dateStr > TODAY_STR) return { activities: EMPTY_ACTIVITIES, focusMin: 0, goalMet: false };
     const fm = Math.floor((focusSecByDate[dateStr] ?? 0) / 60);
     return {
       activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
       focusMin: fm,
-      progress: dayProgress(fm),
-      goalMet: fm >= goalMin && goalMin > 0,
+      goalMet: allPlanDone(dateStr) || (fm >= goalMin && goalMin > 0),
     };
   };
 
@@ -7066,10 +7097,6 @@ function GrassSection({
               <Flame size={11} /> 연속 일수
             </div>
             <div className="text-3xl font-semibold mt-2">{currentStreak}일</div>
-            {/* 0일이 떴을 때 "왜?"를 알 수 있도록 판정 기준을 함께 노출 */}
-            <div className="text-[10px] text-muted-foreground/60 mt-1">
-              하루 {Math.floor(goalMin / 60)}h{goalMin % 60 > 0 ? ` ${goalMin % 60}m` : ""} 집중 기준
-            </div>
             <div className="text-[11px] text-muted-foreground mt-1">이번 달 {activeDays}일 활동</div>
             <div className="text-[11px] text-muted-foreground mt-0.5">목표 달성 {achievedDays}일</div>
           </div>
@@ -7088,9 +7115,9 @@ function GrassSection({
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold">{viewYear}년 {viewMonth + 1}월</span>
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1">
+                <span className="flex items-center gap-1" title="그날 할 일을 모두 완료했거나, 목표 집중 시간을 채운 날">
                   <span className="inline-block size-2.5 rounded-sm bg-sky-100 border border-sky-300" />
-                  목표 달성일
+                  달성일
                 </span>
               </div>
             </div>
@@ -7165,25 +7192,16 @@ function GrassSection({
                       {dayNum}
                     </span>
 
-                    {/* 집중 시간 — 날짜 바로 옆. 그 오른쪽에 그날 달성률을 더 작게.
-                        칸 폭이 좁아(≈110px) 시간은 "1h30m" 처럼 공백 없이 붙여 쓰고,
-                        예전 우측 끝 ✓ 는 제거 — 100% 표기와 칸 배경색이 같은 뜻이라 자리만 차지했음. */}
+                    {/* 집중 시간 — 날짜 바로 옆. 칸 폭이 좁아(≈110px) "1h30m" 처럼 공백 없이 붙여 씀.
+                        타이머를 돌리지 않은 날은 아무것도 쓰지 않음(0h·0% 를 채우지 않음).
+                        목표 달성 여부는 칸 배경색이 이미 말해주므로 달성률·✓ 는 따로 적지 않음. */}
                     {!isFuture && data.focusMin > 0 && (
-                      <>
-                        <span
-                          className="text-[9px] font-semibold leading-none flex-shrink-0"
-                          style={{ color: data.goalMet ? "#16a34a" : undefined }}
-                        >
-                          {Math.floor(data.focusMin / 60)}h{data.focusMin % 60 > 0 ? `${data.focusMin % 60}m` : ""}
-                        </span>
-                        <span
-                          className={`text-[8px] leading-none flex-shrink-0 ${
-                            data.goalMet ? "text-sky-600 font-medium" : "text-muted-foreground"
-                          }`}
-                        >
-                          {data.progress}%
-                        </span>
-                      </>
+                      <span
+                        className="text-[9px] font-semibold leading-none flex-shrink-0"
+                        style={{ color: data.goalMet ? "#16a34a" : undefined }}
+                      >
+                        {Math.floor(data.focusMin / 60)}h{data.focusMin % 60 > 0 ? `${data.focusMin % 60}m` : ""}
+                      </span>
                     )}
                   </div>
 
