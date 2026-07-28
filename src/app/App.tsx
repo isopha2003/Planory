@@ -6930,44 +6930,37 @@ function GrassSection({
   //
   // ⚠ 완료 여부와 함께 반드시 날짜로도 걸러야 함. 예전엔 오늘 칸에 한해 `b.completed` 만 걸어서
   // 지난 몇 달의 모든 완료 블록이 오늘 칸에 쏟아지고 activeDays 도 왜곡되던 버그가 있었음.
-  const activityIndex: Record<string, DayActivity[]> = {};
-  for (const b of blocks) {
-    if (!b.completed) continue;
-    (activityIndex[b.date] ??= []).push({ title: b.title, color: getCategoryColor(templates, b.category) });
-  }
-  // 할 일도 완료됐으면 종류 구분 없이 같은 모양으로 나열. 색만 카테고리를 따라감.
-  for (const t of todos) {
-    if (!t.completed) continue;
-    (activityIndex[t.date] ??= []).push({ title: t.title, color: getCategoryColor(templates, t.category) });
-  }
-
-  // 그 날짜의 완료 항목과 총 집중 시간(분).
-  // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
-  // 날짜별 "그날 계획한 항목" 집계 — 달성 판정(칸 색칠·연속 일수)용.
-  // 위 activityIndex 는 완료한 것만 모으므로 "전부 완료했는지"는 알 수 없어 따로 센다.
+  // planIndex 는 달성 판정(칸 색칠·연속 일수)용 — activityIndex 는 완료한 것만 모아서
+  // "전부 완료했는지"를 알 수 없으므로 계획 수/완료 수를 따로 센다.
   // 오늘 화면의 달성률과 같은 기준: countInCompletion === false 인 항목은 분모에서 제외.
+  const activityIndex: Record<string, DayActivity[]> = {};
   const planIndex: Record<string, { total: number; done: number }> = {};
+  const addActivity = (date: string, a: DayActivity) => { (activityIndex[date] ??= []).push(a); };
   const countPlan = (date: string, done: boolean) => {
     const e = (planIndex[date] ??= { total: 0, done: 0 });
     e.total++;
     if (done) e.done++;
   };
+
   for (const b of blocks) {
-    if (b.countInCompletion === false) continue;
-    countPlan(b.date, b.completed);
+    if (b.completed) addActivity(b.date, { title: b.title, color: getCategoryColor(templates, b.category) });
+    if (b.countInCompletion !== false) countPlan(b.date, b.completed);
   }
+  // 할 일도 완료됐으면 종류 구분 없이 같은 모양으로 나열. 색만 카테고리를 따라감.
   for (const t of todos) {
-    if (t.countInCompletion === false) continue;
-    // 여러 날에 걸친 할 일은 걸친 날마다 그날의 계획으로 셈 — 오늘 화면(todayTodos)과 같은 기준.
-    if (t.endDate && t.endDate > t.date) {
-      const cur = parseLocalDate(t.date);
-      const end = parseLocalDate(t.endDate);
-      for (let i = 0; i < 366 && cur <= end; i++) {
-        countPlan(toDateStr(cur), t.completed);
-        cur.setDate(cur.getDate() + 1);
-      }
-    } else {
-      countPlan(t.date, t.completed);
+    if (!t.date) continue;
+    const activity = { title: t.title, color: getCategoryColor(templates, t.category) };
+    // 여러 날에 걸친 할 일은 걸친 날마다 그날의 항목으로 침 — 오늘 화면(todayTodos)과 같은 기준.
+    // ⚠ 두 인덱스가 반드시 같은 날짜 집합을 봐야 함. 계획만 펼치고 활동은 시작일에만 넣으면
+    // 중간 날짜가 "달성으로 칠해졌는데 칸 안엔 아무 항목도 없는" 상태가 된다.
+    const lastDate = t.endDate && t.endDate > t.date ? t.endDate : t.date;
+    const cur = parseLocalDate(t.date);
+    for (let i = 0; i < 366; i++) {
+      const dstr = toDateStr(cur);
+      if (dstr > lastDate) break;
+      if (t.completed) addActivity(dstr, activity);
+      if (t.countInCompletion !== false) countPlan(dstr, t.completed);
+      cur.setDate(cur.getDate() + 1);
     }
   }
   // 그날 계획한 항목을 전부 끝냈는가. 항목이 하나도 없는 날은 "달성"으로 치지 않음 —
@@ -6977,6 +6970,8 @@ function GrassSection({
     return !!p && p.total > 0 && p.done === p.total;
   };
 
+  // 그 날짜의 완료 항목과 총 집중 시간(분).
+  // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
   const EMPTY_ACTIVITIES: DayActivity[] = [];
   // goalMet — "그날 할 일을 전부 완료" 또는 "목표 집중 시간 달성" 중 하나면 달성.
   // ⚠ 예전엔 집중 시간 조건만 봐서, 타이머를 안 돌린 날은 할 일을 다 끝내도 칸이 안 칠해지고
@@ -7187,7 +7182,7 @@ function GrassSection({
                     isToday ? "ring-1 ring-inset ring-primary/30" : ""
                   }`}
                 >
-                  {/* Date number + 집중 시간 + 달성률 (한 줄) */}
+                  {/* 날짜 + 집중 시간 (한 줄) */}
                   <div className="flex items-baseline gap-1 mb-1.5">
                     <span
                       className={`text-xs font-medium inline-flex items-center justify-center ${
