@@ -3161,15 +3161,20 @@ function TodaySection({
           })}
         </div>
 
-        {/* 빈 상태 — 시간 블록만 보고 판단하면 시간표를 안 쓰고 할 일만 쓰는 경우 오늘 할 일이
-            가득한데도 "계획된 활동이 없습니다" 가 떴다. 오늘 달성률에 잡히는 항목(이 컴포넌트가
-            받는 blocks·todos 는 이미 countInCompletion !== false 로 걸러진 것)이 하나라도 있으면 감춤. */}
-        {blocks.length === 0 && todos.length === 0 && (
-          <div className="mt-10 text-center py-8">
-            <div className="text-sm font-medium text-muted-foreground">오늘 계획된 활동이 없습니다</div>
+        {/* 시간 블록이 없을 때의 안내. 문구만 조건이 다르다 —
+            시간표를 안 쓰고 할 일만 쓰는 경우 오늘 할 일이 가득한데도 "계획된 활동이 없습니다" 가
+            떴으므로, 오늘 달성률에 잡히는 항목(이 컴포넌트가 받는 blocks·todos 는 이미
+            countInCompletion !== false 로 걸러진 것)이 있으면 문구는 감추고 버튼만 남긴다. */}
+        {blocks.length === 0 && (
+          <div className={`text-center ${todos.length === 0 ? "mt-10 py-8" : "mt-6"}`}>
+            {todos.length === 0 && (
+              <div className="text-sm font-medium text-muted-foreground">오늘 계획된 활동이 없습니다</div>
+            )}
             <button
               onClick={onGoToCalendar}
-              className="mt-3 text-xs px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+              className={`text-xs px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity ${
+                todos.length === 0 ? "mt-3" : ""
+              }`}
             >
               캘린더로 이동
             </button>
