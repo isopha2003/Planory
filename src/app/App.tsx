@@ -6825,6 +6825,11 @@ function KanbanBoard({
 // 활동 기록 캘린더 한 칸에 나열되는 항목 — 완료한 시간 블록과 할 일을 구분 없이 같은 모양으로.
 type DayActivity = { title: string; color: string };
 
+// 사용자가 직접 정한 하루 목표 집중 시간(분). 정한 적이 없으면 오늘 계획 시간을 따르고,
+// 계획도 비어 있으면 이 기본값을 쓴다(목표가 0이면 연속 일수가 항상 0이 되므로).
+const GOAL_MIN_KEY = "grass_goal_min";
+const DEFAULT_GOAL_MIN = 60;
+
 function GrassSection({
   completionRate, blocks, todos, templates, timerSec, totalPlanMin, focusSecByDate,
 }: {
@@ -6842,17 +6847,44 @@ function GrassSection({
   // 실제 날짜를 사용해야 배포 후에도 계속 현재 달이 열림.
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
-  const [goalMin, setGoalMin] = useState(totalPlanMin);
+  // 목표 집중 시간 — 연속 일수·달성률의 기준값이라 반드시 살아있는 값이어야 한다.
+  //
+  // ⚠ 예전엔 `useState(totalPlanMin)` 이라 (1) 오늘 시간 블록을 안 짜둔 날은 goalMin 이 0 이 되고,
+  // goalMet 은 `goalMin > 0` 을 요구하므로 모든 날이 미달성 → 연속 일수가 영원히 0 이었고,
+  // (2) 사용자가 목표를 고쳐도 화면을 벗어났다 돌아오면(섹션이 조건부 렌더라 언마운트됨) 값이
+  // 다시 오늘 계획으로 리셋돼 과거 날짜 판정 기준이 매번 바뀌었다.
+  // → 사용자가 직접 정한 목표는 localStorage 에 저장하고, 정한 적이 없을 때만 "자동"(오늘 계획,
+  //   계획도 없으면 기본 1시간)을 따른다.
+  const [goalOverride, setGoalOverride] = useState<number | null>(() => {
+    try {
+      const raw = localStorage.getItem(GOAL_MIN_KEY);
+      if (raw !== null) {
+        const n = Math.round(Number(raw));
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+    } catch {}
+    return null;
+  });
+  const autoGoalMin = totalPlanMin > 0 ? totalPlanMin : DEFAULT_GOAL_MIN;
+  const goalMin = goalOverride ?? autoGoalMin;
   const [editingGoal, setEditingGoal] = useState(false);
-  const [goalInput, setGoalInput] = useState(String((totalPlanMin / 60).toFixed(1)));
+  const [goalInput, setGoalInput] = useState("");
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
 
   const focusedMin = Math.floor(timerSec / 60);
   const goalProgress = goalMin > 0 ? Math.min(Math.round((focusedMin / goalMin) * 100), 100) : 0;
 
+  // 0 이하를 입력하면 "자동"으로 되돌림 — 목표 0 은 모든 날이 미달성이 되는 상태라 허용하지 않음.
   const handleGoalSave = (e: React.FormEvent) => {
     e.preventDefault();
-    setGoalMin(Math.round((parseFloat(goalInput) || 0) * 60));
+    const mins = Math.round((parseFloat(goalInput) || 0) * 60);
+    if (mins > 0) {
+      setGoalOverride(mins);
+      try { localStorage.setItem(GOAL_MIN_KEY, String(mins)); } catch {}
+    } else {
+      setGoalOverride(null);
+      try { localStorage.removeItem(GOAL_MIN_KEY); } catch {}
+    }
     setEditingGoal(false);
   };
 
@@ -6903,24 +6935,30 @@ function GrassSection({
 
   // 그 날짜의 완료 항목과 총 집중 시간(분).
   // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
+  // progress: 그날 집중 시간 ÷ 목표 (%, 100 상한). 달력 칸에서 날짜 옆에 작게 표시.
   const EMPTY_ACTIVITIES: DayActivity[] = [];
+  const dayProgress = (focusMin: number) =>
+    goalMin > 0 ? Math.min(Math.round((focusMin / goalMin) * 100), 100) : 0;
   const getDayData = (dateStr: string): {
     activities: DayActivity[];
     focusMin: number;
+    progress: number;
     goalMet: boolean;
   } => {
     if (dateStr === TODAY_STR) {
       return {
         activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
         focusMin: focusedMin,
+        progress: dayProgress(focusedMin),
         goalMet: focusedMin >= goalMin && goalMin > 0,
       };
     }
-    if (dateStr > TODAY_STR) return { activities: EMPTY_ACTIVITIES, focusMin: 0, goalMet: false };
+    if (dateStr > TODAY_STR) return { activities: EMPTY_ACTIVITIES, focusMin: 0, progress: 0, goalMet: false };
     const fm = Math.floor((focusSecByDate[dateStr] ?? 0) / 60);
     return {
       activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
       focusMin: fm,
+      progress: dayProgress(fm),
       goalMet: fm >= goalMin && goalMin > 0,
     };
   };
@@ -6932,6 +6970,8 @@ function GrassSection({
 
   // 오늘까지 이어지는 연속 목표 달성 일수 — 오늘이 아직 달성 안 됐어도 어제 이전 스트릭은
   // 살아있는 것으로 취급 (오늘 시간이 남았으니 유예). 뷰 월과 무관하게 실제 오늘 기준으로 계산.
+  // ⚠ 여기가 항상 0을 뱉었던 원인은 이 루프가 아니라 goalMin 이었다(위 goalOverride 주석 참고).
+  // goalMin 이 0 이면 goalMet 이 전부 false 라 아래 계산도 통째로 0 이 된다.
   const currentStreak = (() => {
     let streak = 0;
     const cur = parseLocalDate(TODAY_STR);
@@ -6997,6 +7037,7 @@ function GrassSection({
                                      />
                   <span className="text-[11px] text-muted-foreground">시간</span>
                   <button type="submit" className="p-0.5 text-sky-600 hover:text-sky-700"><Check size={12} /></button>
+                  <span className="text-[10px] text-muted-foreground/50">0 = 자동</span>
                 </form>
               ) : (
                 <button
@@ -7009,7 +7050,7 @@ function GrassSection({
                   <Edit3 size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
                 </button>
               )}
-              {!editingGoal && goalMin === totalPlanMin && (
+              {!editingGoal && goalOverride === null && (
                 <span className="text-[10px] text-muted-foreground/50">(자동)</span>
               )}
             </div>
@@ -7025,6 +7066,10 @@ function GrassSection({
               <Flame size={11} /> 연속 일수
             </div>
             <div className="text-3xl font-semibold mt-2">{currentStreak}일</div>
+            {/* 0일이 떴을 때 "왜?"를 알 수 있도록 판정 기준을 함께 노출 */}
+            <div className="text-[10px] text-muted-foreground/60 mt-1">
+              하루 {Math.floor(goalMin / 60)}h{goalMin % 60 > 0 ? ` ${goalMin % 60}m` : ""} 집중 기준
+            </div>
             <div className="text-[11px] text-muted-foreground mt-1">이번 달 {activeDays}일 활동</div>
             <div className="text-[11px] text-muted-foreground mt-0.5">목표 달성 {achievedDays}일</div>
           </div>
@@ -7107,8 +7152,8 @@ function GrassSection({
                     isToday ? "ring-1 ring-inset ring-primary/30" : ""
                   }`}
                 >
-                  {/* Date number */}
-                  <div className="flex items-center justify-between mb-1.5">
+                  {/* Date number + 집중 시간 + 달성률 (한 줄) */}
+                  <div className="flex items-baseline gap-1 mb-1.5">
                     <span
                       className={`text-xs font-medium inline-flex items-center justify-center ${
                         isToday
@@ -7119,20 +7164,28 @@ function GrassSection({
                     >
                       {dayNum}
                     </span>
-                    {data.goalMet && (
-                      <span className="text-[9px] text-sky-600 font-medium">✓</span>
+
+                    {/* 집중 시간 — 날짜 바로 옆. 그 오른쪽에 그날 달성률을 더 작게.
+                        칸 폭이 좁아(≈110px) 시간은 "1h30m" 처럼 공백 없이 붙여 쓰고,
+                        예전 우측 끝 ✓ 는 제거 — 100% 표기와 칸 배경색이 같은 뜻이라 자리만 차지했음. */}
+                    {!isFuture && data.focusMin > 0 && (
+                      <>
+                        <span
+                          className="text-[9px] font-semibold leading-none flex-shrink-0"
+                          style={{ color: data.goalMet ? "#16a34a" : undefined }}
+                        >
+                          {Math.floor(data.focusMin / 60)}h{data.focusMin % 60 > 0 ? `${data.focusMin % 60}m` : ""}
+                        </span>
+                        <span
+                          className={`text-[8px] leading-none flex-shrink-0 ${
+                            data.goalMet ? "text-sky-600 font-medium" : "text-muted-foreground"
+                          }`}
+                        >
+                          {data.progress}%
+                        </span>
+                      </>
                     )}
                   </div>
-
-                  {/* Focus time — shown first */}
-                  {!isFuture && data.focusMin > 0 && (
-                    <div
-                      className="text-[9px] font-semibold mb-0.5"
-                      style={{ color: data.goalMet ? "#16a34a" : undefined }}
-                    >
-                      {Math.floor(data.focusMin / 60)}h{data.focusMin % 60 > 0 ? ` ${data.focusMin % 60}m` : ""}
-                    </div>
-                  )}
 
                   {/* Activities list — below focus time */}
                   {!isFuture && data.activities.length > 0 && (
