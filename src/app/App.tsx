@@ -6834,7 +6834,7 @@ function KanbanBoard({
 type DayActivity = { title: string; color: string };
 
 // 사용자가 직접 정한 하루 목표 집중 시간(분). 정한 적이 없으면 오늘 계획 시간을 따르고,
-// 계획도 비어 있으면 이 기본값을 쓴다(목표가 0이면 연속 일수가 항상 0이 되므로).
+// 계획도 비어 있으면 이 기본값을 쓴다(목표가 0이면 진행률 막대가 항상 0% 로 죽어 보이므로).
 const GOAL_MIN_KEY = "grass_goal_min";
 const DEFAULT_GOAL_MIN = 60;
 
@@ -6855,12 +6855,11 @@ function GrassSection({
   // 실제 날짜를 사용해야 배포 후에도 계속 현재 달이 열림.
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
-  // 목표 집중 시간 — 연속 일수·달성률의 기준값이라 반드시 살아있는 값이어야 한다.
+  // 목표 집중 시간 — 왼쪽 카드의 "오늘 집중 시간 / 목표" 진행률 표시 전용.
+  // 달성일 색칠·연속 일수·목표 달성 일수는 달성률 100% 로만 판정하므로 여기에 관여하지 않는다.
   //
-  // ⚠ 예전엔 `useState(totalPlanMin)` 이라 (1) 오늘 시간 블록을 안 짜둔 날은 goalMin 이 0 이 되고,
-  // goalMet 은 `goalMin > 0` 을 요구하므로 모든 날이 미달성 → 연속 일수가 영원히 0 이었고,
-  // (2) 사용자가 목표를 고쳐도 화면을 벗어났다 돌아오면(섹션이 조건부 렌더라 언마운트됨) 값이
-  // 다시 오늘 계획으로 리셋돼 과거 날짜 판정 기준이 매번 바뀌었다.
+  // ⚠ 예전엔 `useState(totalPlanMin)` 이라 사용자가 목표를 고쳐도 화면을 벗어났다 돌아오면
+  // (섹션이 조건부 렌더라 언마운트됨) 값이 다시 오늘 계획으로 리셋됐다.
   // → 사용자가 직접 정한 목표는 localStorage 에 저장하고, 정한 적이 없을 때만 "자동"(오늘 계획,
   //   계획도 없으면 기본 1시간)을 따른다.
   const [goalOverride, setGoalOverride] = useState<number | null>(() => {
@@ -6963,8 +6962,8 @@ function GrassSection({
       cur.setDate(cur.getDate() + 1);
     }
   }
-  // 그날 계획한 항목을 전부 끝냈는가. 항목이 하나도 없는 날은 "달성"으로 치지 않음 —
-  // 안 그러면 앱을 쓰기 전의 빈 과거 날짜가 전부 달성으로 칠해지고 연속 일수도 무한이 됨.
+  // 그날 계획한 항목을 전부 끝냈는가 = 그날의 달성률 100%. 항목이 하나도 없는 날은 "달성"으로
+  // 치지 않음 — 안 그러면 앱을 쓰기 전의 빈 과거 날짜가 전부 달성으로 칠해지고 연속 일수도 무한이 됨.
   const allPlanDone = (dateStr: string) => {
     const p = planIndex[dateStr];
     return !!p && p.total > 0 && p.done === p.total;
@@ -6973,9 +6972,10 @@ function GrassSection({
   // 그 날짜의 완료 항목과 총 집중 시간(분).
   // 오늘은 실시간 timerSec을 쓰고, 과거는 timer_sessions에서 집계한 focusSecByDate를 사용.
   const EMPTY_ACTIVITIES: DayActivity[] = [];
-  // goalMet — "그날 할 일을 전부 완료" 또는 "목표 집중 시간 달성" 중 하나면 달성.
-  // ⚠ 예전엔 집중 시간 조건만 봐서, 타이머를 안 돌린 날은 할 일을 다 끝내도 칸이 안 칠해지고
-  // 연속 일수에도 안 잡혔음(사용자가 타이머 없이 공부한 날이 통째로 누락).
+  // goalMet — 오직 "그날 계획한 항목을 전부 완료"(달성률 100%) 일 때만 달성.
+  // ⚠ 예전엔 `allPlanDone || 집중시간 >= 목표시간` 이라, 할 일을 절반만 끝내도 타이머로 목표
+  // 시간만 채우면 칸이 칠해지고 연속 일수·목표 달성 일수에 잡혔다. 목표 집중 시간은 왼쪽
+  // 카드의 진행률 표시용으로만 쓰고 달성 판정에는 관여하지 않는다.
   const getDayData = (dateStr: string): {
     activities: DayActivity[];
     focusMin: number;
@@ -6985,7 +6985,7 @@ function GrassSection({
       return {
         activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
         focusMin: focusedMin,
-        goalMet: allPlanDone(dateStr) || (focusedMin >= goalMin && goalMin > 0),
+        goalMet: allPlanDone(dateStr),
       };
     }
     if (dateStr > TODAY_STR) return { activities: EMPTY_ACTIVITIES, focusMin: 0, goalMet: false };
@@ -6993,7 +6993,7 @@ function GrassSection({
     return {
       activities: activityIndex[dateStr] ?? EMPTY_ACTIVITIES,
       focusMin: fm,
-      goalMet: allPlanDone(dateStr) || (fm >= goalMin && goalMin > 0),
+      goalMet: allPlanDone(dateStr),
     };
   };
 
@@ -7002,10 +7002,9 @@ function GrassSection({
   const achievedDays = monthDays.filter(d => getDayData(d).goalMet).length;
   const activeDays = monthDays.filter(d => getDayData(d).activities.length > 0).length;
 
-  // 오늘까지 이어지는 연속 목표 달성 일수 — 오늘이 아직 달성 안 됐어도 어제 이전 스트릭은
-  // 살아있는 것으로 취급 (오늘 시간이 남았으니 유예). 뷰 월과 무관하게 실제 오늘 기준으로 계산.
-  // ⚠ 여기가 항상 0을 뱉었던 원인은 이 루프가 아니라 goalMin 이었다(위 goalOverride 주석 참고).
-  // goalMin 이 0 이면 goalMet 이 전부 false 라 아래 계산도 통째로 0 이 된다.
+  // 오늘까지 이어지는 연속 달성 일수 — 하루라도 달성률 100% 가 아닌 날을 만나면 거기서 끊긴다
+  // (break). 단 오늘만은 아직 달성 못 했어도 어제 이전 스트릭을 살려 둔다(하루가 안 끝났으니 유예).
+  // 뷰 월과 무관하게 실제 오늘 기준으로 계산.
   const currentStreak = (() => {
     let streak = 0;
     const cur = parseLocalDate(TODAY_STR);
@@ -7118,7 +7117,7 @@ function GrassSection({
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold">{viewYear}년 {viewMonth + 1}월</span>
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1" title="그날 할 일을 모두 완료했거나, 목표 집중 시간을 채운 날">
+                <span className="flex items-center gap-1" title="그날 계획한 항목을 모두 완료한 날 (달성률 100%)">
                   <span className="inline-block size-2.5 rounded-sm bg-sky-100 border border-sky-300" />
                   달성일
                 </span>
