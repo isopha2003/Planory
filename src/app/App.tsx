@@ -1249,12 +1249,18 @@ export default function App() {
       const maxWeeks = repeat.endType === "count"
         ? Math.ceil(repeat.endCount / daysPerWeek)
         : repeat.endType === "date" ? 53 : 8;
+      // 요일을 "원본 날짜로부터 며칠 뒤"로 환산해 오름차순 정렬. 예전엔 요일 번호 순(일=0,
+      // 월=1...)으로 돌았는데, 그 순서는 원본 요일이 일요일이 아닌 이상 달력 순서와 어긋난다.
+      // 그러면 상한(종료일/횟수)에 뒤쪽 날짜가 먼저 걸려 아직 순회하지 않은 앞쪽 날짜까지
+      // 통째로 잘려나감 — 수요일에 월~금/8월 31일까지 반복을 걸면 화요일이 9/1로 종료일을
+      // 넘기며 중단돼 8/27(목)·8/28(금)이 만들어지지 않았음.
+      const offsets = [...new Set(repeat.days.map(day => (day - origin.getDay() + 7) % 7 || 7))]
+        .sort((a, b) => a - b);
       for (let week = 1; week <= maxWeeks; week++) {
-        for (const day of repeat.days.slice().sort()) {
+        for (const offset of offsets) {
           if (dates.length >= wantCount) return dates;
           const d = new Date(origin);
-          const diff = (day - origin.getDay() + 7) % 7 || 7;
-          d.setDate(origin.getDate() + diff + (week - 1) * 7);
+          d.setDate(origin.getDate() + offset + (week - 1) * 7);
           const ds = toDateStr(d);
           if (overEnd(ds)) return dates;
           dates.push(ds);
