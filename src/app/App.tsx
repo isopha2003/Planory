@@ -1522,6 +1522,19 @@ export default function App() {
           updateTodo(t.id, { category: "" }).catch(() => {});
         }
       }
+      // 시간 블록도 같은 category 문자열로 카테고리를 참조한다(blocks.category).
+      // 예전엔 todos 만 미분류로 돌려서 블록에는 삭제된 카테고리 이름이 그대로 남았다.
+      // 색은 getCategoryColor 가 못 찾아 미분류 톤으로 보이지만 값은 남아 있어서,
+      // 상세 패널엔 없는 카테고리 이름이 표시되고 카테고리별 정렬에선 유령 그룹이 생기며,
+      // 같은 이름으로 카테고리를 다시 만들면 그 블록들이 조용히 다시 붙어버렸다.
+      // 이름 변경(updateTemplate)은 이미 blocks 까지 갱신하므로 삭제도 대칭으로 맞춘다.
+      const orphanedBlocks = blocks.filter(b => b.category === name);
+      if (orphanedBlocks.length > 0) {
+        setBlocks(bs => bs.map(b => b.category === name ? { ...b, category: "" } : b));
+        for (const b of orphanedBlocks) {
+          patchBlock(b.id, { category: "" }).catch(notifyError("블록 카테고리 갱신 실패"));
+        }
+      }
     }
     deleteTemplateRow(id).catch(notifyError("블록 템플릿 삭제 실패"));
   };
