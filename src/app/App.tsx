@@ -5019,6 +5019,14 @@ function TodoPanel({
   const rangeDeadlines = showDayHeader
     ? deadlines.filter(d => viewDateStrs.includes(d.dueDate)).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
     : [];
+  // 날짜별 보기에서 실제로 렌더되는 날짜 섹션 — 할 일이나 마감이 있는 날만.
+  // (카테고리를 끌고 있는 동안에는 드랍 자리를 만들기 위해 모든 날짜를 펼친다.)
+  // 섹션마다 자체 hover 고스트가 붙으므로, 하단 공통 "+ 새 할 일" 의 노출 조건으로도 쓴다.
+  const dateSectionDays = viewDays.filter(d => {
+    if (catDragging) return true;
+    const ds = toDateStr(d);
+    return todos.some(t => coversDate(t, ds)) || rangeDeadlines.some(dl => dl.dueDate === ds);
+  });
 
   // 마감 카드 — 할 일 카드와 같은 블록 형태(원형 체크 + 스트라이프).
   // 블록 색(배경/스트라이프/체크 아이콘)은 마감 커스텀 색이 있으면 그것을, 없으면 D-day 톤.
@@ -5421,13 +5429,8 @@ function TodoPanel({
           </div>
           <div className="space-y-6">
           {groupMode === "date" ? <>
-          {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출.
-               단, 카테고리를 끌고 있는 동안에는 모든 날짜를 펼쳐 드랍 자리를 만든다. */}
-          {viewDays.filter(d => {
-            if (catDragging) return true;
-            const ds = toDateStr(d);
-            return todos.some(t => coversDate(t, ds)) || rangeDeadlines.some(dl => dl.dueDate === ds);
-          }).map((day) => {
+          {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출(dateSectionDays). */}
+          {dateSectionDays.map((day) => {
             const dateStr = toDateStr(day);
             const isToday = dateStr === TODAY_STR;
             const dow = day.getDay();
@@ -5518,15 +5521,22 @@ function TodoPanel({
               </div>
             );
           })}
-          {!catDragging && viewDays.every(d => !todos.some(t => coversDate(t, toDateStr(d)))) && rangeDeadlines.length === 0 && (
+          {!catDragging && dateSectionDays.length === 0 && (
             <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없습니다</p>
           )}
-          {/* 빈 날짜 섹션이 없으므로 새 할 일 진입점은 하단 공통 버튼 — 날짜(기본: 보고 있는 날짜)와
-               카테고리를 폼에서 선택해 추가. */}
+          {/* 새 할 일 진입점(하단 공통) — 날짜(기본: 보고 있는 날짜)와 카테고리를 폼에서 선택해 추가.
+               날짜 섹션이 하나도 없으면 이게 유일한 진입점이라 항상 노출한다.
+               섹션이 있으면 각 섹션이 이미 자체 hover 고스트를 갖고 있어서, 항상 노출하면 섹션을
+               가리킬 때 "+ 새 할 일" 이 두 개로 보임 — 그래서 이 버튼에 hover 했을 때만 드러낸다.
+               숨길 때 언마운트하지 않고 opacity 로만 감추는 이유: 사라지면 hover 판정 영역도 함께
+               없어져 다시 띄울 방법이 없고, 리스트 하단 높이가 들썩인다. 섹션 고스트가 전환 없이
+               즉시 나타나므로 여기도 opacity 트랜지션은 두지 않아 톤을 맞춘다. */}
           {addPicker?.key === "__global__" ? renderAddPicker() : (
             <button
               onClick={() => { setAddDate(defaultAddDate); setAddPicker({ key: "__global__" }); setNewCatMode(false); }}
-              className={ghostCardCls}
+              className={dateSectionDays.length > 0
+                ? `${ghostCardCls} opacity-0 hover:opacity-100 focus-visible:opacity-100`
+                : ghostCardCls}
               style={ghostShadow}
               title="새 할 일 추가"
             >
