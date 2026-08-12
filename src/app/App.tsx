@@ -3617,6 +3617,16 @@ function CalendarSection({
     return `${viewDate.getFullYear()}년 ${viewDate.getMonth()+1}월`;
   })();
 
+  // headerLabel 은 헤더 전체(좌: 뷰 세그먼트 / 우: 콘텐츠 토글)를 기준으로 가운데 정렬되지만,
+  // 아래 날짜 컬럼들은 템플릿 패널(w-44, 접으면 w-9)과 요일 헤더 좌측 chevron 자리(w-12)만큼
+  // 오른쪽에서 시작한다. 그래서 그냥 두면 라벨이 컬럼보다 왼쪽으로 치우쳐 보인다.
+  //   컬럼 영역 = [패널폭 + 게이지폭, 오른쪽 끝]
+  //   컬럼 영역의 가운데 = 헤더 가운데 + (패널폭 + 게이지폭) / 2
+  // 일 뷰(컬럼 1개)와 주/월 뷰(7개 중 가운데 = 수요일)의 가운데가 같은 식이라 분기가 없다.
+  // 월 뷰는 chevron 이 absolute 라 흐름 폭을 차지하지 않으므로 게이지폭 0.
+  // Tailwind 폭이 rem 기반이라 rem 으로 계산해 루트 글씨 크기가 바뀌어도 함께 따라가게 한다.
+  const labelShiftRem = ((templateOpen ? 11 : 2.25) + (calView === "month" ? 0 : 3)) / 2;
+
   const hasOverlapForDate = (dateStr: string, startMin: number, endMin: number, excludeId?: string) =>
     topLevelBlocks.filter(b => b.date === dateStr && b.id !== excludeId)
       .some(b => startMin < b.endH * 60 + b.endM && endMin > b.startH * 60 + b.startM);
@@ -4334,8 +4344,15 @@ function CalendarSection({
           </div>
         </div>
         {/* 중앙: 날짜 라벨. 클릭하면 연/월 점프 팝오버가 열려 화살표로 한 칸씩 옮기지 않고
-             원하는 연·월로 바로 이동. 위치 계산 단순화를 위해 relative 컨테이너 안에 absolute 팝오버. */}
-        <div className="flex items-center relative" ref={monthPickerRef}>
+             원하는 연·월로 바로 이동. 위치 계산 단순화를 위해 relative 컨테이너 안에 absolute 팝오버.
+             translateX(labelShiftRem) 로 아래 날짜 컬럼 영역의 가운데에 맞춘다 — transform 은
+             흐름 폭을 바꾸지 않아 좌/우 영역 배치는 그대로다. 템플릿 패널의 접기 트랜지션
+             (duration-200)과 같은 시간을 줘서 패널을 접을 때 라벨이 함께 미끄러지게 한다. */}
+        <div
+          className="flex items-center relative transition-transform duration-200"
+          style={{ transform: `translateX(${labelShiftRem}rem)` }}
+          ref={monthPickerRef}
+        >
           <button
             onClick={() => {
               setMonthPickerYear(viewDate.getFullYear());
