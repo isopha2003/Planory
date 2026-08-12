@@ -1997,17 +1997,12 @@ export default function App() {
           />
         </div>
 
-        {/* Right: 달성률 배지 + 창 컨트롤(min/max/close). Fitts's law상 창 컨트롤이 오른쪽
-             모서리에 딱 붙어야 클릭이 편하므로 우측 컨테이너 자체엔 padding을 두지 않음. */}
+        {/* Right: 창 컨트롤(min/max/close). Fitts's law상 창 컨트롤이 오른쪽 모서리에 딱 붙어야
+             클릭이 편하므로 우측 컨테이너 자체엔 padding을 두지 않음.
+             달성률 배지는 여기 있었으나 제거 — 같은 수치를 "오늘" 탭과 "활동 기록 & 통계" 에서
+             더 넓은 맥락(막대/게이지)과 함께 보여주므로 타이틀바에 상시 노출할 필요가 없었다.
+             completionRate 자체는 그 두 곳에 계속 전달된다. */}
         <div data-tauri-drag-region className="flex-1 flex items-stretch items-center justify-end min-w-0">
-          <div data-tauri-drag-region className="flex items-center gap-2 px-3 pointer-events-none">
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-border/80 bg-background/70 pointer-events-auto" title={`오늘 달성률 ${completionRate}%`}>
-              {/* 좁은 창(<md)에서는 텍스트 라벨을 감춰 % + 원형 게이지만 유지 — 정보 밀도 유지하면서 폭 절약. */}
-              <span className="text-[11px] text-muted-foreground whitespace-nowrap hidden md:inline">오늘 달성률</span>
-              <span className="text-[11px] font-semibold tabular-nums text-foreground">{completionRate}%</span>
-              <CircleProgress value={completionRate} size={16} strokeWidth={2.5} />
-            </div>
-          </div>
           <WindowControls />
         </div>
       </header>
@@ -3618,14 +3613,14 @@ function CalendarSection({
   })();
 
   // headerLabel 은 헤더 전체(좌: 뷰 세그먼트 / 우: 콘텐츠 토글)를 기준으로 가운데 정렬되지만,
-  // 아래 날짜 컬럼들은 템플릿 패널(w-44, 접으면 w-9)과 요일 헤더 좌측 chevron 자리(w-12)만큼
-  // 오른쪽에서 시작한다. 그래서 그냥 두면 라벨이 컬럼보다 왼쪽으로 치우쳐 보인다.
-  //   컬럼 영역 = [패널폭 + 게이지폭, 오른쪽 끝]
-  //   컬럼 영역의 가운데 = 헤더 가운데 + (패널폭 + 게이지폭) / 2
-  // 일 뷰(컬럼 1개)와 주/월 뷰(7개 중 가운데 = 수요일)의 가운데가 같은 식이라 분기가 없다.
-  // 월 뷰는 chevron 이 absolute 라 흐름 폭을 차지하지 않으므로 게이지폭 0.
+  // 아래 캘린더 본문은 템플릿 패널(w-44, 접으면 w-9) 만큼 오른쪽에서 시작한다. 그래서 그냥
+  // 두면 라벨이 본문보다 왼쪽으로 치우쳐 보이므로 패널 폭의 절반만큼 오른쪽으로 민다.
+  //
+  // 일/주 요일 헤더의 좌측 chevron 자리(w-12)는 일부러 더하지 않는다. 그 폭까지 더하면 컬럼
+  // 자체의 가운데에는 더 정확히 맞지만 일/주 뷰만 월 뷰보다 오른쪽으로 밀려서, 뷰를 바꿀 때마다
+  // 라벨이 좌우로 움직인다. 세 뷰에서 라벨 위치를 고정하는 쪽(= 본문 영역의 가운데)을 택했다.
   // Tailwind 폭이 rem 기반이라 rem 으로 계산해 루트 글씨 크기가 바뀌어도 함께 따라가게 한다.
-  const labelShiftRem = ((templateOpen ? 11 : 2.25) + (calView === "month" ? 0 : 3)) / 2;
+  const labelShiftRem = (templateOpen ? 11 : 2.25) / 2;
 
   const hasOverlapForDate = (dateStr: string, startMin: number, endMin: number, excludeId?: string) =>
     topLevelBlocks.filter(b => b.date === dateStr && b.id !== excludeId)
@@ -8496,6 +8491,35 @@ function RichNoteEditor({
   const onContentChangeRef = useRef(onContentChange);
   onContentChangeRef.current = onContentChange;
 
+  // 실제로 스크롤되는 요소 — ProseMirror 편집 영역의 부모.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // 캐럿이 보이는 범위를 벗어나면 스크롤을 따라 내린다. 예전엔 글이 한 화면을 넘기면 캐럿이
+  // 아래쪽 보이지 않는 곳에 남아 사용자가 매번 손으로 스크롤해야 했다(스크롤러가 편집 영역
+  // 자신이 아니라 부모라서 ProseMirror 기본 scrollIntoView 가 이 레이아웃에서 듣지 않음).
+  //
+  // 경계에 딱 붙이지 않고 margin 만큼 여유를 두는 이유: 캐럿이 화면 맨 아래 픽셀에 걸려
+  // 다음 줄이 안 보이는 상태로 계속 타이핑하게 되는 걸 막는다. 범위 안이면 아무것도 하지
+  // 않으므로(멱등) ProseMirror 가 스스로 스크롤한 경우와 겹쳐도 흔들리지 않는다.
+  // 값을 읽는 대상이 ref 뿐이라 useEditor 옵션에 캡처돼도 stale 되지 않는다.
+  const keepCaretVisible = (ed: Editor) => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    // DOM 이 새 내용으로 리플로우된 뒤에 좌표를 재야 정확하다.
+    requestAnimationFrame(() => {
+      let caret: { top: number; bottom: number };
+      // 좌표를 못 구하는 상태(파괴된 뷰 등)에서는 조용히 포기 — 스크롤 보정은 부가 기능.
+      try { caret = ed.view.coordsAtPos(ed.state.selection.head); } catch { return; }
+      const box = scroller.getBoundingClientRect();
+      const margin = 24;
+      if (caret.bottom > box.bottom - margin) {
+        scroller.scrollTop += caret.bottom - (box.bottom - margin);
+      } else if (caret.top < box.top + margin) {
+        scroller.scrollTop -= (box.top + margin) - caret.top;
+      }
+    });
+  };
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -8509,7 +8533,10 @@ function RichNoteEditor({
     onUpdate: ({ editor }) => {
       const md = (editor.storage as any).markdown?.getMarkdown?.() ?? "";
       onContentChangeRef.current(md);
+      keepCaretVisible(editor);
     },
+    // 입력 없이 커서만 옮긴 경우(방향키·클릭 등)도 같은 규칙으로 따라간다.
+    onSelectionUpdate: ({ editor }) => keepCaretVisible(editor),
     editorProps: {
       attributes: {
         // PROSE_CLASS로 목록/제목 스타일을 마크다운 프리뷰와 동일하게 통일.
@@ -8531,6 +8558,7 @@ function RichNoteEditor({
       <RichToolbar editor={editor} />
       {/* 빈 공간 클릭 시 에디터 포커스 — 짧은 메모라 아래 여백이 넓을 때 클릭이 먹히지 않는 것 방지. */}
       <div
+        ref={scrollRef}
         className="flex-1 overflow-y-auto p-4 cursor-text"
         onClick={e => {
           if (e.target === e.currentTarget) editor.chain().focus().run();
@@ -8707,8 +8735,14 @@ function NoteEditor({
         <button onClick={handleBack} className="p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors" title={isView || initialModeRef.current !== "view" ? "목록으로" : "돌아가기"}>
           <ArrowLeft size={18} />
         </button>
+        {/* leading-[1.6] + py-0.5 — text-2xl 의 기본 line-height 는 2rem(32px) 인데, 본문 폰트인
+             Noto Sans KR 이 24px 에서 선언하는 줄 높이는 35px(실측: fontBoundingBox ascent+descent)
+             이라 3px 이 모자랐다. 그래서 글자 상자가 줄 상자를 넘겨 "g·y" 처럼 아래로 뻗는 글자가
+             잘렸다. input 은 내용을 콘텐츠 박스로 클리핑하고 뷰 모드 쪽은 truncate 의
+             overflow:hidden 이 같은 결과를 내므로, 두 곳 모두 줄 높이를 키운다(38px → 3px 여유).
+             클래스를 양쪽에 동일하게 두는 이유: 뷰↔편집 전환에서 제목 높이가 튀지 않게. */}
         {isView ? (
-          <div className="flex-1 text-2xl font-medium truncate">
+          <div className="flex-1 text-2xl font-medium leading-[1.6] py-0.5 truncate">
             {title.trim() || <span className="text-muted-foreground/50">제목 없음</span>}
           </div>
         ) : (
@@ -8716,7 +8750,7 @@ function NoteEditor({
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="제목 없음"
-            className="flex-1 text-2xl font-medium bg-transparent outline-none placeholder:text-muted-foreground/50"
+            className="flex-1 text-2xl font-medium leading-[1.6] py-0.5 bg-transparent outline-none placeholder:text-muted-foreground/50"
           />
         )}
       </div>
