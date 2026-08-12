@@ -2081,7 +2081,6 @@ export default function App() {
               onDeleteBlock={requestDeleteBlock}
               onAddTemplate={addTemplate}
               onDeleteBlockTemplate={deleteTemplate}
-              onUpdateBlockTemplate={updateTemplate}
               paletteColors={paletteColors}
               onAddPaletteColor={addPaletteColor}
               onRemovePaletteColor={removePaletteColor}
@@ -2185,6 +2184,7 @@ export default function App() {
               requestBlockEdit(id, changes, opts.checklistChanged);
             }}
             onAddTemplate={addTemplate}
+            onDeleteBlockTemplate={deleteTemplate}
           />
         )}
 
@@ -2322,6 +2322,7 @@ export default function App() {
               requestTodoEdit(id, changes, opts.checklistChanged);
             }}
             onAddTemplate={addTemplate}
+            onDeleteBlockTemplate={deleteTemplate}
             onAddChecklistItem={(text, parentItemId) => addTodoChecklistItem(selectedTodo.id, text, parentItemId)}
             onToggleChecklistItem={(id, completed) => toggleTodoChecklistItem(id, completed)}
             onDeleteChecklistItem={(id) => deleteTodoChecklistItem(id)}
@@ -3188,7 +3189,7 @@ function TodaySection({
 function CalendarSection({
   blocks, deadlines, templates, todoChecklistItems, calView, setCalView,
   onSelect, onSelectTodo, onSelectDeadline, onToggle, onToggleDeadline, onAddBlock, onUpdateBlock, onUpdateBlockLocal, onDeleteBlock,
-  onAddTemplate, onDeleteBlockTemplate, onUpdateBlockTemplate,
+  onAddTemplate, onDeleteBlockTemplate,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat, pushUndo,
   todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onReorderTodo, onToggleTodo, onUpdateTodoCategory,
@@ -3211,7 +3212,6 @@ function CalendarSection({
   onDeleteBlock: (id: string) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
   onDeleteBlockTemplate: (id: string) => void;
-  onUpdateBlockTemplate: (id: string, changes: { title?: string; color?: string; tags?: string[] }) => void;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
@@ -3254,17 +3254,6 @@ function CalendarSection({
   const topLevelBlocks = blocks.filter(b => !b.parentBlockId);
 
   const [viewDate, setViewDate] = useState(TODAY_DATE);
-  // 어느 종류의 템플릿을 새로 만드는지 — null 이면 폼 닫힘, "time"/"todo" 면 해당 종류로 열림.
-  const [showNewTpl, setShowNewTpl] = useState<null | "time" | "todo">(null);
-  const [showTplCustomColor, setShowTplCustomColor] = useState(false);
-  const [newTplTitle, setNewTplTitle] = useState("");
-  const [newTplColor, setNewTplColor] = useState("#5AA9E6");
-  // 기존 카테고리 이름·색 편집 — 색 스와치를 클릭하면 그 행 아래에 편집 팝오버가 열림.
-  // 한 번에 한 카테고리만 편집 상태이므로 단일 id 로 관리. showEditRowCustomColor 는
-  // 팝오버 내부의 사용자 지정 색 추가 폼 오픈 여부, editingTplNameDraft 는 이름 입력 임시값.
-  const [editingTplId, setEditingTplId] = useState<string | null>(null);
-  const [showEditRowCustomColor, setShowEditRowCustomColor] = useState(false);
-  const [editingTplNameDraft, setEditingTplNameDraft] = useState("");
   const [dragTplId, setDragTplId] = useState<string | null>(null);
   const [dragBlockId, setDragBlockId] = useState<string | null>(null);
   const [dragBlockOffsetMin, setDragBlockOffsetMin] = useState(0); // minutes from block top to mouse
@@ -3340,36 +3329,6 @@ function CalendarSection({
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [monthPickerOpen]);
-
-  // 카테고리 관리 팝오버 — 예전엔 캘린더 왼쪽에 상시 사이드바("템플릿" 패널)로 붙어 있었다.
-  // 그 패널의 존재 이유는 카테고리를 시간 그리드/할 일 목록으로 끌어다 놓는 드래그 생성이었는데
-  // 그 기능을 없애면서 상시 자리를 차지할 이유가 사라졌다. 관리 기능(이름·색·삭제·추가)은
-  // 그대로 유지해야 하므로 헤더 버튼에서 여는 팝오버로 옮김. 열림/외부클릭/Esc 처리는
-  // 위 monthPicker 와 같은 패턴.
-  const [catPanelOpen, setCatPanelOpen] = useState(false);
-  const catPanelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!catPanelOpen) return;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (catPanelRef.current && !catPanelRef.current.contains(e.target as Node)) setCatPanelOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setCatPanelOpen(false); };
-    document.addEventListener("mousedown", onDocMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onDocMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [catPanelOpen]);
-  // 팝오버를 닫을 때 안에서 열어둔 편집/추가 폼 상태도 함께 정리 — 다시 열었을 때
-  // 이전에 편집하던 행이 펼쳐진 채로 남지 않게.
-  useEffect(() => {
-    if (catPanelOpen) return;
-    setEditingTplId(null);
-    setShowEditRowCustomColor(false);
-    setShowNewTpl(null);
-    setShowTplCustomColor(false);
-  }, [catPanelOpen]);
 
   const blocksRef = useRef(topLevelBlocks);
   useEffect(() => { blocksRef.current = topLevelBlocks; }, [topLevelBlocks]);
@@ -4339,200 +4298,6 @@ function CalendarSection({
     );
   };
 
-  // ── 카테고리 관리 팝오버 ────────────────────────────────────────
-  // 옛 "템플릿" 사이드바의 카테고리 목록을 그대로 옮긴 것 — 추가/이름 변경/색상 변경/삭제.
-  // 옛 버전과의 차이는 딱 두 가지: (1) 행의 draggable/onDragStart 제거(드래그 생성 기능 폐지),
-  // (2) 사이드바 배경이 아니라 카드 위에 뜨므로 bg/ring-offset 토큰을 sidebar → muted/card 로 교체.
-  const renderCategoryManager = () => (
-    <div className="absolute top-full left-0 mt-1 z-40 w-60 rounded-lg border border-border bg-card shadow-lg p-2 max-h-[70vh] overflow-y-auto space-y-0.5">
-      {templates.length === 0 && showNewTpl !== "todo" && (
-        <div className="text-[11px] text-muted-foreground px-2 py-2">
-          아직 카테고리가 없습니다. 아래에서 추가해 보세요.
-        </div>
-      )}
-      {templates.map(t => {
-        const editing = editingTplId === t.id;
-        // 이름 임시 입력 확정 — 트리밍한 값이 비어있으면 무시(원본 유지), 다른 값이면 저장.
-        // 이름 중복은 저장 후 렌더에서만 문제 되므로(카테고리 매칭이 문자열 기반), 여기서
-        // 미리 중복이면 저장 취소하고 팝오버 유지.
-        const commitName = () => {
-          const trimmed = editingTplNameDraft.trim();
-          if (!trimmed || trimmed === t.title) return;
-          if (templates.some(x => x.id !== t.id && x.kind === "todo" && x.title === trimmed)) return;
-          onUpdateBlockTemplate(t.id, { title: trimmed });
-        };
-        return (
-          <div key={t.id}>
-            <div
-              onClick={() => {
-                if (editing) {
-                  setEditingTplId(null);
-                  setShowEditRowCustomColor(false);
-                } else {
-                  setEditingTplId(t.id);
-                  setEditingTplNameDraft(t.title);
-                  setShowEditRowCustomColor(false);
-                }
-              }}
-              className="group/tpl flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-muted cursor-pointer transition-colors text-xs select-none"
-              title="클릭: 이름·색상 편집"
-            >
-              {/* 편집 중인 행은 스와치 링으로 강조 — 지금 편집 대상이 명확히 보이게 함. */}
-              <span
-                className={`size-3.5 rounded-sm flex-shrink-0 ${editing ? "ring-2 ring-offset-1 ring-offset-card ring-foreground/40" : ""}`}
-                style={{ backgroundColor: t.color }}
-              />
-              <span className="flex-1 truncate text-foreground/80">{t.title}</span>
-              <button
-                onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(t.id); }}
-                title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
-                className="opacity-0 group-hover/tpl:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-destructive flex-shrink-0"
-              ><X size={11} /></button>
-            </div>
-            {/* 편집 폼 — 이름(위) + 팔레트(아래). 이름은 Enter/blur 시 저장,
-                 색은 클릭 즉시 저장 + 폼 자동 닫힘. */}
-            {editing && (
-              <div className="mx-1 my-1 p-2 rounded-lg bg-muted space-y-1.5">
-                <input
-                  autoFocus
-                  value={editingTplNameDraft}
-                  onChange={e => setEditingTplNameDraft(e.target.value)}
-                  onBlur={commitName}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") { e.preventDefault(); commitName(); setEditingTplId(null); }
-                    else if (e.key === "Escape") { e.preventDefault(); setEditingTplId(null); }
-                  }}
-                  placeholder="카테고리 이름..."
-                  className="w-full text-xs px-2 py-1 rounded bg-card border border-border outline-none focus:ring-1 focus:ring-ring"
-                />
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {paletteColors.map(c => (
-                    <div key={c} className="relative group/color size-5 flex-shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          commitName();
-                          onUpdateBlockTemplate(t.id, { color: c });
-                          setEditingTplId(null);
-                          setShowEditRowCustomColor(false);
-                        }}
-                        className={`size-5 rounded-full transition-transform ${t.color.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-muted ring-foreground/40 scale-110" : ""}`}
-                        style={{ backgroundColor: c }}
-                        title={c}
-                      />
-                      <button
-                        type="button"
-                        onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
-                        className="absolute -top-1 -right-1 size-3 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
-                        title="팔레트에서 제거"
-                      >
-                        <X size={7} strokeWidth={2.5} />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setShowEditRowCustomColor(v => !v)}
-                    className={`size-5 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showEditRowCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-card hover:bg-muted"}`}
-                    title="사용자 지정 색상 추가"
-                  >
-                    <Plus size={10} className={showEditRowCustomColor ? "text-primary" : "text-muted-foreground"} />
-                  </button>
-                </div>
-                {showEditRowCustomColor && (
-                  <CustomColorPickerInline
-                    initial={t.color}
-                    onAdd={(color) => {
-                      commitName();
-                      onAddPaletteColor(color);
-                      onUpdateBlockTemplate(t.id, { color });
-                      setEditingTplId(null);
-                      setShowEditRowCustomColor(false);
-                    }}
-                    onClose={() => setShowEditRowCustomColor(false)}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {showNewTpl === "todo" ? (
-        <div className="p-2 rounded-lg bg-muted space-y-1.5">
-          <input
-            autoFocus
-            value={newTplTitle}
-            onChange={e => setNewTplTitle(e.target.value)}
-            placeholder="카테고리 이름..."
-            className="w-full text-xs px-2 py-1 rounded bg-card border border-border outline-none focus:ring-1 focus:ring-ring"
-          />
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {paletteColors.map(c => (
-              <div key={c} className="relative group/color size-5 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setNewTplColor(c)}
-                  className={`size-5 rounded-full transition-transform ${newTplColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-offset-1 ring-offset-muted ring-foreground/40 scale-110" : ""}`}
-                  style={{ backgroundColor: c }}
-                  title={c}
-                />
-                <button
-                  type="button"
-                  onClick={e => { e.stopPropagation(); onRemovePaletteColor(c); }}
-                  className="absolute -top-1 -right-1 size-3 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive opacity-0 group-hover/color:opacity-100 transition-opacity flex items-center justify-center shadow-sm"
-                  title="팔레트에서 제거"
-                >
-                  <X size={7} strokeWidth={2.5} />
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => setShowTplCustomColor(v => !v)}
-              className={`size-5 rounded-full border flex items-center justify-center transition-colors flex-shrink-0 ${showTplCustomColor ? "border-primary/60 bg-primary/10" : "border-border/70 bg-card hover:bg-muted"}`}
-              title="사용자 지정 색상 추가"
-            >
-              <Plus size={10} className={showTplCustomColor ? "text-primary" : "text-muted-foreground"} />
-            </button>
-          </div>
-          {showTplCustomColor && (
-            <CustomColorPickerInline
-              initial={newTplColor}
-              onAdd={(color) => { setNewTplColor(color); onAddPaletteColor(color); }}
-              onClose={() => setShowTplCustomColor(false)}
-            />
-          )}
-          <div className="flex gap-1.5">
-            <button
-              onClick={() => {
-                const name = newTplTitle.trim();
-                if (!name) return;
-                // 같은 이름의 카테고리가 이미 있으면 중복 생성 방지 — todos.category 매칭이
-                // 문자열 기반이라 두 카테고리가 같은 이름을 가지면 색 조회가 랜덤해짐.
-                if (templates.some(x => x.kind === "todo" && x.title === name)) {
-                  setShowNewTpl(null);
-                  return;
-                }
-                onAddTemplate({ title: name, color: newTplColor, tags: [], kind: "todo" });
-                setNewTplTitle(""); setShowNewTpl(null);
-              }}
-              disabled={!newTplTitle.trim()}
-              className="flex-1 text-[11px] py-1 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 transition-opacity"
-            >추가</button>
-            <button onClick={() => setShowNewTpl(null)} className="flex-1 text-[11px] py-1 rounded-lg bg-card border border-border hover:bg-muted transition-colors">취소</button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setShowNewTpl("todo")}
-          className="flex items-center gap-1.5 px-2 py-2 text-xs text-muted-foreground hover:text-foreground w-full rounded-lg hover:bg-muted transition-colors"
-        >
-          <Plus size={11}/> 새 카테고리
-        </button>
-      )}
-    </div>
-  );
-
   // ── List view ───────────────────────────────────────────────────
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -4546,17 +4311,6 @@ function CalendarSection({
                 {v==="day"?"일":v==="week"?"주":"월"}
               </button>
             ))}
-          </div>
-          {/* 카테고리 관리 — 옛 왼쪽 사이드바를 대체하는 팝오버 진입점. */}
-          <div className="relative" ref={catPanelRef}>
-            <button
-              onClick={() => setCatPanelOpen(v => !v)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg transition-colors ${catPanelOpen ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-              title="카테고리 관리 — 추가·이름 변경·색상 변경·삭제"
-            >
-              <Palette size={12} /> 카테고리
-            </button>
-            {catPanelOpen && renderCategoryManager()}
           </div>
         </div>
         {/* 중앙: 날짜 라벨. 클릭하면 연/월 점프 팝오버가 열려 화살표로 한 칸씩 옮기지 않고
@@ -4772,6 +4526,7 @@ function CalendarSection({
                   onChangeGroupMode={setTodoGroupMode}
                   onAdd={onAddTodo}
                   onAddTemplate={onAddTemplate}
+                  onDeleteBlockTemplate={onDeleteBlockTemplate}
                   onDelete={onDeleteTodo}
                   onUpdateTitle={onUpdateTodoTitle}
                   onSelectTodo={onSelectTodo}
@@ -4870,7 +4625,7 @@ function CalendarSection({
 // "+ 새 할 일" 고스트 — 날짜별은 카테고리 픽커를 거치고, 카테고리별은 그 카테고리로 즉시 생성.
 function TodoPanel({
   todos, templates, todoChecklistItems, viewDays, focusDate, paletteColors, groupMode, onChangeGroupMode,
-  onAdd, onAddTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
+  onAdd, onAddTemplate, onDeleteBlockTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo, onChangeCategory,
   deadlines, onToggleDeadline, onSelectDeadline,
   showDayHeader, onGoPrev, onGoNext, onSelectDate, onMoveTodo, onReorderTodo,
   categoryRankFor, globalCategoryOrder, onReorderCategory, onReorderCategoryGlobal,
@@ -4889,6 +4644,7 @@ function TodoPanel({
   onChangeGroupMode: (m: "date" | "category") => void;
   onAdd: (t: { title: string; date: string; endDate?: string | null; color?: string; category?: string }, options?: { openInline?: boolean }) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
+  onDeleteBlockTemplate: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdateTitle: (id: string, title: string) => void;
   // 할 일 카드 클릭 → 상세 패널 열기. 없으면 기존 인라인 편집 fallback.
@@ -5280,15 +5036,26 @@ function TodoPanel({
         ) : (
           <>
             <div className="text-[9px] text-muted-foreground px-1.5 py-0.5 uppercase tracking-wide">카테고리 선택</div>
+            {/* 우측 휴지통 — 카테고리 삭제 진입점. 예전엔 캘린더 왼쪽 "템플릿" 사이드바에만
+                       있었는데 그 패널을 없애면서, 카테고리가 실제로 나열되는 자리마다 붙였다.
+                       행을 button 안에 button 으로 중첩할 수 없어(잘못된 HTML) 바깥을 div 로 바꾸고
+                       선택용 button 과 삭제용 button 을 형제로 둔다. hover 시에만 노출해 평소
+                       목록 모양은 그대로 유지. */}
             {categories.map(c => (
-              <button
-                key={c.id}
-                onClick={() => pickCategory(effDate, c.title)}
-                className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
-              >
-                <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
-                <span className="text-[10px] truncate">{c.title}</span>
-              </button>
+              <div key={c.id} className="group/cat flex items-center rounded hover:bg-muted">
+                <button
+                  onClick={() => pickCategory(effDate, c.title)}
+                  className="flex-1 min-w-0 flex items-center gap-2 px-1.5 py-1 text-left"
+                >
+                  <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
+                  <span className="text-[10px] truncate">{c.title}</span>
+                </button>
+                <button
+                  onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(c.id); }}
+                  title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
+                  className="opacity-0 group-hover/cat:opacity-100 transition-opacity px-1 py-1 text-muted-foreground hover:text-destructive flex-shrink-0"
+                ><Trash2 size={10} /></button>
+              </div>
             ))}
             {categories.length === 0 && (
               <div className="text-[9px] text-muted-foreground px-1.5 py-1">아직 카테고리가 없습니다</div>
@@ -9285,7 +9052,7 @@ function RepeatSection({ originDate, repeat, hasGroup, pending, onSetRepeat, onF
 // 하나뿐이며, 그 외 오늘 달성률·완료·카테고리·메모·체크리스트·삭제는 동일 UI/UX.
 function BlockDetailPanel({
   block, templates, initialEditTitle, paletteColors,
-  onClose, onToggle, onDelete, onSaveDraft, onAddTemplate,
+  onClose, onToggle, onDelete, onSaveDraft, onAddTemplate, onDeleteBlockTemplate,
 }: {
   block: Block;
   templates: Template[];
@@ -9300,6 +9067,7 @@ function BlockDetailPanel({
   // "이후 전체" 로 전파하면 안 되고, 이 항목 한 건만 옮기는 의미이기 때문.
   onSaveDraft: (changes: BlockDraftFields, opts: BlockSaveOpts) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
+  onDeleteBlockTemplate: (id: string) => void;
 }) {
   // draft 모델 — 아래 필드는 편집 도중 로컬에만 반영되고, "저장" 버튼을 눌러야만 DB/부모에 커밋됨.
   // "닫기" 는 draft 를 폐기하며 실제 저장된 값은 그대로 유지. 완료 토글·삭제·체크리스트·새 카테고리
@@ -9526,16 +9294,30 @@ function BlockDetailPanel({
               ref={catDropdownRef}
               className="absolute left-0 right-0 top-full mt-1 z-20 rounded-lg border border-border bg-card shadow-lg p-1 space-y-0.5 max-h-72 overflow-y-auto"
             >
+              {/* 우측 휴지통 — 카테고리 삭제 진입점. 예전엔 캘린더 왼쪽 "템플릿" 사이드바에만
+                       있었는데 그 패널을 없애면서, 카테고리가 실제로 나열되는 자리마다 붙였다.
+                       행을 button 안에 button 으로 중첩할 수 없어(잘못된 HTML) 바깥을 div 로 바꾸고
+                       선택용 button 과 삭제용 button 을 형제로 둔다. hover 시에만 노출해 평소
+                       목록 모양은 그대로 유지. */}
               {categories.map(c => (
-                <button
+                <div
                   key={c.id}
-                  onClick={() => chooseCategory(c.title)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted text-left ${c.title === category ? "bg-muted/60" : ""}`}
+                  className={`group/cat flex items-center rounded hover:bg-muted ${c.title === category ? "bg-muted/60" : ""}`}
                 >
-                  <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
-                  <span className="text-xs truncate">{c.title}</span>
-                  {c.title === category && <Check size={11} className="text-primary flex-shrink-0" />}
-                </button>
+                  <button
+                    onClick={() => chooseCategory(c.title)}
+                    className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left"
+                  >
+                    <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
+                    <span className="text-xs truncate">{c.title}</span>
+                    {c.title === category && <Check size={11} className="text-primary flex-shrink-0" />}
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(c.id); }}
+                    title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
+                    className="opacity-0 group-hover/cat:opacity-100 transition-opacity px-1.5 py-1.5 text-muted-foreground hover:text-destructive flex-shrink-0"
+                  ><Trash2 size={11} /></button>
+                </div>
               ))}
               {categories.length === 0 && (
                 <div className="text-[10px] text-muted-foreground px-2 py-1.5">아직 카테고리가 없습니다</div>
@@ -9842,7 +9624,7 @@ function NewChecklistItemForm({
 // 색상은 카테고리에서 자동 상속하므로 팔레트 UI 는 없음.
 function TodoDetailPanel({
   todo, templates, initialEditTitle, paletteColors, checklistItems,
-  onClose, onToggle, onDelete, onSaveDraft, onAddTemplate,
+  onClose, onToggle, onDelete, onSaveDraft, onAddTemplate, onDeleteBlockTemplate,
   onAddChecklistItem, onToggleChecklistItem, onDeleteChecklistItem, onEditChecklistItem,
 }: {
   todo: Todo;
@@ -9858,6 +9640,7 @@ function TodoDetailPanel({
   // BlockDetailPanel 과 동일한 단일 저장 콜백 — 적용 범위 확인을 한 번만 띄우기 위함.
   onSaveDraft: (changes: BlockDraftFields, opts: BlockSaveOpts) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
+  onDeleteBlockTemplate: (id: string) => void;
   onAddChecklistItem: (text: string, parentItemId?: string) => void;
   onToggleChecklistItem: (id: string, completed: boolean) => void;
   onDeleteChecklistItem: (id: string) => void;
@@ -10011,16 +9794,30 @@ function TodoDetailPanel({
               ref={catDropdownRef}
               className="absolute left-0 right-0 top-full mt-1 z-20 rounded-lg border border-border bg-card shadow-lg p-1 space-y-0.5 max-h-72 overflow-y-auto"
             >
+              {/* 우측 휴지통 — 카테고리 삭제 진입점. 예전엔 캘린더 왼쪽 "템플릿" 사이드바에만
+                       있었는데 그 패널을 없애면서, 카테고리가 실제로 나열되는 자리마다 붙였다.
+                       행을 button 안에 button 으로 중첩할 수 없어(잘못된 HTML) 바깥을 div 로 바꾸고
+                       선택용 button 과 삭제용 button 을 형제로 둔다. hover 시에만 노출해 평소
+                       목록 모양은 그대로 유지. */}
               {categories.map(c => (
-                <button
+                <div
                   key={c.id}
-                  onClick={() => chooseCategory(c.title)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted text-left ${c.title === category ? "bg-muted/60" : ""}`}
+                  className={`group/cat flex items-center rounded hover:bg-muted ${c.title === category ? "bg-muted/60" : ""}`}
                 >
-                  <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
-                  <span className="text-xs truncate">{c.title}</span>
-                  {c.title === category && <Check size={11} className="text-primary flex-shrink-0" />}
-                </button>
+                  <button
+                    onClick={() => chooseCategory(c.title)}
+                    className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 text-left"
+                  >
+                    <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: c.color }} />
+                    <span className="text-xs truncate">{c.title}</span>
+                    {c.title === category && <Check size={11} className="text-primary flex-shrink-0" />}
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(c.id); }}
+                    title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
+                    className="opacity-0 group-hover/cat:opacity-100 transition-opacity px-1.5 py-1.5 text-muted-foreground hover:text-destructive flex-shrink-0"
+                  ><Trash2 size={11} /></button>
+                </div>
               ))}
               {categories.length === 0 && (
                 <div className="text-[10px] text-muted-foreground px-2 py-1.5">아직 카테고리가 없습니다</div>
