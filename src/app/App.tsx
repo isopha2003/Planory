@@ -572,14 +572,32 @@ export default function App() {
     const zoomMap: Record<FontSize, number> = { normal: 1, larger: 1.10, large: 1.20 };
     const z = zoomMap[fontSize];
     const root = document.getElementById("root");
-    if (root) {
-      root.style.zoom = String(z);
-      // #root 가 zoom 배율만큼 커져 body 를 넘치지 않도록 뷰포트를 zoom 으로 나눠 크기 보정.
-      root.style.width = `${100 / z}vw`;
-      root.style.height = `${100 / z}vh`;
-    }
     // 예전 버전에서 html 에 걸어둔 zoom 흔적 제거 — 남아있으면 이중 스케일이 됨.
     document.documentElement.style.removeProperty("zoom");
+    if (!root) return;
+    // #root 가 zoom 배율만큼 커져 창을 넘치지 않도록 크기를 zoom 으로 나눠 보정한다.
+    //
+    // 예전엔 (100/z)vw · (100/z)vh 로 보정했는데 두 가지 문제가 있었다.
+    //  1) CSS zoom 안에서 vw/vh 가 zoom 으로 나뉘는지가 엔진마다 다르다. 표준화된 zoom
+    //     (Chromium 128+, Safari 18+)은 뷰포트 단위를 zoom 으로 조정하지만 레거시 구현은
+    //     조정하지 않는다. 이 앱은 Windows=WebView2(Chromium) / macOS=WKWebView(WebKit) 로
+    //     엔진이 갈리므로, 같은 식이 한쪽에서는 맞고 다른 쪽에서는 배율만큼 어긋난다.
+    //     어긋나면 #root 가 창보다 작아져 오른쪽·아래에 빈 영역(네이티브 창 배경)이 드러난다.
+    //  2) vw 는 정의상 스크롤바 자리를 포함한다. macOS 의 "스크롤바 항상 표시" 설정처럼
+    //     클래식 스크롤바를 쓰는 환경에서는 100vw 가 실제 레이아웃 폭보다 커진다.
+    //
+    // px 은 zoom 이 그대로 곱해지는 단위라 두 엔진에서 결과가 같고,
+    // documentElement.clientWidth/Height 는 스크롤바를 제외한 실제 레이아웃 뷰포트다.
+    const applyRootSize = () => {
+      root.style.zoom = String(z);
+      const doc = document.documentElement;
+      root.style.width = `${doc.clientWidth / z}px`;
+      root.style.height = `${doc.clientHeight / z}px`;
+    };
+    applyRootSize();
+    // px 로 고정했으므로 창 크기가 바뀔 때마다 다시 계산해야 한다(vw/vh 는 자동이었음).
+    window.addEventListener("resize", applyRootSize);
+    return () => window.removeEventListener("resize", applyRootSize);
   }, [fontSize]);
 
   // Pomodoro / settings — timer effect들이 이 상태를 참조하므로 반드시 그 앞에서 선언돼야 함.
@@ -7808,7 +7826,11 @@ function NoteList({
               <FolderCard
                 key={f.id}
                 folder={f}
-                count={notes.filter(n => n.folderId === f.id).length}
+                // 폴더를 열면 draft 는 숨기므로(위 shown 필터) 카운트도 같은 기준이어야 한다 —
+                // 예전엔 draft 를 포함해 세서 카드엔 2개, 안에는 1개만 보였다.
+                // 아래 삭제 확인 모달의 개수는 일부러 draft 를 포함한 채로 둔다: 폴더를 지우면
+                // draft 도 같이 사라지므로, 파괴적 동작의 경고는 적게 알리는 쪽이 더 위험하다.
+                count={notes.filter(n => n.folderId === f.id && !n.isDraft).length}
                 isDropTarget={dropFolderId === f.id}
                 isDragging={dragFolderId === f.id}
                 isEditing={editingFolderId === f.id}
