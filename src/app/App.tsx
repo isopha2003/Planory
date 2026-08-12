@@ -5012,9 +5012,12 @@ function TodoPanel({
     if (!addPicker) return null;
     const effDate = addPicker.date ?? addDate;
     return (
+      /* 컨테이너 rounded-xl(12px) 안쪽에 p-1.5(6px) — 행은 rounded-lg(8px)로 두어
+         모서리가 컨테이너 곡률을 넘지 않게(동심). 예전엔 p-1 + rounded(4px) 조합이라
+         hover 배경의 각진 모서리가 컨테이너의 둥근 모서리 밖으로 삐져나와 잘려 보였다. */
       <div
         ref={pickerRef}
-        className="rounded-xl bg-card border border-primary/25 shadow-lg p-1 space-y-0.5"
+        className="rounded-xl bg-card border border-primary/25 shadow-lg p-1.5 space-y-0.5"
         style={ghostShadow}
       >
         {addPicker.date == null && (
@@ -5040,9 +5043,10 @@ function TodoPanel({
                        있었는데 그 패널을 없애면서, 카테고리가 실제로 나열되는 자리마다 붙였다.
                        행을 button 안에 button 으로 중첩할 수 없어(잘못된 HTML) 바깥을 div 로 바꾸고
                        선택용 button 과 삭제용 button 을 형제로 둔다. hover 시에만 노출해 평소
-                       목록 모양은 그대로 유지. */}
+                       목록 모양은 그대로 유지. title 툴팁은 두지 않는다 — 좁은 드롭다운 안에서
+                       OS 기본 툴팁이 세로로 길게 늘어져 목록을 가렸다. */}
             {categories.map(c => (
-              <div key={c.id} className="group/cat flex items-center rounded hover:bg-muted">
+              <div key={c.id} className="group/cat flex items-center rounded-lg hover:bg-muted">
                 <button
                   onClick={() => pickCategory(effDate, c.title)}
                   className="flex-1 min-w-0 flex items-center gap-2 px-1.5 py-1 text-left"
@@ -5052,7 +5056,6 @@ function TodoPanel({
                 </button>
                 <button
                   onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(c.id); }}
-                  title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
                   className="opacity-0 group-hover/cat:opacity-100 transition-opacity px-1 py-1 text-muted-foreground hover:text-destructive flex-shrink-0"
                 ><Trash2 size={10} /></button>
               </div>
@@ -5062,14 +5065,17 @@ function TodoPanel({
             )}
             <button
               onClick={() => pickCategory(effDate, "")}
-              className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+              className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-muted text-left"
             >
               <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: UNCATEGORIZED_TODO_COLOR }} />
               <span className="text-[10px] text-muted-foreground truncate">미분류</span>
             </button>
             <div className="h-px bg-border/60 my-0.5" />
             {newCatMode ? (
-              <div className="p-1 space-y-1">
+              /* 이름 입력 · 색 팔레트 · 추가/취소 세 덩어리가 서로 붙어 한 뭉치로 읽혔다.
+                 space-y-2 로 덩어리 사이를 벌리고, 팔레트 원과 버튼에도 각각 간격/높이를 줘서
+                 눌러야 할 대상이 구분되게 함. 스와치는 ring-offset 이 겹치지 않을 만큼만 띄운다. */
+              <div className="p-1 space-y-2">
                 <input
                   autoFocus
                   value={newCatTitle}
@@ -5079,9 +5085,9 @@ function TodoPanel({
                     else if (e.key === "Escape") { e.preventDefault(); setNewCatMode(false); setNewCatTitle(""); }
                   }}
                   placeholder="카테고리 이름..."
-                  className="w-full text-[10px] px-1.5 py-1 rounded bg-muted outline-none focus:ring-1 focus:ring-ring"
+                  className="w-full text-[10px] px-2 py-1.5 rounded-lg bg-muted outline-none focus:ring-1 focus:ring-ring"
                 />
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-2 px-0.5">
                   {paletteColors.map(c => (
                     <button
                       key={c}
@@ -5093,22 +5099,22 @@ function TodoPanel({
                     />
                   ))}
                 </div>
-                <div className="flex gap-1">
+                <div className="flex gap-2">
                   <button
                     onClick={() => commitNewCategory(effDate)}
                     disabled={!newCatTitle.trim()}
-                    className="flex-1 text-[10px] py-1 rounded bg-primary text-primary-foreground disabled:opacity-40"
+                    className="flex-1 text-[10px] py-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-40"
                   >추가</button>
                   <button
                     onClick={() => { setNewCatMode(false); setNewCatTitle(""); }}
-                    className="flex-1 text-[10px] py-1 rounded bg-muted hover:bg-muted/70"
+                    className="flex-1 text-[10px] py-1.5 rounded-lg bg-muted hover:bg-muted/70"
                   >취소</button>
                 </div>
               </div>
             ) : (
               <button
                 onClick={() => setNewCatMode(true)}
-                className="w-full flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-left"
+                className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-muted text-left"
               >
                 <Plus size={10} className="text-muted-foreground" />
                 <span className="text-[10px] text-muted-foreground truncate">새 카테고리</span>
@@ -5122,15 +5128,20 @@ function TodoPanel({
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {showDayHeader && (
-        /* 요일/날짜 헤더 — 시간표 뷰의 요일 헤더와 동일한 톤. 좌/우 끝 chevron 으로 기간 이동. */
+        /* 요일/날짜 헤더 — 좌/우 끝 chevron 으로 기간 이동.
+             chevron 을 둘 다 absolute 로 얹는 이유: 예전엔 이전 chevron 만 흐름 안의 w-12 자리를
+             차지해서 7개 컬럼이 [48px, 오른쪽 끝] 을 나눠 가졌다. 그래서 컬럼 폭이 (W-48)/7 이 되고
+             전체가 오른쪽으로 치우쳐, 월 뷰(양쪽 chevron 이 absolute → 컬럼이 W/7 로 균등)와
+             요일 위치가 어긋났다. 시간표 뷰의 헤더는 아래 시간축 게이지(w-12)와 컬럼을 맞춰야 해서
+             그쪽은 흐름 자리를 유지하지만, 할 일 목록은 아래에 게이지가 없어 맞출 대상이 없다. */
         <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden">
-          {onGoPrev ? (
+          {onGoPrev && (
             <button
               onClick={onGoPrev}
-              className="w-12 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+              className="absolute left-0 top-0 bottom-0 w-8 z-10 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-r"
               title="이전"
             ><ChevronLeft size={16} /></button>
-          ) : <div className="w-12 flex-shrink-0" />}
+          )}
           {viewDays.map((day, i) => {
             const ds = toDateStr(day);
             const isToday = ds === TODAY_STR;
@@ -5157,7 +5168,7 @@ function TodoPanel({
           {onGoNext && (
             <button
               onClick={onGoNext}
-              className="absolute right-0 top-0 bottom-0 w-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-l"
+              className="absolute right-0 top-0 bottom-0 w-8 z-10 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-l"
               title="다음"
             ><ChevronRight size={16} /></button>
           )}
@@ -9298,7 +9309,8 @@ function BlockDetailPanel({
                        있었는데 그 패널을 없애면서, 카테고리가 실제로 나열되는 자리마다 붙였다.
                        행을 button 안에 button 으로 중첩할 수 없어(잘못된 HTML) 바깥을 div 로 바꾸고
                        선택용 button 과 삭제용 button 을 형제로 둔다. hover 시에만 노출해 평소
-                       목록 모양은 그대로 유지. */}
+                       목록 모양은 그대로 유지. title 툴팁은 두지 않는다 — 좁은 드롭다운 안에서
+                       OS 기본 툴팁이 세로로 길게 늘어져 목록을 가렸다. */}
               {categories.map(c => (
                 <div
                   key={c.id}
@@ -9314,7 +9326,6 @@ function BlockDetailPanel({
                   </button>
                   <button
                     onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(c.id); }}
-                    title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
                     className="opacity-0 group-hover/cat:opacity-100 transition-opacity px-1.5 py-1.5 text-muted-foreground hover:text-destructive flex-shrink-0"
                   ><Trash2 size={11} /></button>
                 </div>
@@ -9798,7 +9809,8 @@ function TodoDetailPanel({
                        있었는데 그 패널을 없애면서, 카테고리가 실제로 나열되는 자리마다 붙였다.
                        행을 button 안에 button 으로 중첩할 수 없어(잘못된 HTML) 바깥을 div 로 바꾸고
                        선택용 button 과 삭제용 button 을 형제로 둔다. hover 시에만 노출해 평소
-                       목록 모양은 그대로 유지. */}
+                       목록 모양은 그대로 유지. title 툴팁은 두지 않는다 — 좁은 드롭다운 안에서
+                       OS 기본 툴팁이 세로로 길게 늘어져 목록을 가렸다. */}
               {categories.map(c => (
                 <div
                   key={c.id}
@@ -9814,7 +9826,6 @@ function TodoDetailPanel({
                   </button>
                   <button
                     onClick={e => { e.stopPropagation(); onDeleteBlockTemplate(c.id); }}
-                    title="카테고리 삭제 — 이 카테고리의 항목들은 미분류로 이동"
                     className="opacity-0 group-hover/cat:opacity-100 transition-opacity px-1.5 py-1.5 text-muted-foreground hover:text-destructive flex-shrink-0"
                   ><Trash2 size={11} /></button>
                 </div>
