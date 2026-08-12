@@ -5175,7 +5175,12 @@ function TodoPanel({
         </div>
       )}
       <div
-        className="flex-1 overflow-y-auto p-6"
+        // scrollbar-gutter: stable both-edges — 세로 스크롤바가 생기면 콘텐츠 박스가 그만큼
+        // 좁아지고, 안쪽 mx-auto 가 좁아진 박스 기준으로 가운데를 잡아 카드 열이 왼쪽으로
+        // 밀렸다. 그래서 스크롤이 없는 일 뷰와 스크롤이 생기는 주 뷰의 블록 위치가 어긋났다.
+        // both-edges 로 양쪽에 같은 폭을 항상 예약해 두면 박스가 좌우 대칭이라, 스크롤바
+        // 유무와 무관하게 늘 패널 정중앙에 오고 두 뷰의 위치도 같아진다.
+        className="flex-1 overflow-y-auto p-6 [scrollbar-gutter:stable_both-edges]"
         // 패널 어디에 들어오든 "카테고리 드래그 중" 을 감지 — 섹션이 하나도 없는 빈 기간에도
         // 리스트 영역 자체가 이벤트를 받으므로 드랍 자리를 펼칠 수 있음.
         onDragOver={e => { if (isCategoryDrag(e)) setCatDragging(true); }}
@@ -8430,6 +8435,29 @@ function NoteEditor({
   // 예전엔 debounce cleanup(clearTimeout)만 있어서 마지막 몇 초 입력이 그대로 날아감.
   const pendingPatchRef = useRef<{ title: string; content: string; category: string; folderId: string | null } | null>(null);
 
+  // 마크다운 모드의 좌(원본)/우(미리보기) 스크롤 동기화 — 글이 편집 영역을 넘어가면
+  // 미리보기도 함께 내려가야 지금 쓰고 있는 부분이 양쪽에서 같이 보인다.
+  // 두 영역의 스크롤 높이는 서로 다르므로(마크다운 문법 문자 vs 렌더 결과 높이) 절대값이
+  // 아니라 "스크롤 가능한 범위 대비 비율" 로 맞춘다. 어느 쪽이든 스크롤할 수 없으면
+  // (짧은 글) 아무것도 하지 않는다 — 0 으로 나누는 것을 막고 불필요한 흔들림도 없앤다.
+  const mdSrcRef = useRef<HTMLTextAreaElement | null>(null);
+  const mdPreviewRef = useRef<HTMLDivElement | null>(null);
+  const syncPreviewScroll = () => {
+    const src = mdSrcRef.current, dst = mdPreviewRef.current;
+    if (!src || !dst) return;
+    const srcMax = src.scrollHeight - src.clientHeight;
+    const dstMax = dst.scrollHeight - dst.clientHeight;
+    if (srcMax <= 0 || dstMax <= 0) return;
+    dst.scrollTop = (src.scrollTop / srcMax) * dstMax;
+  };
+  // 입력으로 미리보기 높이가 변하면 같은 비율을 다시 적용. 맨 아래에서 계속 타이핑할 때
+  // textarea 의 scrollTop 은 그대로인데 미리보기만 길어져 둘이 어긋나는 경우를 잡는다.
+  useEffect(() => {
+    if (!markdownMode) return;
+    const raf = requestAnimationFrame(syncPreviewScroll);
+    return () => cancelAnimationFrame(raf);
+  }, [content, markdownMode]);
+
   // 700ms debounce 자동 저장 (안전망). 상태 표시는 하지 않고, 성공/실패 결과는 저장 버튼과
   // 언마운트 flush에서만 사용자에게 보임.
   useEffect(() => {
@@ -8623,6 +8651,8 @@ function NoteEditor({
             <>
               <textarea
                 key="md-textarea"
+                ref={mdSrcRef}
+                onScroll={syncPreviewScroll}
                 value={content}
                 onChange={e => setContent(e.target.value)}
                 placeholder="여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
@@ -8630,7 +8660,7 @@ function NoteEditor({
                 spellCheck={false}
                 autoFocus
               />
-              <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
+              <div ref={mdPreviewRef} className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
                 {content.trim() ? (
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
                 ) : (
