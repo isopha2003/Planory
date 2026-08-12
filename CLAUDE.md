@@ -26,4 +26,4 @@
   - `style:` 포맷팅 등 동작에 영향 없는 변경
   - `chore:` 패키지 설치, 설정 파일, DB 마이그레이션 등
 - 설명 부분은 한국어로 간결하게 작성 (예: `feat: 타이머 3-state 자동정지 로직 구현`)
-- 저장소: https://github.com/isopha2003/plan-partner-web (비공개)
+- 저장소: https://github.com/isopha2003/Planory (비공개)

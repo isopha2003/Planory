@@ -3,7 +3,7 @@
 시간 블록·마감·뽀모도로·집중 시간 기록·메모까지 한 화면에서 다루는 개인용 Windows/macOS 데스크톱 앱.
 
 ![Windows/macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
-![Latest](https://img.shields.io/github/v/release/isopha2003/plan-partner-web)
+![Latest](https://img.shields.io/github/v/release/isopha2003/Planory)
 
 ## 주요 기능
 
@@ -18,7 +18,7 @@
 
 ## 설치
 
-[Releases](https://github.com/isopha2003/plan-partner-web/releases/latest)에서 자기 OS에 맞는 파일 받기.
+[Releases](https://github.com/isopha2003/Planory/releases/latest)에서 자기 OS에 맞는 파일 받기.
 
 | OS | 파일 |
 |----|------|
@@ -56,7 +56,7 @@ Rust toolchain(stable) + Node 20 필요.
 
 ## 릴리즈
 
-`v` 접두어 태그 push로 [GitHub Actions](https://github.com/isopha2003/plan-partner-web/actions)가 Windows/macOS 인스톨러를 빌드 · 서명 · 업로드합니다.
+`v` 접두어 태그 push로 [GitHub Actions](https://github.com/isopha2003/Planory/actions)가 Windows/macOS 인스톨러를 빌드 · 서명 · 업로드합니다.
 
 ```bash
 npm version patch -m "chore(release): v%s"   # 또는 minor / major
