@@ -7,6 +7,7 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_opener::init())
     .setup(|app| {
       // macOS 전용: 창 생성 시점의 maximized:true 대신 webview 가 붙은 뒤 최대화한다.
       // decorations:false 인 macOS 창은 borderless NSWindow 라 생성 시점에 지정한 최대화

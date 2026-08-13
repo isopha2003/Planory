@@ -29,3 +29,5 @@ tauri-plugin-fs = "2.5.1"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+# 메모의 마크다운 링크를 앱 웹뷰가 아니라 OS 기본 브라우저로 넘기는 데 사용.
+tauri-plugin-opener = "2"

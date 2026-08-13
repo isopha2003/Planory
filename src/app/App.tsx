@@ -39,6 +39,7 @@ import {
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { remarkBreaks, remarkLineAnchors, openExternal, isExternalUrl } from "../lib/markdown";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
@@ -8290,6 +8291,33 @@ function NoteCard({
   );
 }
 
+// 메모 본문 마크다운 렌더러 — 읽기 뷰와 마크다운 미리보기가 공유한다.
+// 두 곳이 같은 플러그인·같은 링크 동작을 쓰게 해서 "볼 때랑 쓸 때가 다른" 상황을 없앰.
+const NOTE_REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkLineAnchors];
+const NOTE_MD_COMPONENTS = {
+  // 링크는 앱 웹뷰를 떠나지 않고 OS 기본 브라우저로. 앱에 주소창·뒤로가기가 없어서
+  // 웹뷰가 외부 사이트로 넘어가면 재시작 말고는 돌아올 방법이 없다.
+  a({ href, children, ...rest }: any) {
+    const external = isExternalUrl(href);
+    return (
+      <a
+        {...rest}
+        href={href}
+        title={external ? `브라우저에서 열기 — ${href}` : undefined}
+        onClick={e => { e.preventDefault(); openExternal(href); }}
+      >{children}</a>
+    );
+  },
+};
+
+function NoteMarkdown({ children }: { children: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={NOTE_REMARK_PLUGINS} components={NOTE_MD_COMPONENTS}>
+      {children}
+    </ReactMarkdown>
+  );
+}
+
 // 줄바꿈(hardBreak)을 마크다운으로 되쓸 때 쓰는 표기.
 //
 // tiptap-markdown 기본값은 백슬래시 하드브레이크(`\` + 개행)라, 리치 에디터로 한 번 저장하면
@@ -8368,7 +8396,10 @@ function RichNoteEditor({
   const editor = useEditor({
     extensions: [
       // StarterKit 의 기본 hardBreak 을 끄고, `\` 를 남기지 않는 버전으로 교체.
-      StarterKit.configure({ hardBreak: false }),
+      // link.openOnClick=false — 켜져 있으면 편집 중 링크를 한 번 잘못 눌렀을 때 앱 웹뷰가
+      // 그 사이트로 통째로 넘어가고, 주소창도 뒤로가기도 없어서 못 돌아온다.
+      // 대신 아래 handleClick 에서 Ctrl/⌘+클릭이면 OS 기본 브라우저로 연다.
+      StarterKit.configure({ hardBreak: false, link: { openOnClick: false } }),
       PlainHardBreak,
       UnderlineExtension,
       // html:false 로 두면 tiptap-markdown이 raw HTML을 이스케이프해 저장 — 마크다운 소스만 유지.
@@ -8388,6 +8419,16 @@ function RichNoteEditor({
       attributes: {
         // PROSE_CLASS로 목록/제목 스타일을 마크다운 프리뷰와 동일하게 통일.
         class: `w-full ${PROSE_CLASS} outline-none focus:outline-none`,
+      },
+      // 편집 중 Ctrl/⌘+클릭으로 링크 열기. 그냥 클릭은 커서 이동(링크 글자를 고칠 수 있어야 함).
+      handleClick(_view, _pos, event) {
+        if (!event.ctrlKey && !event.metaKey) return false;
+        const a = (event.target as HTMLElement | null)?.closest?.("a");
+        const href = a?.getAttribute("href") ?? undefined;
+        if (!isExternalUrl(href)) return false;
+        event.preventDefault();
+        openExternal(href);
+        return true;
       },
     },
   });
@@ -8516,13 +8557,13 @@ function NoteEditor({
     title !== s.title || content !== s.content || category !== s.category ||
     folderId !== s.folderId || markdownMode !== s.markdownMode;
 
-  // 마크다운 모드의 좌(원본)/우(미리보기) 스크롤 동기화 — 글이 편집 영역을 넘어가면
-  // 미리보기도 함께 내려가야 지금 쓰고 있는 부분이 양쪽에서 같이 보인다.
-  // 두 영역의 스크롤 높이는 서로 다르므로(마크다운 문법 문자 vs 렌더 결과 높이) 절대값이
-  // 아니라 "스크롤 가능한 범위 대비 비율" 로 맞춘다. 어느 쪽이든 스크롤할 수 없으면
-  // (짧은 글) 아무것도 하지 않는다 — 0 으로 나누는 것을 막고 불필요한 흔들림도 없앤다.
+  // 마크다운 모드의 좌(원본)/우(미리보기) 위치 맞추기.
   const mdSrcRef = useRef<HTMLTextAreaElement | null>(null);
   const mdPreviewRef = useRef<HTMLDivElement | null>(null);
+
+  // 손으로 원본을 스크롤할 때 — 스크롤 가능 범위 대비 비율로 대충 맞춘다.
+  // 두 영역의 높이 구성이 서로 달라(문법 문자 vs 렌더 결과) 정확할 수는 없지만,
+  // 문서를 훑어볼 때는 이 정도로 충분하고 계산이 싸다.
   const syncPreviewScroll = () => {
     const src = mdSrcRef.current, dst = mdPreviewRef.current;
     if (!src || !dst) return;
@@ -8531,11 +8572,43 @@ function NoteEditor({
     if (srcMax <= 0 || dstMax <= 0) return;
     dst.scrollTop = (src.scrollTop / srcMax) * dstMax;
   };
-  // 입력으로 미리보기 높이가 변하면 같은 비율을 다시 적용. 맨 아래에서 계속 타이핑할 때
-  // textarea 의 scrollTop 은 그대로인데 미리보기만 길어져 둘이 어긋나는 경우를 잡는다.
+
+  // 타이핑 중일 때는 비율이 아니라 "커서가 있는 줄" 을 기준으로 맞춘다.
+  //
+  // ⚠ 예전엔 이 경우에도 비율 동기화를 썼는데, 원본과 미리보기의 줄당 높이가 다르면
+  // (예: 원본에선 한 줄인 `### 제목` 이 미리보기에선 큰 제목 한 덩어리) 비율이 어긋나서
+  // 정작 지금 쓰고 있는 문단이 미리보기 화면 밖 아래에 남아 있는 일이 잦았다.
+  // 이제 remarkLineAnchors 가 심어둔 data-md-line 으로 커서 줄에 해당하는 요소를 직접 찾는다.
+  //
+  // 이미 보이는 범위 안이면 건드리지 않는다 — 글자를 칠 때마다 미리보기가 흔들리지 않게.
+  const syncPreviewToCaret = () => {
+    const src = mdSrcRef.current, dst = mdPreviewRef.current;
+    if (!src || !dst) return;
+    // 커서 앞의 개행 개수 = 커서가 있는 줄 번호(1-base). remark 의 position 과 같은 기준.
+    const caretLine = src.value.slice(0, src.selectionStart).split("\n").length;
+
+    // 커서 줄 이하에서 가장 가까운 앵커. 목록처럼 중첩된 요소는 안쪽(더 정확한) 것이 뒤에
+    // 오므로, 같은 줄 번호면 마지막 것을 쓴다.
+    let target: HTMLElement | null = null;
+    for (const el of Array.from(dst.querySelectorAll<HTMLElement>("[data-md-line]"))) {
+      const line = Number(el.dataset.mdLine);
+      if (line <= caretLine) target = el;
+      else break;
+    }
+    if (!target) return;
+
+    // offsetTop 은 offsetParent 기준이라 중첩 요소에선 어긋난다. 실제 화면 좌표로 계산.
+    const top = target.getBoundingClientRect().top - dst.getBoundingClientRect().top + dst.scrollTop;
+    const margin = 24;
+    if (top >= dst.scrollTop + margin && top <= dst.scrollTop + dst.clientHeight - margin) return;
+    // 화면 밖이면 위쪽 1/3 지점으로 — 뒤에 이어질 내용도 함께 보이게.
+    dst.scrollTop = Math.max(0, top - dst.clientHeight / 3);
+  };
+
+  // 입력으로 미리보기가 다시 그려진 뒤에 위치를 잡아야 하므로 rAF 한 프레임 뒤에 실행.
   useEffect(() => {
     if (!markdownMode) return;
-    const raf = requestAnimationFrame(syncPreviewScroll);
+    const raf = requestAnimationFrame(syncPreviewToCaret);
     return () => cancelAnimationFrame(raf);
   }, [content, markdownMode]);
 
@@ -8710,7 +8783,7 @@ function NoteEditor({
         <div className="flex-1 overflow-hidden gap-4 px-8 pb-8 min-h-0 flex">
           <div className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
             {content.trim() ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+              <NoteMarkdown>{content}</NoteMarkdown>
             ) : (
               <p className="text-muted-foreground text-sm italic">내용이 없습니다. 수정 버튼을 눌러 작성해 보세요.</p>
             )}
@@ -8724,6 +8797,9 @@ function NoteEditor({
                 key="md-textarea"
                 ref={mdSrcRef}
                 onScroll={syncPreviewScroll}
+                // 커서만 움직였을 때(방향키·클릭·드래그 선택)도 미리보기가 따라오게.
+                // onSelect 는 커서 이동/선택 변경 모두에서 발생한다.
+                onSelect={syncPreviewToCaret}
                 value={content}
                 onChange={e => setContent(e.target.value)}
                 placeholder="여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
@@ -8733,7 +8809,7 @@ function NoteEditor({
               />
               <div ref={mdPreviewRef} className={`w-full h-full overflow-y-auto rounded-xl border bg-card p-4 ${PROSE_CLASS}`}>
                 {content.trim() ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                  <NoteMarkdown>{content}</NoteMarkdown>
                 ) : (
                   <p className="text-muted-foreground text-sm italic">미리보기가 여기에 표시돼요</p>
                 )}
