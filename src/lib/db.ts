@@ -136,7 +136,11 @@ CREATE TABLE IF NOT EXISTS note_folders (
 -- 자유 메모 — 제목 + 마크다운 내용 + 자유 텍스트 카테고리 + 소속 폴더.
 -- sort_order로 사용자 지정 순서 저장(정렬 모드가 custom일 때 사용).
 -- is_draft: "새 메모"로 만들어져 아직 사용자가 "저장" 버튼으로 확정하지 않은 상태.
--- 뒤로가기(자동저장)로 나가면 draft로 남아 별도 "임시 저장" 탭에서만 노출.
+-- 별도 "임시 저장" 탭에서만 노출.
+-- markdown_mode: 이 메모를 편집할 때 마크다운 원본(textarea) 모드로 열지 여부.
+--   리치 텍스트 에디터(TipTap)는 열고 한 글자만 고쳐도 문서 전체를 마크다운으로 재직렬화해서
+--   손으로 쓴 원본과 다른 모양이 된다. 사용자가 마크다운으로 쓴 메모는 그 사실을 기억해 두고
+--   다음에 열 때도 원본 그대로 보여줘야 함.
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT '',
@@ -145,6 +149,7 @@ CREATE TABLE IF NOT EXISTS notes (
   folder_id TEXT REFERENCES note_folders(id) ON DELETE SET NULL,
   sort_order INTEGER NOT NULL DEFAULT 0,
   is_draft INTEGER NOT NULL DEFAULT 0,
+  markdown_mode INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -207,6 +212,9 @@ const NOTE_UPGRADES = [
   "ALTER TABLE notes ADD COLUMN created_at TEXT",
   "ALTER TABLE notes ADD COLUMN updated_at TEXT",
   "ALTER TABLE notes ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 0",
+  // 기존 메모는 전부 0(리치 텍스트) 로 시작 — 마크다운으로 쓴 메모는 사용자가 편집 화면에서
+  // 마크다운 토글을 한 번 켜 주면 그때부터 그 메모에 기억된다.
+  "ALTER TABLE notes ADD COLUMN markdown_mode INTEGER NOT NULL DEFAULT 0",
 ];
 
 // 기존 설치에서 block_templates 에 kind 컬럼을 사후 추가. 이미 있으면 조용히 실패.

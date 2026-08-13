@@ -42,6 +42,7 @@ import remarkGfm from "remark-gfm";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
+import HardBreak from "@tiptap/extension-hard-break";
 import { Markdown } from "tiptap-markdown";
 import { type TimerState, fmtSec } from "../lib/timer";
 import { runAutoBackupIfNeeded, createBackupNow, getLastBackupTimestamp } from "../lib/backup";
@@ -8289,6 +8290,36 @@ function NoteCard({
   );
 }
 
+// 줄바꿈(hardBreak)을 마크다운으로 되쓸 때 쓰는 표기.
+//
+// tiptap-markdown 기본값은 백슬래시 하드브레이크(`\` + 개행)라, 리치 에디터로 한 번 저장하면
+// 사용자가 쓴 적도 없는 `\` 가 줄 끝마다 박혀서 마크다운 원본이 지저분해졌다.
+// 우리는 `breaks: true` 로 파싱하므로 맨 개행 하나만으로도 다시 hardBreak 으로 읽힌다
+// → `\` 없이 개행만 써도 왕복(파싱→직렬화→파싱)이 그대로 유지된다.
+//
+// 블록 끝에 달린 hardBreak 은 원본과 마찬가지로 건너뛴다(줄 끝 빈 개행이 쌓이는 것 방지).
+// 표 안에서는 개행을 쓸 수 없어 <br> 로 남긴다 — 현재 StarterKit 에 표 확장은 없지만
+// 나중에 추가돼도 깨지지 않도록 분기를 유지.
+const PlainHardBreak = HardBreak.extend({
+  addStorage() {
+    return {
+      markdown: {
+        serialize(state: any, node: any, parent: any, index: number) {
+          for (let i = index + 1; i < parent.childCount; i++) {
+            if (parent.child(i).type !== node.type) {
+              state.write(state.inTable ? "<br>" : "\n");
+              return;
+            }
+          }
+        },
+        parse: {
+          // markdown-it 이 처리
+        },
+      },
+    };
+  },
+});
+
 // ── 리치 텍스트 에디터 (일반 메모 모드) ────────────────────────────
 // TipTap 기반 WYSIWYG. 저장 포맷은 마크다운 그대로 유지(tiptap-markdown) — 마크다운 모드와
 // 같은 note.content 필드를 공유하므로, 두 모드 사이를 오가도 데이터 손실 없이 그대로 보임.
@@ -8336,7 +8367,9 @@ function RichNoteEditor({
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      // StarterKit 의 기본 hardBreak 을 끄고, `\` 를 남기지 않는 버전으로 교체.
+      StarterKit.configure({ hardBreak: false }),
+      PlainHardBreak,
       UnderlineExtension,
       // html:false 로 두면 tiptap-markdown이 raw HTML을 이스케이프해 저장 — 마크다운 소스만 유지.
       // breaks:true 로 줄바꿈을 <br>이 아닌 소프트 개행으로 처리해 일반 메모장 감각에 가깝게.
@@ -8456,19 +8489,32 @@ function NoteEditor({
   // 액션(버튼)이 있는 편이 더 안심됨. 자동 저장(debounce)은 안전망으로 유지하고 상단엔
   // 저장 버튼을 대신 배치 — 버튼을 누르면 pending debounce를 즉시 flush하고 목록으로 복귀.
   const [saving, setSaving] = useState(false);
-  // 편집기 세션 로컬 상태 — 마크다운 문법을 모르는 사용자를 위한 기본값은 일반 메모장 뷰.
-  // 켜면 우측에 실시간 프리뷰 패널이 붙고, 꺼도 content state는 그대로라 입력 내용은 보존됨.
-  const [markdownMode, setMarkdownMode] = useState(false);
+  // 마크다운 원본 모드 여부 — 메모마다 기억된다(note.markdownMode).
+  //
+  // 예전엔 열 때마다 무조건 false(리치 에디터)로 시작해서, 마크다운으로 쓴 메모를 열어
+  // 한 글자만 고쳐도 TipTap 이 문서 전체를 다시 직렬화하면서 원본이 뭉개졌다
+  // (줄 끝마다 `\`, 빈 줄이 빈 목록 항목 `-` 으로 바뀌는 등).
+  // 이제 마크다운으로 쓴 메모는 계속 마크다운 원본(textarea)으로 열려 리치 에디터를
+  // 아예 거치지 않으므로 쓴 그대로 남는다.
+  const [markdownMode, setMarkdownMode] = useState(note.markdownMode);
   // 이미 저장된(non-draft) 메모는 열자마자 읽기 뷰로 표시하고, 사용자가 "수정"을 눌러야 편집 상태로.
   // draft(새로 만든/저장 전) 메모는 바로 편집 상태로 들어감. 초기값을 ref로도 보관해서
   // 저장/뒤로가기가 "리스트로 나가기" vs "뷰로 돌아가기" 중 어느 쪽인지 결정에 사용.
   const [mode, setMode] = useState<"view" | "edit">(() => (note.isDraft ? "edit" : "view"));
   const initialModeRef = useRef<"view" | "edit">(mode);
-  const first = useRef(true);
-  // 아직 debounce 대기 중인 미저장 변경을 추적. 사용자가 debounce 안 끝난 상태에서
-  // 뒤로가기를 누르면 아래 unmount cleanup이 이걸 즉시 flush해서 데이터 유실을 막음.
-  // 예전엔 debounce cleanup(clearTimeout)만 있어서 마지막 몇 초 입력이 그대로 날아감.
-  const pendingPatchRef = useRef<{ title: string; content: string; category: string; folderId: string | null } | null>(null);
+  // 마지막으로 DB에 실제로 쓴 값. 뒤로가기 시 "저장 안 한 변경이 있는가" 판단에만 쓴다.
+  // note prop 은 저장 성공 시 onChangeLocal 로 갱신되므로 여기도 같이 갱신.
+  const savedRef = useRef({
+    title: note.title, content: note.content, category: note.category,
+    folderId: note.folderId, markdownMode: note.markdownMode,
+  });
+  // 저장하지 않고 나가려 할 때 띄우는 확인 모달.
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+
+  const s = savedRef.current;
+  const dirty =
+    title !== s.title || content !== s.content || category !== s.category ||
+    folderId !== s.folderId || markdownMode !== s.markdownMode;
 
   // 마크다운 모드의 좌(원본)/우(미리보기) 스크롤 동기화 — 글이 편집 영역을 넘어가면
   // 미리보기도 함께 내려가야 지금 쓰고 있는 부분이 양쪽에서 같이 보인다.
@@ -8493,32 +8539,22 @@ function NoteEditor({
     return () => cancelAnimationFrame(raf);
   }, [content, markdownMode]);
 
-  // 700ms debounce 자동 저장 (안전망). 상태 표시는 하지 않고, 성공/실패 결과는 저장 버튼과
-  // 언마운트 flush에서만 사용자에게 보임.
-  useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    const patch = { title, content, category, folderId };
-    pendingPatchRef.current = patch;
-    const t = setTimeout(async () => {
-      try {
-        await updateNote(note.id, patch);
-        pendingPatchRef.current = null;
-        onChangeLocal(patch);
-      } catch (e) { notifyError("메모 저장 실패")(e); }
-    }, 700);
-    return () => clearTimeout(t);
-  }, [title, content, category, folderId]);
+  // ⚠ 자동 저장 없음 — 저장은 오직 "저장" 버튼으로만 일어난다.
+  //
+  // 예전엔 700ms debounce 자동 저장 + 언마운트 시 flush 가 있어서, 사용자가 내용을 고쳐 보다가
+  // 뒤로가기로 나가도 그 변경이 그대로 DB에 남았다. "저장 안 하고 나왔는데 저장돼 있다" 는
+  // 상황이라 편집을 되돌릴 방법이 없었음. 이제 뒤로가기는 변경을 버리고, 목록으로 돌아가면
+  // MemoSection 이 DB에서 다시 읽어오므로 저장 전 상태가 그대로 유지된다.
 
-  // 저장 버튼 — 대기 중인 debounce 패치를 즉시 flush + isDraft:false 로 확정하고 목록으로 복귀.
+  // 저장 버튼 — 현재 편집 중인 값 전부 + isDraft:false 로 확정.
   // draft 노트는 임시 저장 탭에서만 보이므로, 저장 버튼을 눌러야 일반 리스트/폴더 뷰에 등장.
-  // 자동 저장 debounce는 isDraft 필드를 건드리지 않으므로 뒤로가기(자동저장)만 하면 draft로 유지.
   const handleSave = async () => {
     setSaving(true);
-    const savePatch = { ...(pendingPatchRef.current ?? {}), isDraft: false };
+    const savePatch = { title, content, category, folderId, markdownMode, isDraft: false };
     try {
       await updateNote(note.id, savePatch);
-      pendingPatchRef.current = null;
       onChangeLocal(savePatch);
+      savedRef.current = { title, content, category, folderId, markdownMode };
     } catch (e) {
       setSaving(false);
       notifyError("메모 저장 실패")(e);
@@ -8534,33 +8570,33 @@ function NoteEditor({
     }
   };
 
-  // 뒤로가기 — 편집→뷰 흐름이면 한 단계만 되돌리고, 그 외에는 목록으로.
-  const handleBack = () => {
+  // 저장하지 않고 실제로 빠져나가는 경로. 편집→뷰 흐름이면 한 단계만 되돌리고, 그 외엔 목록으로.
+  //
+  // 목록으로 나갈 때, "새 메모"로 만들어졌지만 한 번도 저장된 적 없는 빈 draft 행은 지운다.
+  // 자동 저장이 없어졌으므로 이런 행은 영원히 빈 채로 임시 저장 탭에 쌓이기만 한다.
+  // DB 에 아무것도 쓰인 적이 없는 행만 지우므로 사용자가 저장한 내용이 사라질 일은 없다.
+  const leaveWithoutSaving = () => {
+    setConfirmDiscard(false);
     if (mode === "edit" && initialModeRef.current === "view") {
+      // 편집 전 값으로 되돌린 뒤 읽기 뷰로. (뷰 모드는 content state 를 그대로 렌더하므로
+      // 되돌리지 않으면 저장하지 않은 내용이 뷰에 남아 저장된 것처럼 보인다.)
+      setTitle(s.title); setContent(s.content); setCategory(s.category);
+      setFolderId(s.folderId); setMarkdownMode(s.markdownMode);
       setMode("view");
-    } else {
-      onBack();
+      return;
     }
+    const untouched = note.isDraft && !note.title.trim() && !note.content.trim() && !note.category.trim();
+    if (untouched) {
+      deleteNote(note.id).catch(notifyError("빈 메모 정리 실패"));
+    }
+    onBack();
   };
 
-  // 언마운트 시 아직 debounce 대기 중이던 변경을 즉시 저장. 뒤로가기 버튼으로 편집기를
-  // 닫을 때 마지막 입력이 유실되지 않도록 하는 안전망.
-  //
-  // onChangeLocal은 부모 MemoSection이 매 렌더마다 새 함수로 만들어 내려주므로 deps에
-  // 그대로 넣으면 부모가 다른 이유로 리렌더될 때마다 cleanup이 발화해 debounce 대기 중이던
-  // 저장을 중복으로 트리거함. ref로 감싸서 최신 함수는 참조하되 effect는 재등록되지 않게.
-  const onChangeLocalRef = useRef(onChangeLocal);
-  onChangeLocalRef.current = onChangeLocal;
-  useEffect(() => () => {
-    const p = pendingPatchRef.current;
-    if (p) {
-      updateNote(note.id, p)
-        .then(() => onChangeLocalRef.current(p))
-        // 예전엔 console.error만 남겨서, 뒤로가기 순간 마지막 몇 초 입력이 저장 실패로
-        // 조용히 사라져도 사용자가 알 수 없었음.
-        .catch(notifyError("메모 저장 실패"));
-    }
-  }, [note.id]);
+  // 뒤로가기 — 저장하지 않은 변경이 있으면 확인부터. 없으면 바로 나감.
+  const handleBack = () => {
+    if (dirty) setConfirmDiscard(true);
+    else leaveWithoutSaving();
+  };
 
   const isView = mode === "view";
   const currentFolder = folders.find(f => f.id === folderId) ?? null;
@@ -8711,6 +8747,30 @@ function NoteEditor({
               autoFocus
             />
           )}
+        </div>
+      )}
+
+      {/* 저장하지 않고 나가기 확인 — 자동 저장이 없어졌으므로, 되돌릴 수 없는 유실이
+           일어나기 전에 한 번만 물어본다. 변경이 없으면 아예 뜨지 않음. */}
+      {confirmDiscard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setConfirmDiscard(false)}>
+          <div className="w-80 bg-card border border-border rounded-xl p-4 shadow-lg" onClick={e => e.stopPropagation()}>
+            <div className="text-sm font-semibold mb-1">저장하지 않고 나가기</div>
+            <div className="text-[11px] text-muted-foreground mb-3 truncate">"{title.trim() || "제목 없음"}"</div>
+            <div className="text-xs text-foreground mb-4 leading-relaxed">
+              저장하지 않은 변경 내용이 있습니다. 나가면 이 변경은 사라집니다.
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setConfirmDiscard(false)}
+                className="flex-1 px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-muted transition-colors"
+              >취소</button>
+              <button
+                onClick={leaveWithoutSaving}
+                className="flex-1 px-3 py-1.5 rounded-lg border border-destructive/40 text-xs hover:bg-destructive/10 text-destructive font-medium transition-colors"
+              >나가기</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
