@@ -63,7 +63,7 @@ const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
   todo_checklist_items: ["id", "todo_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
   todo_category_orders: ["date", "category", "sort_order"],
   timer_sessions:  ["id", "date", "started_at", "ended_at", "end_reason", "last_alive_at", "created_at"],
-  notes:           ["id", "title", "content", "category", "folder_id", "sort_order", "is_draft", "created_at", "updated_at"],
+  notes:           ["id", "title", "content", "category", "folder_id", "sort_order", "is_draft", "markdown_mode", "created_at", "updated_at"],
 };
 
 // 백업 파일명 타임스탬프. ms 까지 붙여 같은 초 안에 두 번 눌러도 파일명이 겹치지 않게.

@@ -121,7 +121,7 @@ export function lineAtOffset(text: string, offset: number): number {
 //
 // http/https/mailto 만 허용 — 메모 본문은 사용자가 붙여넣은 텍스트라, file: 이나 다른
 // 스킴까지 OS 로 넘기면 의도치 않은 프로그램이 실행될 수 있다.
-// (src-tauri/capabilities/default.json 의 opener 스코프와 같은 기준.)
+// (플러그인의 opener:default 권한도 http/https/mailto/tel 로 제한하므로 이중 방어.)
 export function isExternalUrl(href: string | undefined): href is string {
   if (!href) return false;
   return /^(https?:|mailto:)/i.test(href.trim());

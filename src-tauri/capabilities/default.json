@@ -28,10 +28,6 @@
     "process:default",
     "process:allow-restart",
     "process:allow-exit",
-    "opener:default",
-    {
-      "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "http://*" }, { "url": "https://*" }, { "url": "mailto:*" }]
-    }
+    "opener:default"
   ]
 }

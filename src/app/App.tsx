@@ -8654,7 +8654,12 @@ function NoteEditor({
     }
     const untouched = note.isDraft && !note.title.trim() && !note.content.trim() && !note.category.trim();
     if (untouched) {
-      deleteNote(note.id).catch(notifyError("빈 메모 정리 실패"));
+      // ⚠ 반드시 기다린 뒤에 나갈 것. onBack 이 목록을 DB에서 다시 읽어오므로, 삭제가 끝나기
+      // 전에 나가면 방금 지운 빈 메모가 임시 저장 탭에 그대로 보인다(다음 새로고침까지).
+      deleteNote(note.id)
+        .catch(notifyError("빈 메모 정리 실패"))
+        .finally(() => onBack());
+      return;
     }
     onBack();
   };
