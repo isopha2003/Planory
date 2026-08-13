@@ -39,7 +39,10 @@ import {
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { remarkBreaks, remarkLineAnchors, openExternal, isExternalUrl } from "../lib/markdown";
+import {
+  remarkBreaks, remarkLineAnchors, openExternal, isExternalUrl,
+  previewScrollTopForLine, lineAtOffset,
+} from "../lib/markdown";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
@@ -8561,48 +8564,39 @@ function NoteEditor({
   const mdSrcRef = useRef<HTMLTextAreaElement | null>(null);
   const mdPreviewRef = useRef<HTMLDivElement | null>(null);
 
+  // 커서 기준으로 미리보기를 맞춘 시각. 아래 스크롤 동기화가 이걸 보고 물러난다.
+  const caretSyncAtRef = useRef(0);
+
   // 손으로 원본을 스크롤할 때 — 스크롤 가능 범위 대비 비율로 대충 맞춘다.
   // 두 영역의 높이 구성이 서로 달라(문법 문자 vs 렌더 결과) 정확할 수는 없지만,
   // 문서를 훑어볼 때는 이 정도로 충분하고 계산이 싸다.
+  //
+  // ⚠ 타이핑·커서 이동으로 textarea 가 스스로 스크롤할 때도 이 핸들러가 호출된다. 그때
+  // 비율로 덮어쓰면 방금 커서 기준으로 맞춰둔 위치가 도로 어긋난다. 커서 동기화 직후
+  // (150ms 이내)의 스크롤은 그 결과로 보고 건너뛴다 — 사용자가 직접 굴린 스크롤만 처리.
   const syncPreviewScroll = () => {
     const src = mdSrcRef.current, dst = mdPreviewRef.current;
     if (!src || !dst) return;
+    if (performance.now() - caretSyncAtRef.current < 150) return;
     const srcMax = src.scrollHeight - src.clientHeight;
     const dstMax = dst.scrollHeight - dst.clientHeight;
     if (srcMax <= 0 || dstMax <= 0) return;
     dst.scrollTop = (src.scrollTop / srcMax) * dstMax;
   };
 
-  // 타이핑 중일 때는 비율이 아니라 "커서가 있는 줄" 을 기준으로 맞춘다.
+  // 타이핑/커서 이동 중에는 비율이 아니라 "커서가 있는 줄" 을 기준으로 미리보기를 따라가게 한다.
+  // 위치 계산은 previewScrollTopForLine 에 있음(remarkLineAnchors 가 심어둔 data-md-line 사용).
   //
-  // ⚠ 예전엔 이 경우에도 비율 동기화를 썼는데, 원본과 미리보기의 줄당 높이가 다르면
-  // (예: 원본에선 한 줄인 `### 제목` 이 미리보기에선 큰 제목 한 덩어리) 비율이 어긋나서
-  // 정작 지금 쓰고 있는 문단이 미리보기 화면 밖 아래에 남아 있는 일이 잦았다.
-  // 이제 remarkLineAnchors 가 심어둔 data-md-line 으로 커서 줄에 해당하는 요소를 직접 찾는다.
-  //
-  // 이미 보이는 범위 안이면 건드리지 않는다 — 글자를 칠 때마다 미리보기가 흔들리지 않게.
+  // ⚠ "이미 보이면 그냥 둔다" 는 예외를 두지 않는다. 그 예외가 있으면 긴 블록의 윗부분이
+  // 화면에 걸쳐 있는 동안 정작 쓰고 있는 아랫줄이 화면 밖이어도 아무 일도 일어나지 않았다.
+  // 항상 같은 지점에 맞춰야 "지금 쓰는 줄"을 눈으로 좇을 수 있다.
   const syncPreviewToCaret = () => {
     const src = mdSrcRef.current, dst = mdPreviewRef.current;
     if (!src || !dst) return;
-    // 커서 앞의 개행 개수 = 커서가 있는 줄 번호(1-base). remark 의 position 과 같은 기준.
-    const caretLine = src.value.slice(0, src.selectionStart).split("\n").length;
-
-    // 커서 줄 이하에서 가장 가까운 앵커. 목록처럼 중첩된 요소는 안쪽(더 정확한) 것이 뒤에
-    // 오므로, 같은 줄 번호면 마지막 것을 쓴다.
-    let target: HTMLElement | null = null;
-    for (const el of Array.from(dst.querySelectorAll<HTMLElement>("[data-md-line]"))) {
-      const line = Number(el.dataset.mdLine);
-      if (line <= caretLine) target = el;
-      else break;
-    }
-    if (!target) return;
-
-    // offsetTop 은 offsetParent 기준이라 중첩 요소에선 어긋난다. 실제 화면 좌표로 계산.
-    const top = target.getBoundingClientRect().top - dst.getBoundingClientRect().top + dst.scrollTop;
-    const margin = 24;
-    if (top >= dst.scrollTop + margin && top <= dst.scrollTop + dst.clientHeight - margin) return;
-    // 화면 밖이면 위쪽 1/3 지점으로 — 뒤에 이어질 내용도 함께 보이게.
-    dst.scrollTop = Math.max(0, top - dst.clientHeight / 3);
+    const next = previewScrollTopForLine(dst, lineAtOffset(src.value, src.selectionStart));
+    if (next === null) return;
+    dst.scrollTop = next;
+    caretSyncAtRef.current = performance.now();
   };
 
   // 입력으로 미리보기가 다시 그려진 뒤에 위치를 잡아야 하므로 rAF 한 프레임 뒤에 실행.
@@ -8834,7 +8828,8 @@ function NoteEditor({
             <div className="text-sm font-semibold mb-1">저장하지 않고 나가기</div>
             <div className="text-[11px] text-muted-foreground mb-3 truncate">"{title.trim() || "제목 없음"}"</div>
             <div className="text-xs text-foreground mb-4 leading-relaxed">
-              저장하지 않은 변경 내용이 있습니다. 나가면 이 변경은 사라집니다.
+              저장하지 않은 변경 내용이 있습니다.<br />
+              나가면 이 변경은 사라집니다.
             </div>
             <div className="flex items-center gap-2">
               <button

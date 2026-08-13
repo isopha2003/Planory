@@ -68,6 +68,52 @@ const BLOCK_TYPES = new Set([
   "code", "table", "tableRow", "thematicBreak",
 ]);
 
+// ── 커서 줄 → 미리보기 스크롤 위치 ────────────────────────────────
+// 원본에서 커서가 있는 줄이 미리보기의 어느 픽셀 위치인지 구해, 그 지점이 화면 위에서 1/3
+// 지점에 오도록 하는 scrollTop 을 돌려준다. 계산할 수 없으면 null.
+//
+// ⚠ 블록의 시작 줄만 보면 안 된다. 목록 항목 하나가 서너 줄씩 이어지는 메모에서는 항목 안
+// 어디를 치든 앵커가 늘 항목 첫 줄이라 미리보기가 사실상 멈춰 있게 된다. 커서 줄을 감싸는
+// 앞/뒤 앵커 사이를 줄 수에 비례해 보간해서, 블록 안에서 줄을 내려가도 그만큼 따라가게 한다.
+export function previewScrollTopForLine(preview: HTMLElement, caretLine: number): number | null {
+  const anchors = preview.querySelectorAll<HTMLElement>("[data-md-line]");
+  if (anchors.length === 0) return null;
+
+  // 커서 줄을 감싸는 앞/뒤 앵커. DOM 순서 = 문서 순서라 줄 번호가 단조 증가하므로 뒤 앵커를
+  // 만나는 즉시 멈출 수 있다. 여기선 좌표를 읽지 않는다 — 실제 rect 는 필요한 것만 아래에서.
+  let before: HTMLElement | null = null;
+  let after: HTMLElement | null = null;
+  for (const el of anchors) {
+    // 같은 줄에 여러 앵커(ul > li > p)가 걸리면 나중 것 = 더 안쪽 = 더 정확한 위치.
+    if (Number(el.dataset.mdLine) <= caretLine) before = el;
+    else { after = el; break; }
+  }
+
+  const previewTop = preview.getBoundingClientRect().top;
+  const offsetOf = (el: HTMLElement) => el.getBoundingClientRect().top - previewTop + preview.scrollTop;
+
+  let pos: number;
+  if (!before) {
+    pos = 0; // 첫 앵커보다 앞(문서 맨 앞 빈 줄 등)
+  } else {
+    const lineA = Number(before.dataset.mdLine);
+    const topA = offsetOf(before);
+    // 뒤 앵커가 없으면(마지막 블록) 그 블록의 끝을 다음 지점으로 삼는다.
+    const lineB = after ? Number(after.dataset.mdLine) : lineA + 1;
+    const topB = after ? offsetOf(after) : topA + before.getBoundingClientRect().height;
+    const ratio = Math.min(1, (caretLine - lineA) / Math.max(1, lineB - lineA));
+    pos = topA + (topB - topA) * ratio;
+  }
+
+  const max = Math.max(0, preview.scrollHeight - preview.clientHeight);
+  return Math.max(0, Math.min(max, pos - preview.clientHeight / 3));
+}
+
+// 문자열에서 커서 오프셋이 몇 번째 줄인지(1-base). remark 의 position 과 같은 기준.
+export function lineAtOffset(text: string, offset: number): number {
+  return text.slice(0, offset).split("\n").length;
+}
+
 // ── 링크를 OS 기본 브라우저로 ──────────────────────────────────────
 // 앱 웹뷰에서 <a> 를 그냥 클릭하면 메모 화면이 그 사이트로 통째로 바뀌어 버리고, 앱에는
 // 주소창도 뒤로가기도 없어서 빠져나올 방법이 없다(재시작해야 함). 그래서 기본 동작을 막고
