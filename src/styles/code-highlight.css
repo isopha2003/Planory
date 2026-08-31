@@ -1,0 +1,19 @@
+/* 코드 블록 문법 하이라이팅 토큰 색상.
+ *
+ * 마크다운 미리보기·읽기 화면은 rehype-highlight(react-markdown)가, 리치 텍스트 에디터는
+ * CodeBlockLowlight(tiptap)가 하이라이팅을 한다. 둘 다 내부적으로 highlight.js(lowlight)를
+ * 쓰기 때문에 .hljs-* 클래스가 같아서, 이 파일 하나로 세 화면의 색이 전부 맞는다.
+ *
+ * 테마를 하나만(다크) 쓰는 이유: 코드 블록의 배경은 라이트 모드에서도 <pre> 가 어두운
+ * 색이라(typography 기본값), 라이트/다크에서 같은 어두운 바탕 위에 그려진다.
+ */
+@import "highlight.js/styles/github-dark.css";
+
+/* 테마 파일이 .hljs 에 자기 배경색(#0d1117)과 여백을 칠하지만, 코드 블록의 배경·여백은
+ * <pre> 가 그리고 있다. 그대로 두면 <pre> 배경 위에 다른 색 블록이 한 겹 더 깔려 두 가지
+ * 어두운 색이 겹쳐 보이므로, 배경과 여백은 <pre> 에 맡기고 토큰 색만 테마에서 가져온다. */
+.hljs,
+pre code.hljs {
+  background: transparent;
+  padding: 0;
+}

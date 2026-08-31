@@ -40,6 +40,7 @@ import {
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import {
   remarkBreaks, remarkLineAnchors, isExternalUrl,
   previewScrollTopForLine, lineAtOffset,
@@ -49,6 +50,8 @@ import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
 import HardBreak from "@tiptap/extension-hard-break";
 import { Markdown } from "tiptap-markdown";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { createLowlight, common } from "lowlight";
 import { type TimerState, fmtSec } from "../lib/timer";
 import { runAutoBackupIfNeeded, createBackupNow, getLastBackupTimestamp } from "../lib/backup";
 import { checkForUpdate, installUpdate, type UpdateCheckResult } from "../lib/updater";
@@ -8506,6 +8509,14 @@ function NoteCard({
 // 메모 본문 마크다운 렌더러 — 읽기 뷰와 마크다운 미리보기가 공유한다.
 // 두 곳이 같은 플러그인·같은 링크 동작을 쓰게 해서 "볼 때랑 쓸 때가 다른" 상황을 없앰.
 const NOTE_REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkLineAnchors];
+
+// 코드 블록(```java 등)에 언어별 문법 하이라이팅. highlight.js 의 common 언어 묶음
+// (java/js/ts/python/c/c++/c#/go/rust/sql/json/html/css/bash 등 30여 종)이 기본으로 등록된다.
+//
+// detect 는 기본값(false) 그대로 둔다 — 언어를 적지 않은 ``` 블록까지 추측해서 칠하면
+// 짧은 조각에서 엉뚱한 언어로 잡히는 일이 잦아, 그냥 색 없는 코드로 두는 편이 낫다.
+// 등록되지 않은 언어(```foobar)는 경고만 남기고 색 없이 렌더된다 — 깨지지 않음.
+const NOTE_REHYPE_PLUGINS = [rehypeHighlight];
 const NOTE_MD_COMPONENTS = {
   // 링크를 실제로 여는 건 main.tsx 의 installExternalLinkHandler(전역 캡처 핸들러) 담당 —
   // 여기서 또 onClick 을 달면 같은 클릭에 두 번 반응해 브라우저 탭이 두 개 열린다.
@@ -8524,7 +8535,7 @@ const NOTE_MD_COMPONENTS = {
 
 function NoteMarkdown({ children }: { children: string }) {
   return (
-    <ReactMarkdown remarkPlugins={NOTE_REMARK_PLUGINS} components={NOTE_MD_COMPONENTS}>
+    <ReactMarkdown remarkPlugins={NOTE_REMARK_PLUGINS} rehypePlugins={NOTE_REHYPE_PLUGINS} components={NOTE_MD_COMPONENTS}>
       {children}
     </ReactMarkdown>
   );
@@ -8559,6 +8570,10 @@ const PlainHardBreak = HardBreak.extend({
     };
   },
 });
+
+// 리치 에디터의 코드 블록 하이라이팅 엔진. 미리보기 쪽 rehype-highlight 와 같은 언어 묶음
+// (common)을 쓴다. 에디터가 열릴 때마다 언어를 다시 등록하지 않도록 모듈 수준에서 한 번만 생성.
+const noteLowlight = createLowlight(common);
 
 // ── 리치 텍스트 에디터 (일반 메모 모드) ────────────────────────────
 // TipTap 기반 WYSIWYG. 저장 포맷은 마크다운 그대로 유지(tiptap-markdown) — 마크다운 모드와
@@ -8614,8 +8629,12 @@ function RichNoteEditor({
       // 대개 글자를 고치려는 것이고, 열어 보려면 저장 후 읽기 화면에서 누르면 된다.
       // 실제 이동 차단은 전역 핸들러(installExternalLinkHandler)가 contenteditable 안의
       // <a> 를 preventDefault 만 하고 열지 않는 것으로 처리한다.
-      StarterKit.configure({ hardBreak: false, link: { openOnClick: false } }),
+      // codeBlock:false — 하이라이팅 되는 CodeBlockLowlight 로 교체한다. 노드 이름이
+      // 그대로 "codeBlock" 이라 tiptap-markdown 의 ``` 직렬화/파싱 경로는 변하지 않는다.
+      StarterKit.configure({ hardBreak: false, codeBlock: false, link: { openOnClick: false } }),
       PlainHardBreak,
+      // 미리보기(rehype-highlight)와 같은 highlight.js 엔진 — 두 화면의 색이 어긋나지 않는다.
+      CodeBlockLowlight.configure({ lowlight: noteLowlight }),
       UnderlineExtension,
       // html:false 로 두면 tiptap-markdown이 raw HTML을 이스케이프해 저장 — 마크다운 소스만 유지.
       // breaks:true 로 줄바꿈을 <br>이 아닌 소프트 개행으로 처리해 일반 메모장 감각에 가깝게.
