@@ -124,11 +124,16 @@ CREATE TABLE IF NOT EXISTS timer_sessions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- 메모 폴더 — 색상 있는 보관 통. 메모가 folder_id로 소속됨(0~1개, 플랫 1단계).
+-- 메모 폴더 — 색상 있는 보관 통. 메모가 folder_id로 소속됨(0~1개).
+-- parent_id: 폴더 안의 폴더. NULL 이면 최상위(루트) 폴더. 깊이 제한은 두지 않는다.
+--   ON DELETE CASCADE 로 부모를 지우면 하위 폴더도 함께 사라진다 — 다만 하위 폴더에 속한
+--   메모까지 지우려면 행 삭제 순서가 중요해서, 실제 삭제는 api.ts 의 deleteFolder 가
+--   자손을 모아 아래에서 위로 지운다(PRAGMA foreign_keys 가 꺼진 커넥션에서도 안전하도록).
 CREATE TABLE IF NOT EXISTS note_folders (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   color TEXT NOT NULL,
+  parent_id TEXT REFERENCES note_folders(id) ON DELETE CASCADE,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -196,6 +201,7 @@ CREATE INDEX IF NOT EXISTS kanban_cards_deadline_idx ON kanban_cards (deadline_i
 CREATE INDEX IF NOT EXISTS kanban_checklist_items_card_idx ON kanban_checklist_items (card_id);
 CREATE INDEX IF NOT EXISTS timer_sessions_date_idx ON timer_sessions (date);
 CREATE INDEX IF NOT EXISTS notes_folder_idx ON notes (folder_id);
+CREATE INDEX IF NOT EXISTS note_folders_parent_idx ON note_folders (parent_id);
 `;
 
 // 이미 구버전 notes 테이블(단일 main 노트, id/content/updated_at만)이 있던 설치를 위한
@@ -215,6 +221,14 @@ const NOTE_UPGRADES = [
   // 기존 메모는 전부 0(리치 텍스트) 로 시작 — 마크다운으로 쓴 메모는 사용자가 편집 화면에서
   // 마크다운 토글을 한 번 켜 주면 그때부터 그 메모에 기억된다.
   "ALTER TABLE notes ADD COLUMN markdown_mode INTEGER NOT NULL DEFAULT 0",
+];
+
+// 기존 설치의 note_folders 에 parent_id 를 사후 추가 — 폴더 중첩 지원.
+// nullable 로 붙으므로 기존 폴더는 전부 NULL(= 루트 폴더)이 되어 기존 화면 그대로 보인다.
+// ALTER TABLE 로는 FK 제약을 붙일 수 없지만, 삭제 시 자손 정리는 api.ts 가 직접 하므로
+// 동작상 차이는 없다(새 DB 는 위 CREATE TABLE 의 CASCADE 를 그대로 가짐).
+const NOTE_FOLDER_UPGRADES = [
+  "ALTER TABLE note_folders ADD COLUMN parent_id TEXT",
 ];
 
 // 기존 설치에서 block_templates 에 kind 컬럼을 사후 추가. 이미 있으면 조용히 실패.
@@ -315,6 +329,9 @@ export function getDb(): Promise<Database> {
       //    새 DB면 notes 테이블이 아직 없어 각 ALTER가 조용히 실패(무시)하고,
       //    이후 SCHEMA의 CREATE TABLE이 전체 컬럼을 갖춘 채 만든다.
       for (const stmt of NOTE_UPGRADES) {
+        try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
+      }
+      for (const stmt of NOTE_FOLDER_UPGRADES) {
         try { await db.execute(stmt); } catch { /* column/table already exists or not yet created */ }
       }
       for (const stmt of BLOCK_TEMPLATE_UPGRADES) {

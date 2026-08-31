@@ -53,7 +53,7 @@ const REQUIRED_TABLES: readonly TableName[] = [
 //   조용히 버려져 데이터가 손상된다(예전에 kind/category 등이 실제로 누락돼 있었음).
 const TABLE_COLUMNS: Record<TableName, readonly string[]> = {
   block_templates: ["id", "title", "color", "tags", "kind", "sort_order", "created_at"],
-  note_folders:    ["id", "name", "color", "sort_order", "created_at"],
+  note_folders:    ["id", "name", "color", "parent_id", "sort_order", "created_at"],
   blocks:          ["id", "template_id", "parent_block_id", "title", "color", "date", "start_time", "end_time", "completed", "completed_at", "memo", "category", "next_block_id", "repeat_group_id", "repeat_rule", "count_in_completion", "created_at"],
   checklist_items: ["id", "block_id", "parent_item_id", "text", "completed", "sort_order", "created_at"],
   deadlines:       ["id", "title", "due_date", "completed", "completed_at", "color", "created_at"],

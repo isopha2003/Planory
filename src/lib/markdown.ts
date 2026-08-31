@@ -50,11 +50,16 @@ export function remarkLineAnchors() {
     const walk = (node: any) => {
       if (!Array.isArray(node.children)) return;
       for (const child of node.children) {
-        const line = child.position?.start?.line;
+        const start = child.position?.start?.line;
+        const end = child.position?.end?.line;
         // 인라인 노드(text/emphasis/…)는 자체 엘리먼트가 없거나 앵커로 쓰기엔 너무 잘다.
-        if (line && BLOCK_TYPES.has(child.type)) {
+        if (start && BLOCK_TYPES.has(child.type)) {
           child.data = child.data ?? {};
-          child.data.hProperties = { ...(child.data.hProperties ?? {}), "data-md-line": String(line) };
+          child.data.hProperties = {
+            ...(child.data.hProperties ?? {}),
+            "data-md-line": String(start),
+            "data-md-end-line": String(end ?? start),
+          };
         }
         walk(child);
       }
@@ -72,37 +77,59 @@ const BLOCK_TYPES = new Set([
 // 원본에서 커서가 있는 줄이 미리보기의 어느 픽셀 위치인지 구해, 그 지점이 화면 위에서 1/3
 // 지점에 오도록 하는 scrollTop 을 돌려준다. 계산할 수 없으면 null.
 //
-// ⚠ 블록의 시작 줄만 보면 안 된다. 목록 항목 하나가 서너 줄씩 이어지는 메모에서는 항목 안
-// 어디를 치든 앵커가 늘 항목 첫 줄이라 미리보기가 사실상 멈춰 있게 된다. 커서 줄을 감싸는
-// 앞/뒤 앵커 사이를 줄 수에 비례해 보간해서, 블록 안에서 줄을 내려가도 그만큼 따라가게 한다.
+// ⚠ 블록의 "시작 줄"만 가지고 앵커 사이를 보간하면 안 된다. 이 앱은 엔터 한 번을 줄바꿈으로
+// 치기 때문에(remarkBreaks), 빈 줄 없이 쭉 써 내려간 긴 메모는 마크다운 상 문단 하나 =
+// 앵커 하나다. 그러면 100줄을 써도 앵커가 두어 개뿐이라 커서가 어디 있든 미리보기가 늘 같은
+// 자리(문서 끝)로 튀어서, 사실상 커서를 전혀 따라가지 않았다.
+//
+// 그래서 앵커마다 끝 줄(data-md-end-line)도 같이 심어두고, 커서를 품고 있는 블록을 찾아
+// 그 블록의 높이를 자기 줄 수로 나눠 안에서 보간한다. 블록 하나가 100줄이어도 그 안에서
+// 줄 단위로 따라간다.
 export function previewScrollTopForLine(preview: HTMLElement, caretLine: number): number | null {
-  const anchors = preview.querySelectorAll<HTMLElement>("[data-md-line]");
+  const anchors = Array.from(preview.querySelectorAll<HTMLElement>("[data-md-line]"));
   if (anchors.length === 0) return null;
 
-  // 커서 줄을 감싸는 앞/뒤 앵커. DOM 순서 = 문서 순서라 줄 번호가 단조 증가하므로 뒤 앵커를
-  // 만나는 즉시 멈출 수 있다. 여기선 좌표를 읽지 않는다 — 실제 rect 는 필요한 것만 아래에서.
-  let before: HTMLElement | null = null;
-  let after: HTMLElement | null = null;
+  // 글씨 크기 설정이 #root 에 CSS zoom 을 걸기 때문에, getBoundingClientRect() 가 돌려주는
+  // 값(확대된 시각 px)과 scrollTop/scrollHeight(요소 안쪽 레이아웃 px)의 단위가 서로 다르다.
+  // 둘을 그대로 섞으면 배율만큼 어긋나므로 rect 쪽을 배율로 나눠 레이아웃 px 로 환산한다.
+  // offsetHeight 는 zoom 의 영향을 받지 않는 레이아웃 px 이라 배율을 역산하는 기준이 된다.
+  const box = preview.getBoundingClientRect();
+  const zoom = preview.offsetHeight > 0 ? box.height / preview.offsetHeight : 1;
+  const scale = zoom > 0 ? zoom : 1;
+  const topOf = (el: HTMLElement) => (el.getBoundingClientRect().top - box.top) / scale + preview.scrollTop;
+  const heightOf = (el: HTMLElement) => el.getBoundingClientRect().height / scale;
+  const lineOf = (el: HTMLElement) => Number(el.dataset.mdLine);
+  const endLineOf = (el: HTMLElement) => Number(el.dataset.mdEndLine ?? el.dataset.mdLine);
+
+  // 커서 줄을 품고 있는 앵커 중 가장 안쪽 것. DOM 순서상 바깥(ul) 이 먼저, 안쪽(li>p) 이
+  // 나중에 나오므로 마지막으로 걸린 것이 가장 정확하다.
+  let hit: HTMLElement | null = null;
+  // 커서가 블록과 블록 사이 빈 줄에 있을 때를 위한 앞/뒤 블록.
+  let prev: HTMLElement | null = null;
+  let next: HTMLElement | null = null;
   for (const el of anchors) {
-    // 같은 줄에 여러 앵커(ul > li > p)가 걸리면 나중 것 = 더 안쪽 = 더 정확한 위치.
-    if (Number(el.dataset.mdLine) <= caretLine) before = el;
-    else { after = el; break; }
+    if (lineOf(el) <= caretLine && caretLine <= endLineOf(el)) hit = el;
+    else if (endLineOf(el) < caretLine) prev = el;
+    else if (lineOf(el) > caretLine && !next) next = el;
   }
 
-  const previewTop = preview.getBoundingClientRect().top;
-  const offsetOf = (el: HTMLElement) => el.getBoundingClientRect().top - previewTop + preview.scrollTop;
-
   let pos: number;
-  if (!before) {
-    pos = 0; // 첫 앵커보다 앞(문서 맨 앞 빈 줄 등)
+  if (hit) {
+    // 블록 안 — 블록 높이를 그 블록이 차지한 줄 수로 나눠, 커서 줄의 윗변 위치를 잡는다.
+    const first = lineOf(hit);
+    const last = endLineOf(hit);
+    const lines = Math.max(1, last - first + 1);
+    pos = topOf(hit) + heightOf(hit) * ((caretLine - first) / lines);
+  } else if (prev && next) {
+    // 블록 사이 빈 줄 — 앞 블록의 끝과 뒤 블록의 시작 사이를 줄 수 비율로 나눈다.
+    const from = topOf(prev) + heightOf(prev);
+    const to = topOf(next);
+    const span = Math.max(1, lineOf(next) - endLineOf(prev));
+    pos = from + (to - from) * ((caretLine - endLineOf(prev)) / span);
+  } else if (prev) {
+    pos = topOf(prev) + heightOf(prev); // 문서 끝 뒤의 빈 줄
   } else {
-    const lineA = Number(before.dataset.mdLine);
-    const topA = offsetOf(before);
-    // 뒤 앵커가 없으면(마지막 블록) 그 블록의 끝을 다음 지점으로 삼는다.
-    const lineB = after ? Number(after.dataset.mdLine) : lineA + 1;
-    const topB = after ? offsetOf(after) : topA + before.getBoundingClientRect().height;
-    const ratio = Math.min(1, (caretLine - lineA) / Math.max(1, lineB - lineA));
-    pos = topA + (topB - topA) * ratio;
+    pos = 0; // 첫 블록보다 앞(문서 맨 앞 빈 줄 등)
   }
 
   const max = Math.max(0, preview.scrollHeight - preview.clientHeight);
@@ -130,4 +157,30 @@ export function isExternalUrl(href: string | undefined): href is string {
 export function openExternal(href: string | undefined) {
   if (!isExternalUrl(href)) return;
   openUrl(href.trim()).catch(notifyError("링크 열기 실패"));
+}
+
+// ── 앱 전체 링크 가로채기 ──────────────────────────────────────────
+// 렌더러마다(react-markdown / tiptap / 앞으로 추가될 무엇이든) 각자 onClick 을 달아 두면,
+// 한 군데라도 빠지는 순간 그 링크는 웹뷰를 통째로 외부 사이트로 끌고 가 앱이 돌아올 수 없는
+// 상태가 된다. 그래서 개별 렌더러가 아니라 document 캡처 단계에서 한 번만 막는다.
+// 캡처 단계라 React 의 onClick 보다 먼저 돌고, 어떤 경로로 만들어진 <a> 든 동일하게 걸린다.
+//
+// 편집 중(리치 텍스트 에디터 = contenteditable) 인 링크는 열지 않는다 — 링크 글자를 고치려고
+// 클릭한 것이지 이동하려는 게 아니기 때문. 이 경우엔 기본 동작만 막고 커서 이동에 맡긴다.
+//
+// auxclick 도 함께 막는다: 가운데 버튼 클릭은 웹뷰에서 새 창을 열려는 시도가 되는데,
+// 이 앱의 웹뷰에는 탭도 주소창도 없어서 그대로 두면 빈 창이 뜨거나 앱 화면이 대체된다.
+export function installExternalLinkHandler() {
+  const handle = (e: MouseEvent) => {
+    const a = (e.target as HTMLElement | null)?.closest?.("a");
+    if (!a) return;
+    // 앱 내부 동작용 앵커(href 없음 / "#")는 건드리지 않는다.
+    const href = a.getAttribute("href");
+    if (!href || href.startsWith("#")) return;
+    e.preventDefault();
+    if (a.closest("[contenteditable='true'], [contenteditable='']")) return;
+    openExternal(href);
+  };
+  document.addEventListener("click", handle, true);
+  document.addEventListener("auxclick", handle, true);
 }

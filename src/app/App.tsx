@@ -35,12 +35,13 @@ import {
   fetchAllTodoChecklistItems,
   fetchNotes, createNote, updateNote, deleteNote, moveNoteToFolder, reorderNotes,
   fetchNoteFolders, createFolder, updateFolder, deleteFolder, reorderFolders,
+  moveFolder, descendantFolderIds,
   type Note, type NoteFolder,
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  remarkBreaks, remarkLineAnchors, openExternal, isExternalUrl,
+  remarkBreaks, remarkLineAnchors, isExternalUrl,
   previewScrollTopForLine, lineAtOffset,
 } from "../lib/markdown";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
@@ -795,11 +796,29 @@ export default function App() {
   });
 
   // 뜬 타이머 창(별도 webview)과의 상태 동기화 — 창이 열려 있을 때만 매초 브로드캐스트.
+  //
+  // 창이 닫혀 있어도 최신 상태를 ref 에 적어 둔다. 뜬 창은 자기 webview 가 다 뜬 뒤에야
+  // listen 을 걸 수 있어서, 창이 열리는 순간 여기서 보낸 emit 은 아직 받을 사람이 없다.
+  // 그래서 예전엔 창을 띄우면 다음 emit(= 타이머가 1초 틱을 돌 때)까지 00:00 이 떠 있었고,
+  // 멈춰 있는 동안에는 틱이 없으니 시작 버튼을 누르기 전까지 오늘 누적 시간이 아예 안 보였다.
+  // 이제 뜬 창이 준비되면 "timer:ready" 를 보내고, 아래에서 이 ref 값을 즉시 되쏜다.
+  const timerPayloadRef = useRef<Record<string, unknown> | null>(null);
   useEffect(() => {
-    if (!floatWin.isOpen) return;
     const pomPhaseRemainSec = Math.max(0, (pomPhase === "focus" ? pomWork : pomBreak) * 60 - pomPhaseSec);
-    emit("timer:state", { timerState, timerSec, pomodoroOn, pomPhase, pomPhaseRemainSec });
+    const payload = { timerState, timerSec, pomodoroOn, pomPhase, pomPhaseRemainSec };
+    timerPayloadRef.current = payload;
+    if (!floatWin.isOpen) return;
+    emit("timer:state", payload);
   }, [floatWin.isOpen, timerState, timerSec, pomodoroOn, pomPhase, pomPhaseSec, pomWork, pomBreak]);
+
+  // 뜬 창이 리스너를 다 걸고 나서 보내는 신호 — 받는 즉시 현재 상태를 한 번 보내준다.
+  // 이러면 창을 띄우자마자 오늘까지 공부한 시간이 그대로 보인다.
+  useEffect(() => {
+    const unlisten = listen("timer:ready", () => {
+      if (timerPayloadRef.current) emit("timer:state", timerPayloadRef.current);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
 
   // 뜬 타이머 창에서 온 시작/정지 요청 처리 — DB 쓰기는 항상 이 메인 창에서만 발생.
   //
@@ -7282,6 +7301,47 @@ function CustomColorPickerInline({ initial, onAdd, onClose }: {
 // 마크다운 프리뷰 공용 클래스
 const PROSE_CLASS = "prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:my-2 prose-li:my-1 prose-code:before:hidden prose-code:after:hidden prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-a:text-primary";
 
+// ── 폴더 트리 헬퍼 ─────────────────────────────────────────────────
+// 폴더는 parentId 로 무제한 중첩된다. DB 에서는 평평한 목록으로 오므로, 화면에서 필요한
+// "이 폴더의 직속 자식", "루트부터 여기까지의 경로" 를 여기서 계산한다.
+
+// 특정 폴더(루트는 null)의 직속 하위 폴더들.
+function folderChildren(folders: NoteFolder[], parentId: string | null): NoteFolder[] {
+  return folders.filter(f => f.parentId === parentId);
+}
+
+// 루트부터 대상 폴더까지의 경로(대상 포함). 경로 표시와 "상위로 올라가기"에 쓴다.
+// 데이터가 어쩌다 순환하더라도 멈추도록 방문한 id 를 기억한다.
+function folderPath(folders: NoteFolder[], id: string | null): NoteFolder[] {
+  const byId = new Map(folders.map(f => [f.id, f]));
+  const out: NoteFolder[] = [];
+  const seen = new Set<string>();
+  let cur = id;
+  while (cur !== null && !seen.has(cur)) {
+    seen.add(cur);
+    const f = byId.get(cur);
+    if (!f) break;
+    out.unshift(f);
+    cur = f.parentId;
+  }
+  return out;
+}
+
+// "상위 / 하위" 형태의 한 줄 경로. 폴더 선택 드롭다운처럼 트리를 펼칠 수 없는 곳에서
+// 같은 이름의 폴더가 여러 군데 있어도 구분되게 한다.
+function folderPathLabel(folders: NoteFolder[], id: string): string {
+  return folderPath(folders, id).map(f => f.name).join(" / ");
+}
+
+// 드롭다운 등에서 트리 순서(부모 바로 아래에 자식)로 나열하기 위한 평탄화.
+// depth 를 함께 돌려줘 들여쓰기 표시에 쓸 수 있게 한다.
+function flattenFolderTree(folders: NoteFolder[], parentId: string | null = null, depth = 0): { folder: NoteFolder; depth: number }[] {
+  return folderChildren(folders, parentId).flatMap(f => [
+    { folder: f, depth },
+    ...flattenFolderTree(folders, f.id, depth + 1),
+  ]);
+}
+
 function MemoSection({
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
 }: {
@@ -7407,17 +7467,24 @@ function NoteList({
   // 선택 툴바의 "이동" 드롭다운과 "삭제" 확인 모달.
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  // 드래그 오버 중인 대상: 특정 폴더 id, "back"(뒤로가기 = 루트로 이동), null(없음)
+  // 드래그 오버 중인 대상: 특정 폴더 id, "back"(경로의 상위로 꺼내기), null(없음)
   const [dropFolderId, setDropFolderId] = useState<string | "back" | null>(null);
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
   // 폴더 카드 재정렬 시 드래그 중인 폴더 id — 노트 드래그와 분리해서 다뤄야 하고,
   // FolderCard 사이의 drop 대상 하이라이트/드래그 소스 tint 용.
   const [dragFolderId, setDragFolderId] = useState<string | null>(null);
+  // 폴더를 폴더 위에 끌어다 놓을 때의 의미 — 카드 가운데면 "안으로 넣기", 위/아래 가장자리면
+  // "순서 바꾸기". 파일 탐색기와 같은 관례로, 하나의 드래그로 두 동작을 다 할 수 있게 한다.
+  const [dropFolderMode, setDropFolderMode] = useState<"into" | "before" | "after">("into");
 
   const categories = Array.from(new Set(notes.map(n => n.category).filter(Boolean)));
   const inDrafts = viewFolderId === "drafts";
   const currentFolder = !inDrafts && viewFolderId ? folders.find(f => f.id === viewFolderId) ?? null : null;
   const draftCount = notes.filter(n => n.isDraft).length;
+  // 지금 보고 있는 위치(루트면 null)와 거기까지의 경로 — 경로 표시줄과 "상위로" 이동에 쓴다.
+  const currentFolderId = currentFolder?.id ?? null;
+  const pathFolders = inDrafts ? [] : folderPath(folders, currentFolderId);
+  const parentFolderId = currentFolder?.parentId ?? null;
 
   // 필터: 임시 저장 탭에선 draft만, 그 외에선 draft를 숨기고 현재 뷰(루트=null 또는 폴더)에 속한 노트만.
   let shown = notes.filter(n => {
@@ -7456,18 +7523,23 @@ function NoteList({
   const handleCreateFolder = async () => {
     const name = newFolderName.trim();
     if (!name) return;
-    try { await createFolder({ name, color: newFolderColor }); await refreshFolders(); } catch (e) { notifyError("폴더 만들기 실패")(e); }
+    // 폴더 뷰 안에서 만들면 그 폴더의 하위 폴더가 된다(루트 뷰에선 최상위 폴더).
+    try { await createFolder({ name, color: newFolderColor, parentId: currentFolderId }); await refreshFolders(); } catch (e) { notifyError("폴더 만들기 실패")(e); }
     setNewFolderName(""); setNewFolderColor(paletteColors[0] ?? FOLDER_COLORS[0]); setShowNewFolder(false); setShowNewFolderCustomColor(false);
   };
 
   // 실제 삭제 실행 — 확인 모달의 "삭제" 버튼이나 확인이 필요없는 경로에서 호출.
   // deleteFolder 는 이제 내부 노트도 함께 삭제하므로 UI 상 노트 목록도 즉시 정리.
   const confirmDeleteFolder = async (folderId: string) => {
-    if (viewFolderId === folderId) setViewFolderId(null);
-    if (editingFolderId === folderId) setEditingFolderId(null);
-    // 낙관적으로 UI 에서 폴더와 소속 노트를 먼저 제거 — 서버 재로딩 지연 없이 즉시 반영.
-    setFolders(fs => fs.filter(f => f.id !== folderId));
-    setNotes(ns => ns.filter(n => n.folderId !== folderId));
+    // 하위 폴더까지 통째로 사라지므로, 지금 보고 있는 곳이 그 안이면 삭제되는 폴더의 부모로 올라간다.
+    const doomed = new Set([folderId, ...descendantFolderIds(folders, folderId)]);
+    if (typeof viewFolderId === "string" && doomed.has(viewFolderId)) {
+      setViewFolderId(folders.find(f => f.id === folderId)?.parentId ?? null);
+    }
+    if (editingFolderId && doomed.has(editingFolderId)) setEditingFolderId(null);
+    // 낙관적으로 UI 에서 폴더(자손 포함)와 소속 노트를 먼저 제거 — 서버 재로딩 지연 없이 즉시 반영.
+    setFolders(fs => fs.filter(f => !doomed.has(f.id)));
+    setNotes(ns => ns.filter(n => !(n.folderId && doomed.has(n.folderId))));
     try { await deleteFolder(folderId); } catch (e) {
       notifyError("폴더 삭제 실패")(e);
       // 실패 시 서버 상태로 되돌림.
@@ -7526,11 +7598,13 @@ function NoteList({
   const handleBulkDelete = async () => {
     const nIds = Array.from(selectedNoteIds);
     const fIds = Array.from(selectedFolderIds);
-    // 낙관적 UI: 선택한 메모 + 선택한 폴더 소속 메모 + 선택한 폴더를 즉시 제거.
-    setNotes(ns => ns.filter(n => !nIds.includes(n.id) && !fIds.includes(n.folderId ?? "")));
-    setFolders(fs => fs.filter(f => !fIds.includes(f.id)));
-    // 삭제된 폴더를 보고 있었으면 루트로 복귀.
-    if (viewFolderId && typeof viewFolderId === "string" && fIds.includes(viewFolderId)) {
+    // 폴더를 지우면 그 안의 하위 폴더까지 함께 사라진다 — 화면에서도 같이 걷어낸다.
+    const doomedFolders = new Set(fIds.flatMap(id => [id, ...descendantFolderIds(folders, id)]));
+    // 낙관적 UI: 선택한 메모 + 사라지는 폴더에 속한 메모 + 그 폴더들을 즉시 제거.
+    setNotes(ns => ns.filter(n => !nIds.includes(n.id) && !(n.folderId && doomedFolders.has(n.folderId))));
+    setFolders(fs => fs.filter(f => !doomedFolders.has(f.id)));
+    // 삭제된 폴더 안을 보고 있었으면 루트로 복귀.
+    if (viewFolderId && typeof viewFolderId === "string" && doomedFolders.has(viewFolderId)) {
       setViewFolderId(null);
     }
     setBulkDeleteOpen(false);
@@ -7559,9 +7633,10 @@ function NoteList({
     try { await reorderNotes(finalOrder); } catch (e) { notifyError("메모 순서 저장 실패")(e); }
   };
 
-  // 정렬된 폴더 목록 — 노트와 같은 sortMode 를 공유해 UI 상 일관되게 정렬.
-  // 폴더에는 updated_at 이 없어서 date 축은 created_at 을 사용.
-  const sortedFolders = [...folders].sort((a, b) => {
+  // 지금 위치의 직속 하위 폴더만 카드로 보여준다(폴더 안 폴더는 그 폴더에 들어가야 보임).
+  // 정렬은 노트와 같은 sortMode 를 공유해 UI 상 일관되게. 폴더에는 updated_at 이 없어서
+  // date 축은 created_at 을 사용.
+  const sortedFolders = folderChildren(folders, currentFolderId).sort((a, b) => {
     switch (sortMode) {
       case "title-asc": return (a.name || "이름 없음").localeCompare(b.name || "이름 없음");
       case "title-desc": return (b.name || "이름 없음").localeCompare(a.name || "이름 없음");
@@ -7572,17 +7647,54 @@ function NoteList({
   });
 
   // 폴더 카드 간 드래그로 재정렬 — 노트 재정렬과 동일한 패턴. custom 모드로 자동 전환.
-  const handleReorderFolder = async (draggedId: string, targetId: string) => {
+  //
+  // sort_order 는 "같은 부모 안에서의 순서" 이므로 형제들끼리만 0..n-1 을 다시 매긴다.
+  // 다른 폴더에 있는 폴더들의 sortOrder 는 건드리지 않는다(예전엔 전체 목록을 다시 매겨서
+  // 다른 폴더의 순서까지 덩달아 바뀌었다).
+  const handleReorderFolder = async (draggedId: string, targetId: string, place: "before" | "after" = "before") => {
     if (draggedId === targetId) return;
-    const ids = sortedFolders.map(f => f.id);
-    const from = ids.indexOf(draggedId);
-    const to = ids.indexOf(targetId);
-    if (from < 0 || to < 0) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    const dragged = folders.find(f => f.id === draggedId);
+    const target = folders.find(f => f.id === targetId);
+    if (!dragged || !target) return;
+    // 다른 폴더에 있던 것을 형제 자리로 끌어온 경우 — 먼저 같은 부모로 옮기고 순서를 매긴다.
+    const movingIn = dragged.parentId !== target.parentId;
+    // 순서의 기준은 "지금 화면에 보이는 차례" — 이름순으로 보고 있다가 끌어다 놓으면
+    // 그 화면 그대로가 custom 순서로 굳어야 사용자가 본 결과와 일치한다.
+    // (드래그는 항상 지금 보고 있는 폴더 안에서 일어나므로 대개 sortedFolders 가 그 목록이다.)
+    const siblingList = target.parentId === currentFolderId ? sortedFolders : folderChildren(folders, target.parentId);
+    const siblings = siblingList.map(f => f.id).filter(id => id !== draggedId);
+    let to = siblings.indexOf(targetId);
+    if (to < 0) return;
+    if (place === "after") to += 1;
+    siblings.splice(to, 0, draggedId);
     setSortMode("custom");
-    setFolders(fs => [...fs].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)).map((f, i) => ({ ...f, sortOrder: i })));
-    try { await reorderFolders(ids); } catch (e) { notifyError("폴더 순서 저장 실패")(e); }
+    const order = new Map(siblings.map((id, i) => [id, i]));
+    setFolders(fs => fs.map(f => {
+      if (!order.has(f.id)) return f;
+      return { ...f, parentId: target.parentId, sortOrder: order.get(f.id)! };
+    }));
+    try {
+      if (movingIn) await moveFolder(draggedId, target.parentId);
+      await reorderFolders(siblings);
+    } catch (e) { notifyError("폴더 순서 저장 실패")(e); await refreshFolders(); }
   };
+
+  // 폴더를 다른 폴더 안으로(또는 상위/루트로) 옮김.
+  // 자기 자신·자기 자손 밑으로 넣으려는 시도는 트리를 끊어 버리므로 조용히 무시한다
+  // (드래그 중에도 하이라이트를 주지 않으므로 사용자는 애초에 놓을 수 없다).
+  const handleMoveFolder = async (folderId: string, parentId: string | null) => {
+    if (folderId === parentId) return;
+    const target = folders.find(f => f.id === folderId);
+    if (!target || target.parentId === parentId) return;
+    if (parentId !== null && descendantFolderIds(folders, folderId).includes(parentId)) return;
+    setFolders(fs => fs.map(f => f.id === folderId ? { ...f, parentId } : f));
+    try { await moveFolder(folderId, parentId); await refreshFolders(); }
+    catch (e) { notifyError("폴더 이동 실패")(e); await refreshFolders(); }
+  };
+
+  // 드래그 중인 폴더를 이 폴더 안에 넣을 수 있는지 — 자기 자신/자기 자손이면 불가.
+  const canDropFolderInto = (targetId: string) =>
+    !!dragFolderId && dragFolderId !== targetId && !descendantFolderIds(folders, dragFolderId).includes(targetId);
 
   return (
     <div className="flex-1 overflow-y-auto" onClick={() => setMenuNoteId(null)}>
@@ -7615,14 +7727,17 @@ function NoteList({
                         onClick={() => handleBulkMove(null)}
                         className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
                       ><Folder size={12} /> 폴더 없음</button>
-                      {folders.map(f => (
+                      {/* 트리 순서(부모 바로 아래 자식)로 나열하고 깊이만큼 들여쓴다 —
+                           평평하게 늘어놓으면 같은 이름의 하위 폴더를 구분할 수 없다. */}
+                      {flattenFolderTree(folders).map(({ folder: f, depth }) => (
                         <button
                           key={f.id}
                           onClick={() => handleBulkMove(f.id)}
                           className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
+                          style={{ paddingLeft: 10 + depth * 12 }}
                         >
                           <span className="size-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: f.color }} />
-                          {f.name}
+                          <span className="truncate">{f.name}</span>
                         </button>
                       ))}
                     </div>
@@ -7776,16 +7891,30 @@ function NoteList({
           </div>
         )}
 
-        {/* 폴더 안이나 임시 저장 뷰면 뒤로가기 헤더 노출. 폴더 뷰의 뒤로가기 버튼은
-             노트를 드래그해 드롭하면 루트(폴더 없음)로 꺼내는 드롭 타깃 역할도 겸함.
+        {/* 폴더 안이나 임시 저장 뷰면 위치 표시줄 노출.
+             폴더 뷰에서는 "뒤로" 가 한 단계 위(상위 폴더, 없으면 루트)로 올라가고, 그 위에
+             노트나 폴더를 떨어뜨리면 한 단계 위로 꺼내는 드롭 타깃도 겸한다.
+             그 옆의 경로(루트 / A / B)는 각 조각을 눌러 그 위치로 바로 점프할 수 있다 —
+             중첩이 깊어지면 뒤로를 여러 번 누르는 게 번거롭기 때문.
              임시 저장 뷰의 뒤로가기 버튼은 폴더 이동과 무관하므로 드롭 타깃은 아님. */}
         {(currentFolder || inDrafts) && (
-          <div className="mb-4 flex items-center gap-2">
+          <div className="mb-4 flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => setViewFolderId(null)}
-              onDragOver={currentFolder ? e => { if (dragNoteId) { e.preventDefault(); setDropFolderId("back"); } } : undefined}
+              onClick={() => setViewFolderId(inDrafts ? null : parentFolderId)}
+              onDragOver={currentFolder ? e => {
+                if (dragNoteId || (dragFolderId && dragFolderId !== currentFolder.id)) { e.preventDefault(); setDropFolderId("back"); }
+              } : undefined}
               onDragLeave={currentFolder ? () => setDropFolderId(null) : undefined}
-              onDrop={currentFolder ? e => { e.preventDefault(); const id = e.dataTransfer.getData("noteId"); if (id) handleMoveNote(id, null); setDropFolderId(null); setViewFolderId(null); } : undefined}
+              onDrop={currentFolder ? e => {
+                e.preventDefault();
+                const noteId = e.dataTransfer.getData("noteId");
+                const folderIdData = e.dataTransfer.getData("folderId");
+                if (noteId) { handleMoveNote(noteId, parentFolderId); }
+                else if (folderIdData) { handleMoveFolder(folderIdData, parentFolderId); }
+                setDropFolderId(null);
+                setDragFolderId(null);
+              } : undefined}
+              title={currentFolder ? (parentFolderId ? "상위 폴더로" : "루트로") : undefined}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs transition-colors ${
                 dropFolderId === "back" ? "border-primary bg-primary/10 ring-1 ring-primary" : "border-border bg-card hover:bg-muted"
               }`}
@@ -7798,11 +7927,29 @@ function NoteList({
                 <span className="font-medium">임시 저장</span>
                 <span className="text-[11px] text-muted-foreground">{shown.length}</span>
               </div>
-            ) : currentFolder && (
-              <div className="flex items-center gap-1.5 text-sm">
-                <span className="size-2.5 rounded-full" style={{ backgroundColor: currentFolder.color }} />
-                <span className="font-medium">{currentFolder.name}</span>
-                <span className="text-[11px] text-muted-foreground">{shown.length}</span>
+            ) : (
+              <div className="flex items-center gap-1 text-sm min-w-0 flex-wrap">
+                <button
+                  onClick={() => setViewFolderId(null)}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >메모</button>
+                {pathFolders.map((f, i) => {
+                  const last = i === pathFolders.length - 1;
+                  return (
+                    <span key={f.id} className="flex items-center gap-1 min-w-0">
+                      <ChevronRight size={12} className="text-muted-foreground flex-shrink-0" />
+                      <button
+                        onClick={() => setViewFolderId(f.id)}
+                        disabled={last}
+                        className={`flex items-center gap-1.5 min-w-0 ${last ? "cursor-default" : "text-muted-foreground hover:text-foreground transition-colors"}`}
+                      >
+                        <span className="size-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: f.color }} />
+                        <span className={`truncate ${last ? "font-medium text-sm" : "text-xs"}`}>{f.name}</span>
+                      </button>
+                    </span>
+                  );
+                })}
+                <span className="text-[11px] text-muted-foreground ml-1">{shown.length}</span>
               </div>
             )}
           </div>
@@ -7828,19 +7975,19 @@ function NoteList({
 
         {/* 목록: 루트 뷰에선 폴더 카드가 노트 위에 먼저 나오고, 폴더/임시 저장 안에선 노트만.
              폴더 카드에 노트를 드래그하면 그 폴더로 이동. */}
-        {shown.length === 0 && (viewFolderId !== null || folders.length === 0) ? (
+        {shown.length === 0 && (inDrafts || sortedFolders.length === 0) ? (
           <div className="text-center py-16 text-sm text-muted-foreground">
             {inDrafts
               ? "임시 저장된 메모가 없습니다. \"새 메모\"로 만든 뒤 \"저장\"을 누르지 않고 나가면 여기 모입니다."
               : notes.filter(n => !n.isDraft).length === 0 && folders.length === 0
               ? "아직 메모가 없습니다. \"새 메모\"로 첫 메모를 만들어보세요."
-              : viewFolderId !== null
-              ? "이 폴더에는 아직 메모가 없습니다. 다른 메모를 여기로 드래그해 옮길 수 있습니다."
+              : currentFolder
+              ? "이 폴더는 비어 있습니다. 메모를 여기로 드래그해 옮기거나, \"새 폴더\"로 하위 폴더를 만들 수 있습니다."
               : "이 조건에 해당하는 메모가 없습니다."}
           </div>
         ) : (
           <div className="space-y-2">
-            {viewFolderId === null && sortedFolders.map(f => (
+            {!inDrafts && sortedFolders.map(f => (
               <FolderCard
                 key={f.id}
                 folder={f}
@@ -7849,7 +7996,9 @@ function NoteList({
                 // 아래 삭제 확인 모달의 개수는 일부러 draft 를 포함한 채로 둔다: 폴더를 지우면
                 // draft 도 같이 사라지므로, 파괴적 동작의 경고는 적게 알리는 쪽이 더 위험하다.
                 count={notes.filter(n => n.folderId === f.id && !n.isDraft).length}
+                subfolderCount={folderChildren(folders, f.id).length}
                 isDropTarget={dropFolderId === f.id}
+                dropMode={dropFolderId === f.id ? dropFolderMode : null}
                 isDragging={dragFolderId === f.id}
                 isEditing={editingFolderId === f.id}
                 selectMode={selectMode}
@@ -7865,10 +8014,21 @@ function NoteList({
                 onDelete={() => handleDeleteFolder(f.id)}
                 onDragStart={e => { e.dataTransfer.setData("folderId", f.id); e.dataTransfer.effectAllowed = "move"; setDragFolderId(f.id); }}
                 onDragEnd={() => { setDragFolderId(null); setDropFolderId(null); }}
-                // 노트 드롭(폴더 이동) 과 폴더 드롭(재정렬) 을 같은 자리에서 처리.
+                // 노트 드롭(폴더로 이동) 과 폴더 드롭(안으로 넣기 / 순서 바꾸기) 을 같은 자리에서 처리.
+                //
+                // 폴더를 폴더 위로 끌면 카드의 어느 높이에 있느냐로 의미가 갈린다:
+                // 위/아래 가장자리(각 30%)는 그 앞·뒤로 순서 바꾸기, 가운데는 그 안으로 넣기.
+                // 자기 자신이나 자기 자손 위에는 "안으로" 를 허용하지 않는다(트리가 끊어짐).
                 onDragOver={e => {
-                  if (dragNoteId) { e.preventDefault(); setDropFolderId(f.id); }
-                  else if (dragFolderId && dragFolderId !== f.id) { e.preventDefault(); setDropFolderId(f.id); }
+                  if (dragNoteId) { e.preventDefault(); setDropFolderId(f.id); setDropFolderMode("into"); return; }
+                  if (!dragFolderId || dragFolderId === f.id) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const ratio = (e.clientY - rect.top) / Math.max(1, rect.height);
+                  const mode = ratio < 0.3 ? "before" : ratio > 0.7 ? "after" : "into";
+                  if (mode === "into" && !canDropFolderInto(f.id)) return;
+                  e.preventDefault();
+                  setDropFolderId(f.id);
+                  setDropFolderMode(mode);
                 }}
                 onDragLeave={() => setDropFolderId(null)}
                 onDrop={e => {
@@ -7876,7 +8036,10 @@ function NoteList({
                   const noteId = e.dataTransfer.getData("noteId");
                   const folderIdData = e.dataTransfer.getData("folderId");
                   if (noteId) { handleMoveNote(noteId, f.id); }
-                  else if (folderIdData && folderIdData !== f.id) { handleReorderFolder(folderIdData, f.id); }
+                  else if (folderIdData && folderIdData !== f.id) {
+                    if (dropFolderMode === "into") handleMoveFolder(folderIdData, f.id);
+                    else handleReorderFolder(folderIdData, f.id, dropFolderMode);
+                  }
                   setDropFolderId(null);
                   setDragFolderId(null);
                 }}
@@ -7909,11 +8072,15 @@ function NoteList({
       {deletingFolderId && (() => {
         const target = folders.find(f => f.id === deletingFolderId);
         if (!target) { setDeletingFolderId(null); return null; }
-        const noteCount = notes.filter(n => n.folderId === deletingFolderId).length;
+        // 하위 폴더까지 통째로 지워지므로, 경고 개수도 자손 전체를 합산한다.
+        const descendants = descendantFolderIds(folders, deletingFolderId);
+        const doomed = new Set([deletingFolderId, ...descendants]);
+        const noteCount = notes.filter(n => n.folderId && doomed.has(n.folderId)).length;
         return (
           <FolderDeleteConfirmModal
             folderName={target.name}
             noteCount={noteCount}
+            subfolderCount={descendants.length}
             onCancel={() => setDeletingFolderId(null)}
             onConfirm={() => {
               const id = deletingFolderId;
@@ -7925,11 +8092,15 @@ function NoteList({
       })()}
       {/* 선택 모드의 벌크 삭제 확인 — 폴더 선택분은 내부 메모까지 함께 지워짐을 명시. */}
       {bulkDeleteOpen && (() => {
-        const folderNoteCount = notes.filter(n => n.folderId && selectedFolderIds.has(n.folderId)).length;
+        // 선택한 폴더 + 그 안의 하위 폴더 전부가 삭제 대상.
+        const doomedFolders = new Set(
+          Array.from(selectedFolderIds).flatMap(id => [id, ...descendantFolderIds(folders, id)])
+        );
+        const folderNoteCount = notes.filter(n => n.folderId && doomedFolders.has(n.folderId)).length;
         return (
           <BulkDeleteConfirmModal
             noteCount={selectedNoteIds.size}
-            folderCount={selectedFolderIds.size}
+            folderCount={doomedFolders.size}
             folderNoteCount={folderNoteCount}
             onCancel={() => setBulkDeleteOpen(false)}
             onConfirm={handleBulkDelete}
@@ -7993,10 +8164,13 @@ function BulkDeleteConfirmModal({
 // 폴더 삭제 확인 모달 — 폴더와 내부 메모가 모두 지워짐을 경고하고, 삭제 대상 메모 수를 함께 표시.
 // 스타일은 RepeatDeleteModal 과 통일(fixed inset overlay + 카드형 다이얼로그).
 function FolderDeleteConfirmModal({
-  folderName, noteCount, onCancel, onConfirm,
+  folderName, noteCount, subfolderCount = 0, onCancel, onConfirm,
 }: {
   folderName: string;
+  // 이 폴더와 그 하위 폴더 전체에 들어 있는 메모 수(= 실제로 사라지는 메모 수).
   noteCount: number;
+  // 함께 사라지는 하위 폴더 수(자손 전체).
+  subfolderCount?: number;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -8006,9 +8180,20 @@ function FolderDeleteConfirmModal({
         <div className="text-sm font-semibold mb-1">폴더 삭제</div>
         <div className="text-[11px] text-muted-foreground mb-3 truncate">"{folderName || "이름 없음"}"</div>
         <div className="text-xs text-foreground mb-4 leading-relaxed">
-          {noteCount > 0
-            ? <>이 폴더 안의 <span className="font-semibold text-destructive">메모 {noteCount}개</span>도 함께 삭제됩니다. 이 동작은 되돌릴 수 없습니다.</>
-            : <>이 폴더를 삭제합니다. 폴더 안에 메모는 없습니다.</>}
+          {subfolderCount > 0 || noteCount > 0 ? (
+            <>
+              이 폴더 안의{" "}
+              {subfolderCount > 0 && (
+                <><span className="font-semibold text-destructive">하위 폴더 {subfolderCount}개</span>{noteCount > 0 ? "와 " : ""}</>
+              )}
+              {noteCount > 0 && (
+                <><span className="font-semibold text-destructive">메모 {noteCount}개</span></>
+              )}
+              도 함께 삭제됩니다. 이 동작은 되돌릴 수 없습니다.
+            </>
+          ) : (
+            <>이 폴더를 삭제합니다. 폴더 안은 비어 있습니다.</>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -8030,13 +8215,18 @@ function FolderDeleteConfirmModal({
 // 클릭하면 폴더 안으로 진입. 우측 3-dot 메뉴로 이름·색상 편집이나 삭제.
 // isEditing 상태에서는 카드 본문이 이름 입력 + 팔레트 폼으로 대체됨.
 function FolderCard({
-  folder, count, isDropTarget, isDragging, isEditing, paletteColors,
+  folder, count, subfolderCount = 0, isDropTarget, dropMode = null, isDragging, isEditing, paletteColors,
   selectMode = false, selected = false, onToggleSelected,
   onOpen, onStartEdit, onCancelEdit, onSaveEdit, onDelete,
   onAddPaletteColor, onRemovePaletteColor,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }: {
   folder: NoteFolder; count: number; isDropTarget: boolean; isDragging: boolean; isEditing: boolean;
+  // 이 폴더 바로 아래에 있는 하위 폴더 수 — 메모가 없어도 안에 뭔가 있다는 걸 알려준다.
+  subfolderCount?: number;
+  // 드롭했을 때 무슨 일이 일어나는지: "into" = 이 폴더 안으로, "before"/"after" = 이 카드 앞/뒤 순서로.
+  // null 이면 이 카드는 지금 드롭 대상이 아님.
+  dropMode?: "into" | "before" | "after" | null;
   paletteColors: string[];
   // 선택 모드에서는 카드 클릭이 열기 대신 선택 토글이 되고, 3-dot 메뉴·드래그·인라인 편집이 비활성화됨.
   selectMode?: boolean;
@@ -8156,11 +8346,18 @@ function FolderCard({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       className={`group/folder relative flex items-center gap-3 p-4 rounded-xl border bg-card hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer ${
-        isDropTarget ? "border-primary bg-primary/10 ring-1 ring-primary" : ""
+        isDropTarget && dropMode === "into" ? "border-primary bg-primary/10 ring-1 ring-primary" : ""
       } ${isDragging ? "opacity-40" : ""} ${
         selectMode && selected ? "ring-2 ring-primary border-primary" : ""
       }`}
     >
+      {/* 순서 바꾸기 드롭이면 "이 자리에 끼워 넣는다" 는 뜻이므로 카드 전체를 칠하지 않고
+           삽입될 위치에 선만 긋는다 — "안으로 넣기"(테두리 강조)와 눈으로 구분되게. */}
+      {isDropTarget && (dropMode === "before" || dropMode === "after") && (
+        <div
+          className={`absolute left-2 right-2 h-0.5 rounded-full bg-primary ${dropMode === "before" ? "-top-px" : "-bottom-px"}`}
+        />
+      )}
       {selectMode && (
         <div className="flex-shrink-0 flex items-center justify-center">
           {selected
@@ -8173,7 +8370,9 @@ function FolderCard({
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{folder.name}</div>
-        <div className="text-[11px] text-muted-foreground mt-0.5">{count}개 메모</div>
+        <div className="text-[11px] text-muted-foreground mt-0.5">
+          {subfolderCount > 0 ? `폴더 ${subfolderCount}개 · 메모 ${count}개` : `${count}개 메모`}
+        </div>
       </div>
       {/* 3-dot 메뉴 — 이름·색상 편집 / 삭제. 카드 클릭(폴더 진입)과 분리를 위해 stopPropagation.
            선택 모드에선 벌크 툴바로 대체되므로 숨김. */}
@@ -8268,18 +8467,22 @@ function NoteCard({
           className="p-1 rounded-md text-muted-foreground hover:bg-muted opacity-0 group-hover/note:opacity-100 transition-opacity"
         ><MoreVertical size={15} /></button>
         {menuOpen && (
-          <div className="absolute right-0 top-full mt-1 w-40 bg-card border border-border rounded-lg shadow-lg z-50 p-1">
+          <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border rounded-lg shadow-lg z-50 p-1 max-h-72 overflow-y-auto">
             <div className="text-[10px] text-muted-foreground px-2.5 py-1">폴더로 이동</div>
             <button
               onClick={() => onMove(null)}
               className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2 ${!note.folderId ? "text-primary" : ""}`}
             ><Folder size={12} /> 폴더 없음</button>
-            {folders.map(f => (
+            {/* 중첩 폴더는 트리 순서로 나열하고 깊이만큼 들여쓴다. 이름만으로는 어느 폴더 안의
+                 폴더인지 알 수 없으므로, 전체 경로는 툴팁으로 함께 제공. */}
+            {flattenFolderTree(folders).map(({ folder: f, depth }) => (
               <button
                 key={f.id}
                 onClick={() => onMove(f.id)}
+                title={folderPathLabel(folders, f.id)}
+                style={{ paddingLeft: 10 + depth * 12 }}
                 className={`w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2 ${note.folderId === f.id ? "text-primary" : ""}`}
-              ><span className="size-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: f.color }} /> {f.name}</button>
+              ><span className="size-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: f.color }} /> <span className="truncate">{f.name}</span></button>
             ))}
             <div className="h-px bg-border my-1" />
             <button
@@ -8298,8 +8501,9 @@ function NoteCard({
 // 두 곳이 같은 플러그인·같은 링크 동작을 쓰게 해서 "볼 때랑 쓸 때가 다른" 상황을 없앰.
 const NOTE_REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkLineAnchors];
 const NOTE_MD_COMPONENTS = {
-  // 링크는 앱 웹뷰를 떠나지 않고 OS 기본 브라우저로. 앱에 주소창·뒤로가기가 없어서
-  // 웹뷰가 외부 사이트로 넘어가면 재시작 말고는 돌아올 방법이 없다.
+  // 링크를 실제로 여는 건 main.tsx 의 installExternalLinkHandler(전역 캡처 핸들러) 담당 —
+  // 여기서 또 onClick 을 달면 같은 클릭에 두 번 반응해 브라우저 탭이 두 개 열린다.
+  // 이 컴포넌트는 "클릭하면 브라우저로 열린다" 는 안내 툴팁만 붙인다.
   a({ href, children, ...rest }: any) {
     const external = isExternalUrl(href);
     return (
@@ -8307,7 +8511,6 @@ const NOTE_MD_COMPONENTS = {
         {...rest}
         href={href}
         title={external ? `브라우저에서 열기 — ${href}` : undefined}
-        onClick={e => { e.preventDefault(); openExternal(href); }}
       >{children}</a>
     );
   },
@@ -8401,7 +8604,10 @@ function RichNoteEditor({
       // StarterKit 의 기본 hardBreak 을 끄고, `\` 를 남기지 않는 버전으로 교체.
       // link.openOnClick=false — 켜져 있으면 편집 중 링크를 한 번 잘못 눌렀을 때 앱 웹뷰가
       // 그 사이트로 통째로 넘어가고, 주소창도 뒤로가기도 없어서 못 돌아온다.
-      // 대신 아래 handleClick 에서 Ctrl/⌘+클릭이면 OS 기본 브라우저로 연다.
+      // 편집 중에는 링크를 아예 열지 않는다(클릭은 커서 이동 전용) — 링크 위를 클릭하는 건
+      // 대개 글자를 고치려는 것이고, 열어 보려면 저장 후 읽기 화면에서 누르면 된다.
+      // 실제 이동 차단은 전역 핸들러(installExternalLinkHandler)가 contenteditable 안의
+      // <a> 를 preventDefault 만 하고 열지 않는 것으로 처리한다.
       StarterKit.configure({ hardBreak: false, link: { openOnClick: false } }),
       PlainHardBreak,
       UnderlineExtension,
@@ -8422,16 +8628,6 @@ function RichNoteEditor({
       attributes: {
         // PROSE_CLASS로 목록/제목 스타일을 마크다운 프리뷰와 동일하게 통일.
         class: `w-full ${PROSE_CLASS} outline-none focus:outline-none`,
-      },
-      // 편집 중 Ctrl/⌘+클릭으로 링크 열기. 그냥 클릭은 커서 이동(링크 글자를 고칠 수 있어야 함).
-      handleClick(_view, _pos, event) {
-        if (!event.ctrlKey && !event.metaKey) return false;
-        const a = (event.target as HTMLElement | null)?.closest?.("a");
-        const href = a?.getAttribute("href") ?? undefined;
-        if (!isExternalUrl(href)) return false;
-        event.preventDefault();
-        openExternal(href);
-        return true;
       },
     },
   });
@@ -8735,7 +8931,11 @@ function NoteEditor({
               className="h-8 px-3 rounded-lg bg-muted text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
             >
               <option value="">폴더 없음</option>
-              {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              {/* <option> 은 중첩 표현이 안 되므로 전체 경로("상위 / 하위")를 그대로 이름에 쓴다.
+                   같은 이름의 하위 폴더가 여러 군데 있어도 어느 것인지 구분된다. */}
+              {flattenFolderTree(folders).map(({ folder: f }) => (
+                <option key={f.id} value={f.id}>{folderPathLabel(folders, f.id)}</option>
+              ))}
             </select>
             {/* 마크다운 토글 — 저장 왼쪽, 카테고리/폴더와 동일한 pill 높이로 통일. */}
             <button

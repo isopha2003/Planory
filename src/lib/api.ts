@@ -964,6 +964,8 @@ export interface NoteFolder {
   id: string;
   name: string;
   color: string;
+  // 상위 폴더. null 이면 최상위(루트). 폴더 안의 폴더는 깊이 제한 없이 중첩된다.
+  parentId: string | null;
   sortOrder: number;
   // 노트와 달리 폴더에는 updated_at 이 없어, "날짜순" 정렬 시 이 값을 사용.
   createdAt: string;
@@ -972,22 +974,56 @@ export interface NoteFolder {
 export async function fetchNoteFolders(): Promise<NoteFolder[]> {
   const db = await getDb();
   const rows = await db.select<any[]>("SELECT * FROM note_folders ORDER BY sort_order, created_at");
-  return rows.map(r => ({ id: r.id, name: r.name, color: r.color, sortOrder: r.sort_order ?? 0, createdAt: r.created_at ?? "" }));
+  return rows.map(r => ({
+    id: r.id, name: r.name, color: r.color,
+    parentId: r.parent_id ?? null,
+    sortOrder: r.sort_order ?? 0, createdAt: r.created_at ?? "",
+  }));
 }
 
-export async function createFolder(f: { name: string; color: string }): Promise<NoteFolder> {
+export async function createFolder(f: { name: string; color: string; parentId?: string | null }): Promise<NoteFolder> {
   const db = await getDb();
   const id = uuid();
-  const rows = await db.select<any[]>("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM note_folders");
+  const parentId = f.parentId ?? null;
+  // sort_order 는 같은 부모 안에서의 순서 — 형제끼리만 비교하므로 MAX 도 형제 범위에서 구한다.
+  // (전체 최대값을 쓰면 하위 폴더를 만들 때마다 값이 치솟아 나중에 순서를 읽기 어려워진다.)
+  const rows = parentId === null
+    ? await db.select<any[]>("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM note_folders WHERE parent_id IS NULL")
+    : await db.select<any[]>("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM note_folders WHERE parent_id = ?", [parentId]);
   const sortOrder = rows[0]?.n ?? 0;
   await db.execute(
-    "INSERT INTO note_folders (id, name, color, sort_order) VALUES (?, ?, ?, ?)",
-    [id, f.name, f.color, sortOrder]
+    "INSERT INTO note_folders (id, name, color, parent_id, sort_order) VALUES (?, ?, ?, ?, ?)",
+    [id, f.name, f.color, parentId, sortOrder]
   );
   // created_at 은 DB default(datetime('now')) 로 채워짐 — 갓 만든 행을 다시 읽어 그 값을 반환.
   const row = await db.select<any[]>("SELECT created_at FROM note_folders WHERE id = ?", [id]);
   const createdAt = row[0]?.created_at ?? "";
-  return { id, name: f.name, color: f.color, sortOrder, createdAt };
+  return { id, name: f.name, color: f.color, parentId, sortOrder, createdAt };
+}
+
+// 폴더를 다른 폴더 안으로(또는 루트로) 옮김.
+//
+// ⚠ 자기 자신이나 자기 자손 밑으로는 옮길 수 없다 — 그러면 그 가지가 트리에서 떨어져 나가
+// 루트에서 영영 도달할 수 없는 유령 폴더가 된다. 호출 쪽 UI 에서도 막지만, 데이터가 깨지는
+// 종류의 실수라 여기서도 한 번 더 검사한다.
+export async function moveFolder(id: string, parentId: string | null): Promise<void> {
+  if (id === parentId) throw new Error("폴더를 자기 자신 안으로 옮길 수 없습니다");
+  const db = await getDb();
+  if (parentId !== null) {
+    // parentId 에서 위로 거슬러 올라가며 id 를 만나면 순환.
+    const rows = await db.select<any[]>("SELECT id, parent_id FROM note_folders");
+    const parentOf = new Map<string, string | null>(rows.map(r => [r.id, r.parent_id ?? null]));
+    let cur: string | null = parentId;
+    // 데이터가 이미 순환이더라도 무한 루프에 빠지지 않도록 전체 폴더 수만큼만 거슬러 올라간다.
+    for (let i = 0; cur !== null && i <= rows.length; i++) {
+      if (cur === id) throw new Error("폴더를 자기 하위 폴더 안으로 옮길 수 없습니다");
+      cur = parentOf.get(cur) ?? null;
+    }
+  }
+  const sib = parentId === null
+    ? await db.select<any[]>("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM note_folders WHERE parent_id IS NULL")
+    : await db.select<any[]>("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM note_folders WHERE parent_id = ?", [parentId]);
+  await db.execute("UPDATE note_folders SET parent_id = ?, sort_order = ? WHERE id = ?", [parentId, sib[0]?.n ?? 0, id]);
 }
 
 // 폴더 순서 저장 — reorderNotes 와 동일한 패턴(개별 UPDATE, 트랜잭션 없이 부분 반영 감수).
@@ -1012,11 +1048,62 @@ export async function updateFolder(id: string, changes: { name?: string; color?:
 
 export async function deleteFolder(id: string): Promise<void> {
   const db = await getDb();
-  // 폴더 삭제 = 내부 메모까지 전부 삭제(UI 에서 확인 모달을 거친 뒤에만 호출).
+  // 폴더 삭제 = 하위 폴더와 그 안의 메모까지 전부 삭제(UI 에서 확인 모달을 거친 뒤에만 호출).
   // 예전엔 SET NULL 로 노트를 루트로 빼줬는데, UX 상 "폴더째 정리" 를 원하는 흐름이라
-  // 노트도 함께 지우는 쪽으로 바꿈. 순서: 노트 → 폴더(FK 순서 무해하지만 명시적으로).
-  await db.execute("DELETE FROM notes WHERE folder_id = ?", [id]);
-  await db.execute("DELETE FROM note_folders WHERE id = ?", [id]);
+  // 노트도 함께 지우는 쪽으로 바꿈.
+  //
+  // FK 의 ON DELETE CASCADE 에 기대지 않고 직접 훑는 이유:
+  //  - parent_id 를 사후 ALTER 로 붙인 기존 설치에는 FK 제약 자체가 없다.
+  //  - PRAGMA foreign_keys 는 커넥션별 설정이라 풀에서 다른 커넥션이 잡히면 꺼져 있을 수 있다.
+  //  - CASCADE 로 폴더만 지워지면 그 안의 메모는 folder_id 만 NULL 이 되어(notes 쪽은 SET NULL)
+  //    삭제한 폴더의 메모가 루트에 우수수 나타난다.
+  const rows = await db.select<any[]>("SELECT id, parent_id FROM note_folders");
+  const childrenOf = new Map<string, string[]>();
+  for (const r of rows) {
+    const p = r.parent_id ?? null;
+    if (p === null) continue;
+    childrenOf.set(p, [...(childrenOf.get(p) ?? []), r.id]);
+  }
+  // 자기 자신 + 모든 자손. 순환 데이터가 있어도 멈추도록 방문 집합을 둔다.
+  const targets: string[] = [];
+  const seen = new Set<string>();
+  const stack = [id];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    targets.push(cur);
+    stack.push(...(childrenOf.get(cur) ?? []));
+  }
+  for (const fid of targets) {
+    await db.execute("DELETE FROM notes WHERE folder_id = ?", [fid]);
+  }
+  // 자손부터 지워야 FK 가 켜진 커넥션에서도 참조 위반이 없다(targets 는 위에서 아래 순서).
+  for (const fid of [...targets].reverse()) {
+    await db.execute("DELETE FROM note_folders WHERE id = ?", [fid]);
+  }
+}
+
+// 어떤 폴더가 지워질 때 함께 사라지는 자손 폴더 id 들(자기 자신 제외).
+// 삭제 확인 모달에서 "하위 폴더 N개도 함께 삭제됩니다" 를 보여주고, 낙관적 UI 갱신에서
+// 화면에 남은 자손을 함께 걷어내는 데 쓴다.
+export function descendantFolderIds(folders: NoteFolder[], id: string): string[] {
+  const childrenOf = new Map<string, string[]>();
+  for (const f of folders) {
+    if (f.parentId === null) continue;
+    childrenOf.set(f.parentId, [...(childrenOf.get(f.parentId) ?? []), f.id]);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>([id]);
+  const stack = [...(childrenOf.get(id) ?? [])];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    out.push(cur);
+    stack.push(...(childrenOf.get(cur) ?? []));
+  }
+  return out;
 }
 
 // ── checklist_items (체크리스트형 자식 — 무제한 중첩) ─────────────

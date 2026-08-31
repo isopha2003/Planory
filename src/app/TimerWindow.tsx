@@ -23,7 +23,13 @@ export default function TimerWindow() {
   const [pomodoroOn, setPomodoroOn] = useState(false);
   const [pomPhase, setPomPhase] = useState<PomPhase>("focus");
   const [pomPhaseRemainSec, setPomPhaseRemainSec] = useState(0);
+  // 메인 창에서 첫 상태를 받았는지. 받기 전에는 00:00 대신 --:-- 를 보여준다 —
+  // 0초라고 단정해 버리면 "오늘 공부한 시간이 초기화됐다" 로 잘못 읽힌다.
+  const [synced, setSynced] = useState(false);
 
+  // 메인 창은 상태가 바뀔 때만 "timer:state" 를 쏘기 때문에, 타이머가 멈춰 있으면
+  // 이 창을 띄워도 한동안(= 다음 변화까지) 아무 것도 오지 않아 00:00 이 그대로 남았다.
+  // 리스너를 다 건 뒤 "timer:ready" 로 한 번 요청해서 지금까지 공부한 시간을 바로 받아온다.
   useEffect(() => {
     const unlisten = listen<TimerStatePayload>("timer:state", (e) => {
       setTimerState(e.payload.timerState);
@@ -31,7 +37,10 @@ export default function TimerWindow() {
       setPomodoroOn(!!e.payload.pomodoroOn);
       setPomPhase(e.payload.pomPhase ?? "focus");
       setPomPhaseRemainSec(e.payload.pomPhaseRemainSec ?? 0);
+      setSynced(true);
     });
+    // listen 이 실제로 등록된 뒤에 요청해야 답이 유실되지 않는다.
+    unlisten.then(() => { emit("timer:ready", {}); });
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
@@ -74,7 +83,7 @@ export default function TimerWindow() {
           isBreak ? "text-indigo-800" : isRunning ? "text-sky-800" : isAutoPaused ? "text-amber-800" : "text-muted-foreground"
         }`}
       >
-        {fmtSec(timerSec)}
+        {synced ? fmtSec(timerSec) : "--:--"}
       </div>
       <div className="flex gap-2">
         {timerState === "stopped" && (
