@@ -8638,7 +8638,16 @@ function RichNoteEditor({
       UnderlineExtension,
       // html:false 로 두면 tiptap-markdown이 raw HTML을 이스케이프해 저장 — 마크다운 소스만 유지.
       // breaks:true 로 줄바꿈을 <br>이 아닌 소프트 개행으로 처리해 일반 메모장 감각에 가깝게.
-      Markdown.configure({ html: false, tightLists: true, breaks: true, linkify: true }),
+      //
+      // transformPastedText:true — 붙여넣은 평문을 마크다운으로 해석한다. 기본값(false)에서는
+      // "## 제목" 을 붙여넣으면 글자 그대로 문단에 박히는 데서 끝나지 않고, 저장할 때
+      // 직렬화기가 "\## 제목" 처럼 백슬래시로 이스케이프해 원본까지 망가뜨렸다(마크다운
+      // 모드로 다시 열면 백슬래시가 그대로 보이고 영영 렌더되지 않음).
+      //
+      // 이 옵션은 클립보드에 HTML 이 없는 평문일 때만 관여한다 — 웹페이지·워드에서 복사한
+      // 서식 있는 붙여넣기는 기존 HTML 경로 그대로다. 마크다운 기호를 글자 그대로 넣고 싶으면
+      // Ctrl+Shift+V(평문 강제 붙여넣기)를 쓰면 변환을 건너뛴다.
+      Markdown.configure({ html: false, tightLists: true, breaks: true, linkify: true, transformPastedText: true }),
     ],
     content: initialContent,
     autofocus: autoFocus ?? false,
