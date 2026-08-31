@@ -7299,7 +7299,13 @@ function CustomColorPickerInline({ initial, onAdd, onClose }: {
 }
 
 // 마크다운 프리뷰 공용 클래스
-const PROSE_CLASS = "prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:my-2 prose-li:my-1 prose-code:before:hidden prose-code:after:hidden prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-a:text-primary";
+//
+// ⚠ 인라인 코드(`foo`)의 알약 스타일은 코드 블록(```) 안의 <code> 에 닿으면 안 된다.
+// prose-code: 는 <pre> 안쪽 <code> 까지 전부 잡는데, 코드 블록은 <pre> 가 어두운 배경 +
+// 밝은 글자색을 쓰므로 그 위에 밝은 bg-muted 알약이 얹히면 밝은 글자가 밝은 배경에 묻혀
+// 코드가 통째로 안 보였다(게다가 인라인 padding 때문에 블록이 한 줄 알약처럼 찌그러짐).
+// :not(pre)>code 로 "부모가 <pre> 가 아닌 code" = 인라인 코드에만 적용한다.
+const PROSE_CLASS = "prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:my-2 prose-li:my-1 prose-code:before:hidden prose-code:after:hidden [&_:not(pre)>code]:bg-muted [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:rounded prose-a:text-primary";
 
 // ── 폴더 트리 헬퍼 ─────────────────────────────────────────────────
 // 폴더는 parentId 로 무제한 중첩된다. DB 에서는 평평한 목록으로 오므로, 화면에서 필요한
