@@ -39,7 +39,7 @@ import {
   moveFolder, descendantFolderIds,
   type Note, type NoteFolder,
 } from "../lib/api";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkCjkFriendly from "remark-cjk-friendly";
 import rehypeHighlight from "rehype-highlight";
@@ -8658,6 +8658,14 @@ const NOTE_REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkBreaks, remarkL
 // 짧은 조각에서 엉뚱한 언어로 잡히는 일이 잦아, 그냥 색 없는 코드로 두는 편이 낫다.
 // 등록되지 않은 언어(```foobar)는 경고만 남기고 색 없이 렌더된다 — 깨지지 않음.
 const NOTE_REHYPE_PLUGINS = [rehypeHighlight];
+
+// react-markdown 은 안전하지 않은 URL 을 막으려고 http/https/mailto 등 몇 가지 스킴만 통과시키고
+// 나머지는 빈 문자열로 잘라낸다. 메모 이미지가 쓰는 planory-img: 도 그 대상이라, 그냥 두면
+// src="" 인 <img> 가 되어 붙여넣은 이미지가 전부 깨진 아이콘으로 나온다(파일은 멀쩡히 저장돼 있음).
+//
+// 우리 참조만 통과시키고 나머지 판단은 기본 구현에 그대로 맡긴다 — 메모 본문은 사용자가 붙여넣은
+// 텍스트라 javascript: 같은 스킴을 막아 주는 기본 동작은 유지해야 한다.
+const noteUrlTransform = (url: string) => (isImageRef(url) ? url : defaultUrlTransform(url));
 const NOTE_MD_COMPONENTS = {
   // 본문에는 planory-img://<파일명> 참조만 저장돼 있으므로 그릴 때 asset URL 로 바꾼다.
   // 참조가 아니면(사용자가 붙여넣은 http 이미지 주소 등) 손대지 않고 그대로 둔다.
@@ -8686,7 +8694,12 @@ const NOTE_MD_COMPONENTS = {
 
 function NoteMarkdown({ children }: { children: string }) {
   return (
-    <ReactMarkdown remarkPlugins={NOTE_REMARK_PLUGINS} rehypePlugins={NOTE_REHYPE_PLUGINS} components={NOTE_MD_COMPONENTS}>
+    <ReactMarkdown
+      remarkPlugins={NOTE_REMARK_PLUGINS}
+      rehypePlugins={NOTE_REHYPE_PLUGINS}
+      urlTransform={noteUrlTransform}
+      components={NOTE_MD_COMPONENTS}
+    >
       {children}
     </ReactMarkdown>
   );
