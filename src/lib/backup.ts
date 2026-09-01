@@ -3,12 +3,16 @@
 // - 자동 백업: 앱 시작 시 하루 1회, SQLite `VACUUM INTO`로 DB를 %APPDATA%/…/backups/에
 //   타임스탬프 이름으로 스냅샷. 열린 상태에서도 안전한 일관 복사본이 만들어짐.
 //   최근 10개만 유지하고 나머지는 삭제(rotate).
+//   메모에 붙인 이미지는 DB 밖 파일이라 이 스냅샷에 안 들어간다 — backups/note-images/ 로
+//   따로 미러링한다. 새로 생긴 것만 복사하고 지우지는 않으므로, 오래된 스냅샷을 되살려도
+//   그 시절 이미지가 남아 있다.
 // - JSON 내보내기: 모든 테이블을 읽어 스키마 버전을 붙여 파일 저장.
 // - JSON 가져오기: 파일을 파싱해 버전 확인 후 트랜잭션 안에서 모든 테이블을 지우고 다시 채움.
 
 import { getDb } from "./db";
 import { appDataDir, join } from "@tauri-apps/api/path";
-import { mkdir, readDir, remove, writeTextFile, readTextFile, exists } from "@tauri-apps/plugin-fs";
+import { mkdir, readDir, remove, writeTextFile, readTextFile, exists, copyFile } from "@tauri-apps/plugin-fs";
+import { IMAGE_DIR_NAME } from "./images";
 import { save, open } from "@tauri-apps/plugin-dialog";
 
 const BACKUP_DIR_NAME = "backups";
@@ -96,10 +100,33 @@ async function writeBackupSnapshot(): Promise<string> {
   return path;
 }
 
+// 이미지 미러링 — 원본 폴더에 있는데 백업 폴더에 없는 파일만 복사한다.
+//
+// DB 스냅샷은 10개까지 도는데(rotate) 이미지까지 스냅샷마다 복사하면 같은 그림이 10벌씩
+// 쌓인다. 이미지 파일명은 uuid 라 내용이 바뀌는 일이 없으므로 한 벌만 두고 계속 더해간다.
+// 지우지 않는 이유: 메모에서 이미지를 뺐다고 백업에서까지 지우면, 그 이미지를 쓰던 예전
+// DB 스냅샷으로 되돌렸을 때 그림만 사라진 메모가 된다.
+async function mirrorNoteImages(): Promise<void> {
+  const base = await appDataDir();
+  const srcDir = await join(base, IMAGE_DIR_NAME);
+  if (!(await exists(srcDir))) return;
+  const dstDir = await join(await ensureBackupDir(), IMAGE_DIR_NAME);
+  if (!(await exists(dstDir))) await mkdir(dstDir, { recursive: true });
+  for (const entry of await readDir(srcDir)) {
+    if (!entry.isFile) continue;
+    const dst = await join(dstDir, entry.name);
+    if (await exists(dst)) continue;
+    // 한 장 실패가 백업 전체를 막지 않게 — 다음 백업에서 다시 시도된다.
+    try { await copyFile(await join(srcDir, entry.name), dst); }
+    catch (e) { console.warn("이미지 백업 복사 실패", entry.name, e); }
+  }
+}
+
 async function rotateBackups(): Promise<void> {
   const dir = await ensureBackupDir();
   const entries = await readDir(dir);
   const files = entries
+    // planner-*.db 만 대상 — 같은 폴더의 note-images/ 는 건드리지 않는다.
     .filter(e => e.isFile && e.name.startsWith("planner-") && e.name.endsWith(".db"))
     .map(e => e.name)
     .sort(); // 이름에 시간이 들어있어 사전순 = 시간순
@@ -111,6 +138,8 @@ async function rotateBackups(): Promise<void> {
 
 export async function createBackupNow(): Promise<string> {
   const path = await writeBackupSnapshot();
+  // 이미지 미러링 실패가 DB 백업 성공을 뒤엎지 않게 따로 감싼다 — DB 만이라도 남는 게 낫다.
+  try { await mirrorNoteImages(); } catch (e) { console.warn("이미지 백업 실패", e); }
   try { localStorage.setItem(LAST_BACKUP_KEY, String(Date.now())); } catch {}
   await rotateBackups();
   return path;

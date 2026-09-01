@@ -7,7 +7,7 @@ import {
   Edit3, Check, AlertCircle, PictureInPicture2 as PictureInPicture,
   Folder, FolderPlus, MoreVertical, ArrowLeft, ArrowUpDown, Trash2,
   Minus, Square, Copy, Palette,
-  Bold, Italic, Underline, Strikethrough, Code, Code2,
+  Bold, Italic, Underline, Strikethrough, Code, Code2, ImagePlus, Search,
   Heading1, Heading2, Pilcrow, List, ListOrdered, Quote,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -46,11 +46,15 @@ import {
   previewScrollTopForLine, lineAtOffset,
 } from "../lib/markdown";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import {
+  isImageRef, imageRefToUrl, saveNoteImage, imageFilesFrom, imageMarkdown,
+} from "../lib/images";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
 import HardBreak from "@tiptap/extension-hard-break";
 import { Markdown } from "tiptap-markdown";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import Image from "@tiptap/extension-image";
 import { createLowlight, common } from "lowlight";
 import { type TimerState, fmtSec } from "../lib/timer";
 import { runAutoBackupIfNeeded, createBackupNow, getLastBackupTimestamp } from "../lib/backup";
@@ -7453,6 +7457,8 @@ function NoteList({
 }) {
   const [sortMode, setSortMode] = useState<SortMode>("custom");
   const [sortOpen, setSortOpen] = useState(false);
+  // 메모 검색어. 폴더 뷰와 무관하게 전체 메모의 제목·본문·카테고리에서 찾는다.
+  const [query, setQuery] = useState("");
   // viewFolderId 는 상위 MemoSection 에서 관리 — 편집기 진입/복귀 시 NoteList 가
   // 언마운트되므로 여기 두면 초기화됨. 사용자가 폴더에서 메모를 저장 후 돌아왔을 때
   // 방금 있던 폴더 뷰에 그대로 머무르도록 상위로 끌어올림.
@@ -7495,8 +7501,27 @@ function NoteList({
   const pathFolders = inDrafts ? [] : folderPath(folders, currentFolderId);
   const parentFolderId = currentFolder?.parentId ?? null;
 
+  // 검색어가 있으면 "지금 보고 있는 폴더" 라는 개념을 잠시 접고 전체에서 찾는다.
+  // 폴더 안에서만 찾으면 어느 폴더에 넣었는지 기억해야 검색이 되므로 검색의 의미가 없다.
+  // 대신 결과마다 어느 폴더에 있는지 경로를 같이 보여줘서(NoteCard 의 folderLabel) 위치를 잃지 않게 한다.
+  const q = query.trim().toLowerCase();
+  const searching = q.length > 0;
+  // 공백으로 나눠 전부 포함(AND) — "dp 배낭" 처럼 기억나는 단어를 순서 상관없이 나열해 찾게.
+  const terms = searching ? q.split(/\s+/).filter(Boolean) : [];
+  const matches = (n: Note) => {
+    const hay = `${n.title}\n${n.content}\n${n.category}`.toLowerCase();
+    return terms.every(t => hay.includes(t));
+  };
+
   // 필터: 임시 저장 탭에선 draft만, 그 외에선 draft를 숨기고 현재 뷰(루트=null 또는 폴더)에 속한 노트만.
   let shown = notes.filter(n => {
+    if (searching) {
+      // 검색 중에는 임시 저장 탭에서만 draft 를, 그 외에는 저장된 메모 전체를 대상으로.
+      if (inDrafts ? !n.isDraft : n.isDraft) return false;
+      if (!matches(n)) return false;
+      if (activeCategory && n.category !== activeCategory) return false;
+      return true;
+    }
     if (inDrafts) {
       if (!n.isDraft) return false;
     } else {
@@ -7509,8 +7534,10 @@ function NoteList({
     if (activeCategory && n.category !== activeCategory) return false;
     return true;
   });
-  // 정렬
+  // 정렬. 검색 결과는 폴더를 가로지르므로 sortOrder(폴더 안 사용자 지정 순서)가 의미를
+  // 잃는다 — 이때는 최근 수정순이 가장 쓸모 있어서 custom 대신 그걸로 본다.
   shown = [...shown].sort((a, b) => {
+    if (searching && sortMode === "custom") return b.updatedAt.localeCompare(a.updatedAt);
     switch (sortMode) {
       case "title-asc": return (a.title || "제목 없음").localeCompare(b.title || "제목 없음");
       case "title-desc": return (b.title || "제목 없음").localeCompare(a.title || "제목 없음");
@@ -7772,7 +7799,26 @@ function NoteList({
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-end mb-6">
+          <div className="flex items-center justify-end mb-6 gap-2">
+            {/* 검색 — 폴더를 가로질러 제목·본문·카테고리에서 찾는다. 코딩 테스트 정리처럼
+                 메모가 쌓이면 폴더 탐색보다 검색이 주 진입로가 되므로 도구 줄 맨 앞에 둔다. */}
+            <div className="relative flex-1 max-w-xs">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === "Escape") setQuery(""); }}
+                placeholder="메모 검색"
+                className="w-full h-[30px] pl-7 pr-7 rounded-lg border bg-card text-xs outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  title="검색어 지우기 (Esc)"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                ><X size={12} /></button>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {/* 정렬 드롭다운 */}
               <div className="relative">
@@ -7987,9 +8033,17 @@ function NoteList({
 
         {/* 목록: 루트 뷰에선 폴더 카드가 노트 위에 먼저 나오고, 폴더/임시 저장 안에선 노트만.
              폴더 카드에 노트를 드래그하면 그 폴더로 이동. */}
-        {shown.length === 0 && (inDrafts || sortedFolders.length === 0) ? (
+        {searching ? (
+          <div className="mb-3 text-[11px] text-muted-foreground">
+            "{query.trim()}" 검색 결과 <span className="font-semibold text-foreground">{shown.length}</span>개
+            {activeCategory && <> · 카테고리 "{activeCategory}" 로 좁힘</>}
+          </div>
+        ) : null}
+        {shown.length === 0 && (searching || inDrafts || sortedFolders.length === 0) ? (
           <div className="text-center py-16 text-sm text-muted-foreground">
-            {inDrafts
+            {searching
+              ? "검색 결과가 없습니다. 다른 낱말로 찾아보세요."
+              : inDrafts
               ? "임시 저장된 메모가 없습니다. \"새 메모\"로 만든 뒤 \"저장\"을 누르지 않고 나가면 여기 모입니다."
               : notes.filter(n => !n.isDraft).length === 0 && folders.length === 0
               ? "아직 메모가 없습니다. \"새 메모\"로 첫 메모를 만들어보세요."
@@ -7999,7 +8053,7 @@ function NoteList({
           </div>
         ) : (
           <div className="space-y-2">
-            {!inDrafts && sortedFolders.map(f => (
+            {!inDrafts && !searching && sortedFolders.map(f => (
               <FolderCard
                 key={f.id}
                 folder={f}
@@ -8062,6 +8116,10 @@ function NoteList({
                 key={n.id}
                 note={n}
                 folder={folders.find(f => f.id === n.folderId) ?? null}
+                // 검색 결과는 폴더를 가로질러 나오므로 "어디에 있는 메모인지" 를 전체 경로로
+                // 보여준다. 평소(폴더 안을 보고 있을 때)는 위치가 자명하니 폴더명만.
+                folderLabel={searching && n.folderId ? folderPathLabel(folders, n.folderId) : undefined}
+                terms={searching ? terms : undefined}
                 folders={folders}
                 menuOpen={menuNoteId === n.id}
                 selectMode={selectMode}
@@ -8422,13 +8480,65 @@ function FolderCard({
   );
 }
 
+// 검색 결과 미리보기: 첫 일치 지점 주변만 잘라내고, 일치한 낱말을 표시용으로 쪼갠다.
+// 돌려주는 조각들을 이어 붙이면 원문 그대로이고, hit=true 인 조각만 강조해서 그리면 된다.
+function snippetAround(text: string, terms: string[]): { text: string; hit: boolean }[] | null {
+  const lower = text.toLowerCase();
+  // 가장 먼저 나오는 낱말을 기준으로 창을 잡는다 — 여러 낱말이면 앞쪽 것이 문맥상 자연스럽다.
+  let first = -1;
+  for (const t of terms) {
+    const i = lower.indexOf(t);
+    if (i >= 0 && (first < 0 || i < first)) first = i;
+  }
+  // 제목·카테고리만 걸린 경우엔 본문에 일치가 없다 — 그때는 평소 미리보기를 그대로 쓴다.
+  if (first < 0) return null;
+
+  const BEFORE = 24, LEN = 140;
+  const start = Math.max(0, first - BEFORE);
+  const cut = text.slice(start, start + LEN);
+  const head = start > 0 ? "…" : "";
+
+  // 잘라낸 구간 안에서 모든 낱말 위치를 모아 겹치지 않게 정리한 뒤 조각으로 나눈다.
+  const cutLower = cut.toLowerCase();
+  const spans: { s: number; e: number }[] = [];
+  for (const t of terms) {
+    let i = cutLower.indexOf(t);
+    while (i >= 0) {
+      spans.push({ s: i, e: i + t.length });
+      i = cutLower.indexOf(t, i + t.length);
+    }
+  }
+  spans.sort((a, b) => a.s - b.s);
+  const merged: { s: number; e: number }[] = [];
+  for (const sp of spans) {
+    const last = merged[merged.length - 1];
+    if (last && sp.s <= last.e) last.e = Math.max(last.e, sp.e);
+    else merged.push({ ...sp });
+  }
+
+  const out: { text: string; hit: boolean }[] = [];
+  if (head) out.push({ text: head, hit: false });
+  let pos = 0;
+  for (const sp of merged) {
+    if (sp.s > pos) out.push({ text: cut.slice(pos, sp.s), hit: false });
+    out.push({ text: cut.slice(sp.s, sp.e), hit: true });
+    pos = sp.e;
+  }
+  if (pos < cut.length) out.push({ text: cut.slice(pos), hit: false });
+  return out;
+}
+
 function NoteCard({
-  note, folder, folders, menuOpen,
+  note, folder, folderLabel, folders, menuOpen, terms,
   selectMode = false, selected = false, onToggleSelected,
   onOpen, onToggleMenu, onMove, onDelete,
   onDragStart, onDragEnd, onDragOverCard, onDropCard,
 }: {
   note: Note; folder: NoteFolder | null; folders: NoteFolder[]; menuOpen: boolean;
+  // 폴더 이름 대신 표시할 전체 경로("상위 / 하위"). 검색 결과에서만 넘어온다.
+  folderLabel?: string;
+  // 검색어 낱말들 — 미리보기를 일치 지점 주변으로 잘라내고 강조하는 데 쓴다.
+  terms?: string[];
   // 선택 모드 — 켜지면 카드 클릭이 열기 대신 선택 토글이 되고, 3-dot 메뉴·드래그가 비활성화됨.
   selectMode?: boolean;
   selected?: boolean;
@@ -8438,7 +8548,19 @@ function NoteCard({
   onDragStart: (e: React.DragEvent) => void; onDragEnd: (e: React.DragEvent) => void;
   onDragOverCard: (e: React.DragEvent) => void; onDropCard: (e: React.DragEvent) => void;
 }) {
-  const preview = note.content.replace(/[#*`_>\-\[\]]/g, "").replace(/\n+/g, " ").trim();
+  // 카드 한 줄 미리보기.
+  // 이미지는 ![](planory-img://…) 로 저장되는데, 마크다운 기호만 걷어내면 파일명(uuid)이
+  // 그대로 남아 미리보기가 정체불명의 문자열로 뒤덮인다. 이미지는 통째로 빼고, 링크는
+  // 주소 대신 글자만 남긴다.
+  const preview = note.content
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[#*`_>\-\[\]]/g, "")
+    .replace(/\n+/g, " ")
+    .trim();
+  // 검색 중이면 글 첫머리 대신 "찾는 낱말이 있는 곳" 을 보여준다 — 긴 메모에서 왜 이게
+  // 걸렸는지 알 수 없으면 결국 하나씩 열어 봐야 해서 검색의 이점이 사라진다.
+  const snippet = terms && terms.length > 0 ? snippetAround(preview, terms) : null;
   const dateStr = note.updatedAt ? note.updatedAt.slice(0, 10) : "";
   return (
     <div
@@ -8464,9 +8586,19 @@ function NoteCard({
           <span className="text-sm font-medium truncate">{note.title.trim() || "제목 없음"}</span>
           {note.category && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground flex-shrink-0">{note.category}</span>}
         </div>
-        {preview && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-1">{preview}</p>}
+        {snippet ? (
+          <p className="text-[11px] text-muted-foreground mt-1 line-clamp-1">
+            {snippet.map((part, i) =>
+              part.hit
+                ? <mark key={i} className="bg-primary/20 text-foreground rounded px-0.5">{part.text}</mark>
+                : <span key={i}>{part.text}</span>
+            )}
+          </p>
+        ) : preview ? (
+          <p className="text-[11px] text-muted-foreground mt-1 line-clamp-1">{preview}</p>
+        ) : null}
         <div className="flex items-center gap-2 mt-1.5 text-[10px] text-muted-foreground">
-          {folder && <span className="flex items-center gap-1"><span className="size-2 rounded-full" style={{ backgroundColor: folder.color }} />{folder.name}</span>}
+          {folder && <span className="flex items-center gap-1"><span className="size-2 rounded-full" style={{ backgroundColor: folder.color }} />{folderLabel ?? folder.name}</span>}
           <span>{dateStr}</span>
         </div>
       </div>
@@ -8521,6 +8653,16 @@ const NOTE_REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkLineAnchors];
 // 등록되지 않은 언어(```foobar)는 경고만 남기고 색 없이 렌더된다 — 깨지지 않음.
 const NOTE_REHYPE_PLUGINS = [rehypeHighlight];
 const NOTE_MD_COMPONENTS = {
+  // 본문에는 planory-img://<파일명> 참조만 저장돼 있으므로 그릴 때 asset URL 로 바꾼다.
+  // 참조가 아니면(사용자가 붙여넣은 http 이미지 주소 등) 손대지 않고 그대로 둔다.
+  img({ src, alt, ...rest }: any) {
+    const resolved = isImageRef(src) ? imageRefToUrl(src) : src;
+    // 참조인데 URL 을 못 만든 경우(파일 유실·초기화 실패)는 깨진 아이콘 대신 안내 문구로.
+    if (isImageRef(src) && !resolved) {
+      return <span className="text-xs text-muted-foreground italic">[이미지를 찾을 수 없습니다]</span>;
+    }
+    return <img {...rest} src={resolved} alt={alt ?? ""} className="max-w-full h-auto rounded-lg border border-border" />;
+  },
   // 링크를 실제로 여는 건 main.tsx 의 installExternalLinkHandler(전역 캡처 핸들러) 담당 —
   // 여기서 또 onClick 을 달면 같은 클릭에 두 번 반응해 브라우저 탭이 두 개 열린다.
   // 이 컴포넌트는 "클릭하면 브라우저로 열린다" 는 안내 툴팁만 붙인다.
@@ -8568,6 +8710,66 @@ const PlainHardBreak = HardBreak.extend({
         },
         parse: {
           // markdown-it 이 처리
+        },
+      },
+    };
+  },
+});
+
+// "이미지 넣기" 버튼용 파일 선택.
+//
+// Tauri 의 네이티브 파일 대화상자 대신 <input type="file"> 을 쓴다. 네이티브 대화상자는
+// 경로만 돌려줘서 그 경로를 우리가 직접 읽어야 하는데, fs 권한이 앱 데이터 폴더로 제한돼
+// 있어 사용자가 아무 데서나 고른 파일은 읽지 못한다. input 은 브라우저가 바이트를 직접
+// 넘겨주므로 추가 권한 없이 동작하고, 쓰기는 우리 폴더에만 일어난다.
+function pickImageFiles(): Promise<File[]> {
+  return new Promise(resolve => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = () => resolve(Array.from(input.files ?? []));
+    // 취소로 닫으면 change 가 오지 않는다 — 창이 다시 포커스를 받으면 빈 결과로 정리해서
+    // 이 Promise 가 영영 매달려 있지 않게 한다.
+    window.addEventListener("focus", () => setTimeout(() => resolve(Array.from(input.files ?? [])), 300), { once: true });
+    input.click();
+  });
+}
+
+// 고른/붙여넣은 이미지들을 저장하고 참조 목록을 돌려준다. 저장에 실패한 것은 건너뛰되
+// 사용자에게는 한 번 알린다 — 조용히 사라지면 이미지를 넣은 줄 알고 넘어가게 된다.
+async function saveImagesAsRefs(files: File[]): Promise<string[]> {
+  const refs: string[] = [];
+  for (const f of files) {
+    try {
+      const ref = await saveNoteImage(f);
+      if (ref) refs.push(ref);
+    } catch (e) {
+      notifyError("이미지 저장 실패")(e);
+    }
+  }
+  return refs;
+}
+
+// 리치 에디터의 이미지 노드.
+//
+// node.attrs.src 에는 항상 저장용 참조(planory-img://…)를 담아 둔다 — tiptap-markdown 이
+// 이 값을 그대로 ![](…) 로 직렬화하기 때문에, 여기에 화면용 asset URL 이 들어가면 설치
+// 경로가 박힌 URL 이 메모 본문에 저장돼 다른 PC 에서 전부 깨진다.
+// DOM 으로 그릴 때만 URL 로 바꾸고, 원본 참조는 data-ref 에 남겨 다시 읽을 때 복원한다
+// (에디터 안에서 이미지를 복사·붙여넣기 하면 DOM 을 다시 파싱하는데, 그때 src 로만
+//  되돌리면 화면용 URL 이 참조 자리에 눌러앉는다).
+const NoteImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      src: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-ref") || el.getAttribute("src"),
+        renderHTML: (attrs: Record<string, any>) => {
+          const ref = attrs.src as string | undefined;
+          if (!isImageRef(ref)) return { src: ref };
+          return { src: imageRefToUrl(ref), "data-ref": ref };
         },
       },
     };
@@ -8638,6 +8840,11 @@ function RichNoteEditor({
       PlainHardBreak,
       // 미리보기(rehype-highlight)와 같은 highlight.js 엔진 — 두 화면의 색이 어긋나지 않는다.
       CodeBlockLowlight.configure({ lowlight: noteLowlight }),
+      // inline:true — 블록 노드로 두면 tiptap-markdown 이 이미지 뒤에 빈 줄을 넣지 않아
+      // 저장할 때 "![](참조)다음 문단" 처럼 붙어 버린다(리치 에디터로 열었다 저장할 때마다
+      // 문단 구분이 하나씩 무너짐). 인라인 노드면 문단이 감싸주므로 앞뒤 빈 줄이 그대로
+      // 유지되고, 왕복을 반복해도 원본과 같은 마크다운이 나온다.
+      NoteImage.configure({ inline: true, HTMLAttributes: { class: "max-w-full h-auto rounded-lg border border-border" } }),
       UnderlineExtension,
       // html:false 로 두면 tiptap-markdown이 raw HTML을 이스케이프해 저장 — 마크다운 소스만 유지.
       // breaks:true 로 줄바꿈을 <br>이 아닌 소프트 개행으로 처리해 일반 메모장 감각에 가깝게.
@@ -8666,8 +8873,39 @@ function RichNoteEditor({
         // PROSE_CLASS로 목록/제목 스타일을 마크다운 프리뷰와 동일하게 통일.
         class: `w-full ${PROSE_CLASS} outline-none focus:outline-none`,
       },
+      // 스크린샷 붙여넣기(Ctrl+V). 클립보드에 이미지 파일이 있을 때만 가로채고, 그 외에는
+      // false 를 돌려줘 기존 텍스트/마크다운 붙여넣기 경로를 그대로 태운다.
+      handlePaste(_view, event) {
+        const files = imageFilesFrom(event.clipboardData);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        insertImages(files);
+        return true;
+      },
+      // 탐색기에서 이미지 파일을 끌어다 놓기.
+      handleDrop(_view, event) {
+        const files = imageFilesFrom((event as DragEvent).dataTransfer);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        insertImages(files);
+        return true;
+      },
     },
   });
+
+  // 저장은 비동기라 handlePaste/handleDrop(동기) 안에서 직접 못 넣는다 — 저장이 끝나는 대로
+  // 커서 위치에 이미지 노드를 붙인다. editorRef 로 읽는 이유는 이 함수가 useEditor 옵션에
+  // 캡처되기 때문(그 시점엔 editor 변수가 아직 없다).
+  const editorRef = useRef<Editor | null>(null);
+  const insertImages = (files: File[]) => {
+    saveImagesAsRefs(files).then(refs => {
+      const ed = editorRef.current;
+      if (!ed || refs.length === 0) return;
+      ed.chain().focus().insertContent(refs.map(src => ({ type: "image", attrs: { src } }))).run();
+    });
+  };
+
+  editorRef.current = editor;
 
   if (!editor) {
     return (
@@ -8744,6 +8982,17 @@ function RichToolbar({ editor }: { editor: Editor }) {
         className={btnCls(editor.isActive("codeBlock"))}><Code2 size={14} /></button>
       <button title="구분선" onClick={() => editor.chain().focus().setHorizontalRule().run()}
         className={btnCls(false)}><Minus size={14} /></button>
+      {sep}
+      <button
+        title="이미지 넣기 — 스크린샷은 Ctrl+V 로 바로 붙여넣을 수도 있습니다"
+        onClick={async () => {
+          const files = await pickImageFiles();
+          if (files.length === 0) return;
+          const refs = await saveImagesAsRefs(files);
+          if (refs.length === 0) return;
+          editor.chain().focus().insertContent(refs.map(src => ({ type: "image", attrs: { src } }))).run();
+        }}
+        className={btnCls(false)}><ImagePlus size={14} /></button>
     </div>
   );
 }
@@ -8815,6 +9064,28 @@ function NoteEditor({
     const dstMax = dst.scrollHeight - dst.clientHeight;
     if (srcMax <= 0 || dstMax <= 0) return;
     dst.scrollTop = (src.scrollTop / srcMax) * dstMax;
+  };
+
+  // 마크다운 모드에서 이미지를 커서 자리에 ![](참조) 로 끼워 넣는다.
+  //
+  // 저장이 끝난 뒤 textarea 의 현재 값이 아니라 setContent 의 함수형 갱신으로 이어 붙이는
+  // 이유: 저장을 기다리는 사이 사용자가 계속 타이핑할 수 있어서, 저장 시작 시점에 읽어둔
+  // 문자열로 통째로 덮어쓰면 그동안 친 글자가 사라진다.
+  const insertImagesAtCaret = (files: File[]) => {
+    const el = mdSrcRef.current;
+    // 커서 위치는 저장을 기다리기 전에 잡아 둔다(비동기 뒤에는 포커스가 옮겨갔을 수 있음).
+    const at = el ? el.selectionStart : null;
+    saveImagesAsRefs(files).then(refs => {
+      if (refs.length === 0) return;
+      // 앞뒤로 빈 줄을 둬서 바로 위 문단에 딸려 들어가지 않게 한다(마크다운에서 이미지가
+      // 문단 안에 섞이면 인라인으로 렌더돼 줄 중간에 끼어 보인다).
+      const blank = "\n\n";
+      const snippet = blank + refs.map(r => imageMarkdown(r)).join(blank) + blank;
+      setContent(prev => {
+        const pos = at === null || at > prev.length ? prev.length : at;
+        return prev.slice(0, pos) + snippet + prev.slice(pos);
+      });
+    });
   };
 
   // 타이핑/커서 이동 중에는 비율이 아니라 "커서가 있는 줄" 을 기준으로 미리보기를 따라가게 한다.
@@ -8987,6 +9258,20 @@ function NoteEditor({
               <span className={`inline-block size-2 rounded-full ${markdownMode ? "bg-primary" : "bg-muted-foreground/40"}`} />
               마크다운
             </button>
+            {/* 마크다운 모드에는 툴바가 없어서 이미지 버튼을 여기 둔다. 리치 모드는 편집기
+                 자체 툴바에 같은 버튼이 있으므로 중복으로 노출하지 않는다. */}
+            {markdownMode && (
+              <button
+                onClick={async () => {
+                  const files = await pickImageFiles();
+                  if (files.length > 0) insertImagesAtCaret(files);
+                }}
+                title="이미지 넣기 — 스크린샷은 Ctrl+V 로 바로 붙여넣을 수도 있습니다"
+                className="h-8 flex items-center gap-1.5 px-3 rounded-lg border border-border bg-card text-xs text-muted-foreground hover:bg-muted transition-colors"
+              >
+                <ImagePlus size={13} /> 이미지
+              </button>
+            )}
           </>
         )}
         <div className="flex-1" />
@@ -9036,6 +9321,20 @@ function NoteEditor({
                 // 커서만 움직였을 때(방향키·클릭·드래그 선택)도 미리보기가 따라오게.
                 // onSelect 는 커서 이동/선택 변경 모두에서 발생한다.
                 onSelect={syncPreviewToCaret}
+                // 스크린샷 붙여넣기 / 이미지 파일 드롭 — 이미지가 있을 때만 가로채고,
+                // 평범한 텍스트 붙여넣기는 손대지 않는다.
+                onPaste={e => {
+                  const files = imageFilesFrom(e.clipboardData);
+                  if (files.length === 0) return;
+                  e.preventDefault();
+                  insertImagesAtCaret(files);
+                }}
+                onDrop={e => {
+                  const files = imageFilesFrom(e.dataTransfer);
+                  if (files.length === 0) return;
+                  e.preventDefault();
+                  insertImagesAtCaret(files);
+                }}
                 value={content}
                 onChange={e => setContent(e.target.value)}
                 placeholder="여기에 마크다운으로 자유롭게 적어보세요.&#10;&#10;# 제목&#10;- 목록&#10;- [ ] 체크박스&#10;**굵게**, *기울임*, `code`"
