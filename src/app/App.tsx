@@ -7325,6 +7325,9 @@ function CustomColorPickerInline({ initial, onAdd, onClose }: {
 // 밝은 글자색을 쓰므로 그 위에 밝은 bg-muted 알약이 얹히면 밝은 글자가 밝은 배경에 묻혀
 // 코드가 통째로 안 보였다(게다가 인라인 padding 때문에 블록이 한 줄 알약처럼 찌그러짐).
 // :not(pre)>code 로 "부모가 <pre> 가 아닌 code" = 인라인 코드에만 적용한다.
+// Tab 한 번의 들여쓰기 폭. 마크다운 중첩 목록이 두 칸 기준이라 그것에 맞춘다.
+const MD_INDENT = "  ";
+
 const PROSE_CLASS = "prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-p:my-2 prose-li:my-1 prose-code:before:hidden prose-code:after:hidden [&_:not(pre)>code]:bg-muted [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:rounded prose-a:text-primary";
 
 // ── 폴더 트리 헬퍼 ─────────────────────────────────────────────────
@@ -8912,6 +8915,22 @@ function RichNoteEditor({
         insertImages(files);
         return true;
       },
+      // Tab 이 포커스를 툴바로 넘기지 않게 한다. 다만 "들여쓰기" 가 뜻을 갖는 곳이 정해져 있다:
+      //  - 목록: tiptap 기본 단축키가 한 단계 안으로 넣어준다(sinkListItem) → 그대로 넘김.
+      //  - 코드 블록: 공백이 그대로 보존되는 유일한 곳 → 두 칸 삽입.
+      //  - 그 밖(문단 등): 아무것도 넣지 않고 포커스만 지킨다. 마크다운 문단에서는 공백이
+      //    저장할 때 잘리거나 렌더링에서 한 칸으로 합쳐져서, 넣어 봐야 화면에 남지 않는다.
+      //    (마크다운 원본 모드에서는 textarea 가 직접 두 칸을 넣는다 — 거기선 원문이 그대로다.)
+      handleKeyDown(view, event) {
+        if (event.key !== "Tab") return false;
+        const ed = editorRef.current;
+        if (ed?.isActive("listItem")) return false;
+        event.preventDefault();
+        if (!event.shiftKey && ed?.isActive("codeBlock")) {
+          view.dispatch(view.state.tr.insertText(MD_INDENT));
+        }
+        return true;
+      },
       // 탐색기에서 이미지 파일을 끌어다 놓기.
       handleDrop(_view, event) {
         const files = imageFilesFrom((event as DragEvent).dataTransfer);
@@ -9109,6 +9128,69 @@ function NoteEditor({
   // 저장이 끝난 뒤 textarea 의 현재 값이 아니라 setContent 의 함수형 갱신으로 이어 붙이는
   // 이유: 저장을 기다리는 사이 사용자가 계속 타이핑할 수 있어서, 저장 시작 시점에 읽어둔
   // 문자열로 통째로 덮어쓰면 그동안 친 글자가 사라진다.
+  // ── Tab 으로 들여쓰기 ──────────────────────────────────────────
+  // 기본 동작인 "다음 요소로 포커스 이동" 은 글을 쓰다가 Tab 을 누르면 커서가 툴바 버튼으로
+  // 튀어 버려서 메모 편집기에서는 쓸모가 없다.
+  //
+  // ⚠ textarea.value 를 직접 바꾸면 브라우저가 쌓아 둔 실행취소(Ctrl+Z) 기록이 끊긴다.
+  // execCommand("insertText") 는 사용자가 직접 친 입력과 같은 취급이라 되돌리기가 유지된다.
+  // (deprecated 지만 이걸 대체할 표준 API 가 아직 없고 WebView2/WKWebView 모두 지원한다.)
+  const applyTextareaEdit = (
+    el: HTMLTextAreaElement, start: number, end: number, text: string, selStart: number, selEnd: number
+  ) => {
+    el.focus();
+    el.setSelectionRange(start, end);
+    let inserted = false;
+    try { inserted = document.execCommand("insertText", false, text); } catch { inserted = false; }
+    if (!inserted) {
+      // 지원하지 않는 환경 폴백 — 되돌리기 기록은 잃지만 들여쓰기 자체는 동작한다.
+      setContent(el.value.slice(0, start) + text + el.value.slice(end));
+      requestAnimationFrame(() => el.setSelectionRange(selStart, selEnd));
+      return;
+    }
+    el.setSelectionRange(selStart, selEnd);
+  };
+
+  const handleMdTabKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const value = el.value;
+    const from = el.selectionStart, to = el.selectionEnd;
+    // 커서가 놓인 줄의 시작. 앞에 개행이 없으면(첫 줄) 0.
+    const lineStart = value.lastIndexOf("\n", from - 1) + 1;
+    const spansLines = value.slice(from, to).includes("\n");
+
+    // 여러 줄에 걸치지 않은 평범한 Tab — 커서 자리에 그냥 끼워 넣는다.
+    if (!spansLines && !e.shiftKey) {
+      const caret = from + MD_INDENT.length;
+      applyTextareaEdit(el, from, to, MD_INDENT, caret, caret);
+      return;
+    }
+
+    // 선택 없이 Shift+Tab — 지금 줄의 들여쓰기만 한 단계 지운다.
+    if (!spansLines && from === to) {
+      const line = value.slice(lineStart, value.indexOf("\n", lineStart) === -1 ? value.length : value.indexOf("\n", lineStart));
+      const lead = line.match(/^( {1,2}|\t)/)?.[0];
+      if (!lead) return;
+      const caret = Math.max(lineStart, from - lead.length);
+      applyTextareaEdit(el, lineStart, lineStart + lead.length, "", caret, caret);
+      return;
+    }
+
+    // 여러 줄 선택 — 줄마다 들여쓰기/내어쓰기하고 그 범위를 계속 선택된 채로 둔다.
+    const nl = value.indexOf("\n", to);
+    const blockEnd = nl === -1 ? value.length : nl;
+    const block = value.slice(lineStart, blockEnd);
+    const next = block
+      .split("\n")
+      // 빈 줄은 건드리지 않는다 — 들여쓰면 눈에 안 보이는 공백만 남는다.
+      .map(line => (e.shiftKey ? line.replace(/^( {1,2}|\t)/, "") : line.length === 0 ? line : MD_INDENT + line))
+      .join("\n");
+    if (next === block) return;
+    applyTextareaEdit(el, lineStart, blockEnd, next, lineStart, lineStart + next.length);
+  };
+
   const insertImagesAtCaret = (files: File[]) => {
     const el = mdSrcRef.current;
     // 커서 위치는 저장을 기다리기 전에 잡아 둔다(비동기 뒤에는 포커스가 옮겨갔을 수 있음).
@@ -9409,6 +9491,8 @@ function NoteEditor({
                 // 커서만 움직였을 때(방향키·클릭·드래그 선택)도 미리보기가 따라오게.
                 // onSelect 는 커서 이동/선택 변경 모두에서 발생한다.
                 onSelect={syncPreviewToCaret}
+                // Tab 은 포커스 이동이 아니라 들여쓰기.
+                onKeyDown={handleMdTabKey}
                 // 스크린샷 붙여넣기 / 이미지 파일 드롭 — 이미지가 있을 때만 가로채고,
                 // 평범한 텍스트 붙여넣기는 손대지 않는다.
                 onPaste={e => {
