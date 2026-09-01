@@ -143,3 +143,20 @@ export async function cleanupUnusedImages(
   }
   return { removed, freedBytes, kept };
 }
+
+// ── 파일 드롭이 앱을 떠나지 않게 ────────────────────────────────────
+// HTML5 규칙상 dragover 에서 preventDefault 를 하지 않으면 그 자리는 "드롭 받을 수 없는 곳"
+// 이라 drop 이벤트가 페이지로 오지 않는다. 그러면 웹뷰의 기본 동작 — 드롭한 파일로 페이지를
+// 이동 — 이 일어난다. 이 앱은 주소창도 뒤로가기도 없어서 그림 파일 화면에 갇히고 재시작해야
+// 한다(링크를 가로채는 이유와 같은 문제).
+//
+// 그래서 문서 전체에서 파일 드래그만 기본 동작을 막는다. 이렇게 해야 편집기 위에 떨어뜨린
+// 이미지가 우리 onDrop 으로 들어오고, 그 밖의 아무 데나 떨어뜨려도 화면이 날아가지 않는다.
+//
+// 메모·폴더·시간 블록 재정렬 같은 앱 내부 드래그는 dataTransfer 에 "Files" 가 없으므로
+// 여기서 걸리지 않는다 — 기존 드래그 동작은 그대로다.
+export function installFileDropGuard() {
+  const isFileDrag = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  document.addEventListener("dragover", e => { if (isFileDrag(e)) e.preventDefault(); });
+  document.addEventListener("drop", e => { if (isFileDrag(e)) e.preventDefault(); });
+}

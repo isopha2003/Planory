@@ -1,0 +1,27 @@
+/* 토스트(sonner) 를 앱 카드와 같은 모양으로.
+ *
+ * 색·폰트는 components/ui/sonner.tsx 에서 CSS 변수로 넘기고, 여기서는 변수로 안 되는
+ * 부분(아이콘 색, 테두리 두께)만 손본다. sonner 자체 스타일과 겹치므로 같은 선택자
+ * 형태로 맞춰 특이도를 확보한다.
+ */
+
+/* 성공 아이콘을 앱의 포인트 색으로. 기본값은 그냥 검정에 가까운 글자색이라
+ * 어느 앱에서 뜬 알림인지 알 수 없었다. */
+[data-sonner-toast][data-type="success"] [data-icon] {
+  color: var(--primary);
+}
+
+/* 실패는 앱의 경고색과 맞춘다. */
+[data-sonner-toast][data-type="error"] [data-icon] {
+  color: var(--destructive);
+}
+
+/* 카드·다이얼로그와 같은 테두리 두께(1px)와 그림자 톤. */
+[data-sonner-toast][data-styled="true"] {
+  border-width: 1px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+
+.dark [data-sonner-toast][data-styled="true"] {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+}

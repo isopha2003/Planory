@@ -2404,7 +2404,9 @@ export default function App() {
         )}
       </div>
       <AppTooltipRoot />
-      <Toaster position="bottom-right" duration={4000} />
+      {/* 다크 모드는 <html> 의 dark 클래스로 관리되므로 앱 상태를 그대로 넘긴다 —
+           sonner 가 스스로 OS 테마를 읽게 두면 앱과 어긋난다. */}
+      <Toaster position="bottom-right" duration={4000} theme={darkMode ? "dark" : "light"} />
     </div>
   );
 }
@@ -9113,10 +9115,10 @@ function NoteEditor({
     const at = el ? el.selectionStart : null;
     saveImagesAsRefs(files).then(refs => {
       if (refs.length === 0) return;
-      // 앞뒤로 빈 줄을 둬서 바로 위 문단에 딸려 들어가지 않게 한다(마크다운에서 이미지가
-      // 문단 안에 섞이면 인라인으로 렌더돼 줄 중간에 끼어 보인다).
-      const blank = "\n\n";
-      const snippet = blank + refs.map(r => imageMarkdown(r)).join(blank) + blank;
+      // 커서 자리에 이미지 문법만 그대로 넣는다. 앞뒤로 빈 줄을 덧붙이지 않는 이유는
+      // 이 앱이 엔터 한 번을 줄바꿈으로 치기 때문(remarkBreaks) — 빈 줄이 없어도 이미지는
+      // 제 줄에 그려진다. 넣어 두면 쓰지도 않은 빈 줄이 원본 위아래에 남는다.
+      const snippet = refs.map(r => imageMarkdown(r)).join("\n");
       setContent(prev => {
         const pos = at === null || at > prev.length ? prev.length : at;
         return prev.slice(0, pos) + snippet + prev.slice(pos);
