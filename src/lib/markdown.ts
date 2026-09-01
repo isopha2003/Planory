@@ -5,6 +5,8 @@
 // 여기 있는 remarkBreaks 가 react-markdown 쪽을 tiptap 의 breaks:true 와 맞춰준다.
 
 import { openUrl } from "@tauri-apps/plugin-opener";
+import MarkdownIt from "markdown-it";
+import markdownItCjkFriendly from "markdown-it-cjk-friendly";
 import { notifyError } from "./notify";
 
 // ── 엔터 한 번 = 줄바꿈 ────────────────────────────────────────────
@@ -183,4 +185,41 @@ export function installExternalLinkHandler() {
   };
   document.addEventListener("click", handle, true);
   document.addEventListener("auxclick", handle, true);
+}
+
+// ── 한글 옆에서 강조(** **)가 풀리는 문제 ──────────────────────────
+// CommonMark 는 닫는 ** 앞이 문장부호이면 그 뒤가 공백이나 문장부호일 때만 강조를 닫는다.
+// 영어에는 맞는 규칙이지만 한글은 조사를 바로 붙여 쓰기 때문에 흔한 문장이 통째로 깨진다:
+//
+//   **텍스트(부가설명)**다른 문장   ← 닫는 ** 앞이 ")" 이고 뒤가 한글 → 강조 안 됨
+//   **시간복잡도 O(N)**이다        ← 같은 이유
+//   **dp[i][w]**는                ← 앞이 "]"
+//
+// 그동안은 ** 뒤에 한 칸을 띄워야만 했다. CommonMark 의 CJK 확장은 한글·한자·가나를
+// 문장부호처럼 취급해 이 경우에도 강조가 닫히게 한다("2 ** 3" 같은 건 그대로 둔다).
+//
+// 미리보기·읽기 화면(remark)은 remark-cjk-friendly 플러그인으로 해결되지만, 리치 에디터는
+// markdown-it 을 쓰는데 여기가 까다롭다:
+//  - markdown-it-cjk-friendly 는 md.inline.State 를 인스턴스별로 갈아끼운다.
+//  - 그런데 tiptap-markdown 은 저장할 때, 자기 모듈 안에 감춰둔 별도의 markdown-it
+//    인스턴스로 "이 자리에서 ** 가 닫힐 수 있나"(scanDelims.can_close)를 검사하고,
+//    닫을 수 없다고 판단하면 ** 를 왼쪽으로 밀어버린다. 그 인스턴스에는 손이 닿지 않는다.
+//  - 파싱만 CJK 규칙을 쓰고 저장 검사는 표준 규칙을 쓰면 결과가 어긋나서,
+//    "**시간복잡도 O(N)**이다" 가 "**시간복잡도 O(N**)이다" 로 저장돼 원문이 망가진다.
+//
+// 그래서 인스턴스가 아니라 ParserInline 의 프로토타입에 CJK 규칙 State 를 올린다.
+// 이러면 앱 안의 모든 markdown-it 인스턴스(감춰진 것 포함)가 같은 규칙을 쓰므로 파싱과
+// 저장이 어긋날 수 없다. 실패하면 조용히 예전 동작(강조 안 됨)으로 남는다 — 그때도 파싱과
+// 저장이 함께 표준 규칙을 쓰므로 원문이 망가지지는 않는다.
+export function installCjkFriendlyEmphasis(): void {
+  try {
+    const probe = new MarkdownIt() as any;
+    markdownItCjkFriendly(probe);
+    const patchedState = probe.inline?.State;
+    const parserInlineProto = probe.inline ? Object.getPrototypeOf(probe.inline) : null;
+    if (typeof patchedState !== "function" || !parserInlineProto) return;
+    parserInlineProto.State = patchedState;
+  } catch (e) {
+    console.error("한글 강조 규칙 적용 실패", e);
+  }
 }

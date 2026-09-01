@@ -40,6 +40,7 @@ import {
 } from "../lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import rehypeHighlight from "rehype-highlight";
 import {
   remarkBreaks, remarkLineAnchors, isExternalUrl,
@@ -8643,7 +8644,11 @@ function NoteCard({
 
 // 메모 본문 마크다운 렌더러 — 읽기 뷰와 마크다운 미리보기가 공유한다.
 // 두 곳이 같은 플러그인·같은 링크 동작을 쓰게 해서 "볼 때랑 쓸 때가 다른" 상황을 없앰.
-const NOTE_REMARK_PLUGINS = [remarkGfm, remarkBreaks, remarkLineAnchors];
+// remarkCjkFriendly — "**텍스트(부가설명)**다른 문장" 처럼 닫는 ** 앞이 문장부호이고 뒤가
+// 한글일 때 강조가 풀리는 문제를 고친다. 리치 에디터(markdown-it) 쪽 대응과 그 이유는
+// lib/markdown.ts 의 installCjkFriendlyEmphasis 주석 참고 — 두 렌더러가 같은 규칙을 써야
+// "미리보기에선 굵은데 저장하면 아닌" 상태가 생기지 않는다.
+const NOTE_REMARK_PLUGINS = [remarkGfm, remarkCjkFriendly, remarkBreaks, remarkLineAnchors];
 
 // 코드 블록(```java 등)에 언어별 문법 하이라이팅. highlight.js 의 common 언어 묶음
 // (java/js/ts/python/c/c++/c#/go/rust/sql/json/html/css/bash 등 30여 종)이 기본으로 등록된다.
