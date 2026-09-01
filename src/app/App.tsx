@@ -7500,8 +7500,11 @@ function NoteList({
     if (inDrafts) {
       if (!n.isDraft) return false;
     } else {
-      if (n.isDraft) return false;
-      if (n.folderId !== viewFolderId) return false;
+      // currentFolderId 로 비교한다(viewFolderId 원본이 아니라). 보고 있던 폴더가 사라져
+      // viewFolderId 가 실재하지 않는 id 로 남으면, 폴더 카드는 currentFolderId 기준이라
+      // 루트를 보여주는데 메모만 그 유령 폴더 소속으로 걸러져 한 화면에 서로 다른 위치가
+      // 섞여 보인다. 두 목록이 같은 기준을 쓰게 맞춤.
+      if (n.folderId !== currentFolderId) return false;
     }
     if (activeCategory && n.category !== activeCategory) return false;
     return true;
