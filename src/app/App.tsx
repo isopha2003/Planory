@@ -35,6 +35,7 @@ import {
   updateTodoChecklistItemText,
   fetchAllTodoChecklistItems,
   fetchNotes, createNote, updateNote, deleteNote, moveNoteToFolder, reorderNotes,
+  fetchAllNoteContents,
   fetchNoteFolders, createFolder, updateFolder, deleteFolder, reorderFolders,
   moveFolder, descendantFolderIds,
   type Note, type NoteFolder,
@@ -50,6 +51,7 @@ import {
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import {
   isImageRef, imageRefToUrl, saveNoteImage, imageFilesFrom, imageMarkdown,
+  cleanupUnusedImages,
 } from "../lib/images";
 import StarterKit from "@tiptap/starter-kit";
 import UnderlineExtension from "@tiptap/extension-underline";
@@ -518,6 +520,13 @@ export default function App() {
     })();
     // 하루 1회 자동 백업 (백그라운드 실행, 실패는 조용히 무시)
     runAutoBackupIfNeeded();
+    // 어떤 메모도 쓰지 않는 이미지 파일 정리. 앱을 켤 때만 돌린다 — 이 시점엔 편집 중인
+    // (아직 저장 안 된) 메모가 없어서, 방금 붙여넣은 이미지를 지울 위험이 가장 낮다.
+    // 실패는 조용히 무시: 정리는 부가 기능이고 다음 실행에서 다시 시도된다.
+    (async () => {
+      try { await cleanupUnusedImages(await fetchAllNoteContents()); }
+      catch (e) { console.warn("이미지 정리 건너뜀", e); }
+    })();
   }, []);
 
   // Global timer — single, app-wide. "자동 일시정지"는 사용자가 누르는 버튼이 아니라
@@ -9466,6 +9475,13 @@ function NoteEditor({
   );
 }
 
+// 확보한 용량 표시용. 이미지는 대개 수백 KB~수 MB 라 이 세 단위면 충분하다.
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}KB`;
+  return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+
 // ── Settings Section ───────────────────────────────────────────────
 function SettingsSection({
   pomodoroOn, setPomodoroOn, pomWork, setPomWork,
@@ -9486,8 +9502,10 @@ function SettingsSection({
   // 두 버튼의 busy 상태를 분리 — 하나 누르면 둘 다 disabled:opacity-50 로 깜빡이던 버그 방지.
   // 추가로 ref 기반 재진입 가드 — React 재렌더 전에 클릭 이벤트가 중첩되어 setState가
   // 반영되기 전 동일 핸들러가 두 번 실행되는 경우까지 막음.
-  type Target = "backup" | "update";
+  type Target = "backup" | "update" | "images";
   const [backupBusy, setBackupBusy] = useState(false);
+  const [imagesBusy, setImagesBusy] = useState(false);
+  const imagesBusyRef = useRef(false);
   const [updateBusy, setUpdateBusy] = useState(false);
   const backupBusyRef = useRef(false);
   const updateBusyRef = useRef(false);
@@ -9517,6 +9535,29 @@ function SettingsSection({
     flashTimersRef.current.push(window.setTimeout(() => setStatusMsg(null), 2100));
   };
   useEffect(() => () => { flashTimersRef.current.forEach(t => window.clearTimeout(t)); }, []);
+
+  // 안 쓰는 이미지 정리 — 앱 시작 때 자동으로도 돌지만, 직접 눌러 지금 확보되는 용량을
+  // 확인할 수 있게 한다. 방금 붙여넣은 이미지를 지우지 않도록 하루 유예는 여기서도 동일.
+  const handleCleanupImages = async () => {
+    if (imagesBusyRef.current) return;
+    imagesBusyRef.current = true;
+    setImagesBusy(true);
+    try {
+      const r = await cleanupUnusedImages(await fetchAllNoteContents());
+      flash(
+        "images",
+        "ok",
+        r.removed > 0
+          ? `${r.removed}개 정리 · ${formatBytes(r.freedBytes)} 확보`
+          : "정리할 이미지가 없습니다"
+      );
+    } catch (e: any) {
+      flash("images", "err", `정리 실패: ${e?.message ?? e}`);
+    } finally {
+      setImagesBusy(false);
+      imagesBusyRef.current = false;
+    }
+  };
 
   const handleBackupNow = async () => {
     if (backupBusyRef.current) return;
@@ -9664,6 +9705,26 @@ function SettingsSection({
                   className="w-40 px-3 py-2 rounded-lg bg-muted text-sm outline-none focus:ring-2 focus:ring-ring" />
               </div>
             )}
+          </div>
+
+          <div className="p-5 rounded-xl border bg-card">
+            <div className="text-sm font-medium mb-1">이미지 정리</div>
+            <div className="text-[11px] text-muted-foreground mb-3">
+              어떤 메모에서도 쓰지 않는 이미지 파일을 지웁니다. 앱을 켤 때 자동으로 한 번 정리되며,
+              붙여넣은 지 하루가 안 된 파일은 저장 전일 수 있어 남겨 둡니다.
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleCleanupImages}
+                disabled={imagesBusy}
+                className="flex-shrink-0 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-medium bg-primary text-primary-foreground disabled:opacity-50"
+              >{imagesBusy ? "정리 중…" : "지금 정리"}</button>
+              {statusMsg?.target === "images" && (
+                <span className={`min-w-0 text-[11px] leading-snug transition-opacity duration-500 ease-out ${statusVisible ? "opacity-100" : "opacity-0"} ${statusMsg.kind === "ok" ? "text-primary" : "text-destructive"}`}>
+                  {statusMsg.text}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="p-5 rounded-xl border bg-card">

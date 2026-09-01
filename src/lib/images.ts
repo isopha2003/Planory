@@ -11,7 +11,7 @@
 
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { mkdir, writeFile, exists } from "@tauri-apps/plugin-fs";
+import { mkdir, writeFile, exists, readDir, remove, stat } from "@tauri-apps/plugin-fs";
 
 export const IMAGE_DIR_NAME = "note-images";
 const SCHEME = "planory-img://";
@@ -82,4 +82,64 @@ export function imageFilesFrom(dt: DataTransfer | null): File[] {
 // 마크다운 본문에서 쓰는 이미지 문법.
 export function imageMarkdown(ref: string, alt = "이미지"): string {
   return `![${alt}](${ref})`;
+}
+
+// ── 안 쓰는 이미지 정리 ────────────────────────────────────────────
+// 메모에서 이미지를 지워도 파일은 폴더에 남는다. 스크린샷 한 장이 수백 KB 라 텍스트보다
+// 훨씬 무겁고, 몇 년 쌓이면 이 폴더가 앱 데이터에서 제일 큰 덩어리가 된다.
+//
+// 방식은 "참조되지 않는 파일 지우기"(가비지 컬렉션). 메모를 지웠든, 본문에서 이미지만
+// 뺐든, 폴더째 삭제했든 경로와 무관하게 같은 규칙 하나로 정리된다. 지우는 시점마다 일일이
+// 훅을 거는 방식은 한 군데만 빠뜨려도 조용히 파일이 쌓인다.
+//
+// ⚠ 붙여넣은 직후의 파일은 절대 지우면 안 된다. 붙여넣기는 파일을 먼저 쓰고 본문에 참조를
+// 넣는데, 그 메모는 "저장" 을 누르기 전까지 DB 에 없다. 이때 정리가 돌면 방금 붙여넣은
+// 이미지가 사라진다. 그래서 만들어진 지 얼마 안 된 파일은 건드리지 않는다.
+// 실행 취소(Ctrl+Z)로 되살리거나 메모 사이에서 잘라내 옮기는 경우도 이 유예가 지켜준다.
+const GC_GRACE_MS = 24 * 60 * 60 * 1000;
+
+// 본문에서 planory-img://<파일명> 참조들의 파일명만 뽑는다.
+// 파일명 문자만 받아서, 뒤에 붙은 ")" 같은 마크다운 문법이 딸려 들어가지 않게 한다.
+export function referencedImageNames(contents: string[]): Set<string> {
+  const names = new Set<string>();
+  const re = /planory-img:\/\/([A-Za-z0-9._-]+)/g;
+  for (const c of contents) {
+    for (const m of c.matchAll(re)) names.add(m[1]);
+  }
+  return names;
+}
+
+// 어떤 메모도 참조하지 않는 이미지 파일을 지운다.
+// contents 는 호출 쪽에서 넘긴다 — 이 모듈이 DB 를 직접 알 필요가 없고, 테스트도 쉬워진다.
+export async function cleanupUnusedImages(
+  contents: string[],
+  opts: { graceMs?: number } = {}
+): Promise<{ removed: number; freedBytes: number; kept: number }> {
+  const graceMs = opts.graceMs ?? GC_GRACE_MS;
+  if (!imageDirPath) await initNoteImages();
+  if (!imageDirPath) return { removed: 0, freedBytes: 0, kept: 0 };
+
+  const used = referencedImageNames(contents);
+  const sep = imageDirPath.includes("\\") ? "\\" : "/";
+  const now = Date.now();
+  let removed = 0, freedBytes = 0, kept = 0;
+
+  for (const entry of await readDir(imageDirPath)) {
+    if (!entry.isFile) continue;
+    if (used.has(entry.name)) { kept++; continue; }
+    const path = `${imageDirPath}${sep}${entry.name}`;
+    try {
+      const info = await stat(path);
+      // 새로 만들어진 파일은 아직 저장되지 않은 메모의 것일 수 있으므로 유예.
+      const madeAt = info.birthtime?.getTime() ?? info.mtime?.getTime() ?? 0;
+      if (madeAt && now - madeAt < graceMs) { kept++; continue; }
+      await remove(path);
+      removed++;
+      freedBytes += info.size ?? 0;
+    } catch (e) {
+      // 한 장 실패가 나머지 정리를 막지 않게 — 다음 실행에서 다시 시도된다.
+      console.warn("이미지 정리 실패", entry.name, e);
+    }
+  }
+  return { removed, freedBytes, kept };
 }

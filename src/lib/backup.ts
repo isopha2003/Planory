@@ -112,13 +112,25 @@ async function mirrorNoteImages(): Promise<void> {
   if (!(await exists(srcDir))) return;
   const dstDir = await join(await ensureBackupDir(), IMAGE_DIR_NAME);
   if (!(await exists(dstDir))) await mkdir(dstDir, { recursive: true });
+  const live = new Set<string>();
   for (const entry of await readDir(srcDir)) {
     if (!entry.isFile) continue;
+    live.add(entry.name);
     const dst = await join(dstDir, entry.name);
     if (await exists(dst)) continue;
     // 한 장 실패가 백업 전체를 막지 않게 — 다음 백업에서 다시 시도된다.
     try { await copyFile(await join(srcDir, entry.name), dst); }
     catch (e) { console.warn("이미지 백업 복사 실패", entry.name, e); }
+  }
+
+  // 원본에서 사라진(= 어떤 메모도 쓰지 않아 정리된) 이미지는 백업 사본도 지운다.
+  // 안 그러면 이 폴더만 영원히 커져서 "안 쓰는 이미지 정리" 를 해도 디스크가 줄지 않는다.
+  // 앱은 이미지를 항상 원본 폴더에서 읽으므로, 여기 남겨 둔 사본은 예전 .db 스냅샷을 되살릴 때
+  // 손으로 꺼내 쓰는 용도일 뿐이고 그 대상은 결국 "지금 쓰이는 이미지" 다.
+  for (const entry of await readDir(dstDir)) {
+    if (!entry.isFile || live.has(entry.name)) continue;
+    try { await remove(await join(dstDir, entry.name)); }
+    catch (e) { console.warn("이미지 백업 정리 실패", entry.name, e); }
   }
 }
 

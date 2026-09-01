@@ -959,6 +959,14 @@ export async function reorderNotes(orderedIds: string[]): Promise<void> {
   }
 }
 
+// 모든 메모의 본문만 모아서 반환 — 안 쓰는 이미지 정리(어떤 파일이 아직 참조되는지 판별)에 쓴다.
+// draft 도 포함해야 한다: 임시 저장 탭에 남아 있는 메모의 이미지를 지우면 안 된다.
+export async function fetchAllNoteContents(): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db.select<any[]>("SELECT content FROM notes");
+  return rows.map(r => r.content ?? "");
+}
+
 // ── note_folders (메모 폴더) ──────────────────────────────────────
 export interface NoteFolder {
   id: string;
