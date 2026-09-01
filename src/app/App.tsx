@@ -11,6 +11,7 @@ import {
   Heading1, Heading2, Pilcrow, List, ListOrdered, Quote,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { toast } from "sonner";
 import {
   fetchTemplates, createTemplate, deleteTemplateRow, updateTemplateRow, bulkUpdateTemplateOrder,
   fetchTodoCategoryOrders, saveTodoCategoryOrder, clearTodoCategoryOrdersFrom,
@@ -9043,6 +9044,14 @@ function NoteEditor({
   const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const s = savedRef.current;
+  // 저장 시점에 다시 물어보는 용도. savedRef 는 저장에 성공할 때 조용히(리렌더 없이) 갱신되므로
+  // 렌더 중에 계산해 둔 dirty 는 저장 직후 한 박자 동안 옛 값(true)으로 남는다. Ctrl+S 를
+  // 연달아 누르면 바뀐 게 없는데도 같은 내용을 다시 쓰게 되므로, 호출 시점에 ref 를 직접 읽는다.
+  const isDirtyNow = () => {
+    const cur = savedRef.current;
+    return title !== cur.title || content !== cur.content || category !== cur.category ||
+      folderId !== cur.folderId || markdownMode !== cur.markdownMode;
+  };
   const dirty =
     title !== s.title || content !== s.content || category !== s.category ||
     folderId !== s.folderId || markdownMode !== s.markdownMode;
@@ -9122,21 +9131,37 @@ function NoteEditor({
   // 상황이라 편집을 되돌릴 방법이 없었음. 이제 뒤로가기는 변경을 버리고, 목록으로 돌아가면
   // MemoSection 이 DB에서 다시 읽어오므로 저장 전 상태가 그대로 유지된다.
 
-  // 저장 버튼 — 현재 편집 중인 값 전부 + isDraft:false 로 확정.
-  // draft 노트는 임시 저장 탭에서만 보이므로, 저장 버튼을 눌러야 일반 리스트/폴더 뷰에 등장.
-  const handleSave = async () => {
+  // 실제 저장 한 번 — 현재 편집 중인 값 전부 + isDraft:false 로 확정.
+  // draft 노트는 임시 저장 탭에서만 보이므로, 저장해야 일반 리스트/폴더 뷰에 등장.
+  //
+  // 저장 버튼(handleSave)과 Ctrl+S(saveInPlace)가 공유한다 — 저장하는 내용은 완전히 같고
+  // 저장 후 화면을 옮기느냐 마느냐만 다르다.
+  //
+  // 재진입 가드는 ref 로 둔다: setSaving 은 비동기라 Ctrl+S 를 연타하면 saving 이 true 로
+  // 반영되기 전에 두 번째 저장이 들어와 같은 메모에 중복 UPDATE 가 날아간다.
+  const savingRef = useRef(false);
+  const persistNote = async (): Promise<boolean> => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
     setSaving(true);
     const savePatch = { title, content, category, folderId, markdownMode, isDraft: false };
     try {
       await updateNote(note.id, savePatch);
       onChangeLocal(savePatch);
       savedRef.current = { title, content, category, folderId, markdownMode };
+      return true;
     } catch (e) {
-      setSaving(false);
       notifyError("메모 저장 실패")(e);
-      return;
+      return false;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
-    setSaving(false);
+  };
+
+  // 저장 버튼 — 저장하고 화면을 옮긴다.
+  const handleSave = async () => {
+    if (!(await persistNote())) return;
     // "이미 저장된 메모를 열어서 수정" 흐름이면 저장 후 뷰 모드로 복귀(리스트로 튕겨나가지 않음).
     // 새 메모/draft를 처음 저장하는 흐름이면 기존처럼 목록으로 나감.
     if (initialModeRef.current === "view") {
@@ -9145,6 +9170,40 @@ function NoteEditor({
       onBack();
     }
   };
+
+  // Ctrl+S — 저장하고 쓰던 자리에 그대로 머문다. 글을 쓰다가 중간중간 눌러 두는 용도라
+  // 저장 버튼처럼 화면을 옮기면 흐름이 끊긴다.
+  //
+  // 화면이 안 바뀌므로 저장됐다는 신호가 없으면 눌렀는지 아닌지 알 수 없다 — 짧은 토스트로
+  // 알린다. 이 앱은 자동 저장이 없어서 "저장한 줄 알았는데 아니었다" 가 곧 글 유실이다.
+  const saveInPlace = async () => {
+    if (!isDirtyNow()) return; // 바뀐 게 없으면 DB 도 토스트도 건드리지 않음
+    if (await persistNote()) toast.success("저장됨");
+  };
+
+  // Ctrl+S(맥은 ⌘S) 로 저장.
+  //
+  // 입력 필드 안에서도 동작해야 한다 — 저장이 가장 필요한 순간이 글을 치고 있을 때다.
+  // (전역 Ctrl+Z 핸들러는 반대로 입력 중이면 비켜서지만, 그건 브라우저 기본 실행취소를
+  //  방해하지 않으려는 것이고 저장은 기본 동작을 뺏는 게 목적이라 규칙이 다르다.)
+  //
+  // preventDefault 는 저장할 게 없을 때도 항상 부른다: 웹뷰의 기본 Ctrl+S 는 "웹페이지
+  // 저장" 대화상자라, 막지 않으면 메모 대신 엉뚱한 파일 저장창이 뜬다.
+  //
+  // 콜백은 ref 로 최신 것을 참조한다. deps 를 [] 로 두고 함수를 직접 캡처하면 마운트 시점의
+  // title/content 를 붙든 채로 굳어서, 한참 쓴 뒤에 Ctrl+S 를 누르면 처음 상태가 저장된다.
+  const saveInPlaceRef = useRef(saveInPlace);
+  saveInPlaceRef.current = saveInPlace;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      saveInPlaceRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // 저장하지 않고 실제로 빠져나가는 경로. 편집→뷰 흐름이면 한 단계만 되돌리고, 그 외엔 목록으로.
   //
