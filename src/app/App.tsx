@@ -5198,7 +5198,7 @@ function TodoPanel({
       <div
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
-        className={`flex items-center rounded-xl border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-2.5" : "gap-3 px-4 py-3"} ${d.completed ? "bg-card opacity-60" : ""}`}
+        className={`flex items-center rounded-xl border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "bg-card opacity-60" : ""}`}
         style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
         title="클릭: 상세 열기"
       >
@@ -5208,16 +5208,17 @@ function TodoPanel({
           title={d.completed ? "완료 해제" : "완료 처리"}
         >
           {d.completed
-            ? <CheckCircle2 size={18} style={{ color: blockColor }} />
-            : <Circle size={18} className="text-muted-foreground" />}
+            ? <CheckCircle2 size={compact ? 16 : 18} style={{ color: blockColor }} />
+            : <Circle size={compact ? 16 : 18} className="text-muted-foreground" />}
         </button>
-        <span className="w-0.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
+        <span className={`w-0.5 rounded-full flex-shrink-0 ${compact ? "h-6" : "h-8"}`} style={{ backgroundColor: blockColor }} />
         <div className="flex-1 min-w-0">
-          <div className={`text-sm font-medium truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</div>
-          <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>
+          <div className={`font-medium truncate ${compact ? "text-[13px] leading-snug" : "text-sm"} ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</div>
+          {/* 가로 열 배치에선 열 머리글이 이미 날짜라 날짜 줄을 생략해 카드를 낮게 유지. */}
+          {!compact && <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>}
         </div>
         <span
-          className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+          className={`font-semibold rounded-full flex-shrink-0 ${compact ? "text-[10px] px-1.5 py-px" : "text-[11px] px-2 py-0.5"}`}
           style={{ backgroundColor: dayColor + "22", color: dayColor }}
         >{formatDDay(daysLeft)}</span>
       </div>
@@ -5324,7 +5325,7 @@ function TodoPanel({
           else { setEditingDraft(t.title); setEditingId(t.id); }
         }}
         onDoubleClick={e => { e.stopPropagation(); setEditingDraft(t.title); setEditingId(t.id); }}
-        className={`group/todo relative flex items-center rounded-xl border bg-card transition-all ${opts.compact ? "gap-2 px-2.5 py-2.5" : "gap-3 px-4 py-3"} ${
+        className={`group/todo relative flex items-center rounded-xl border bg-card transition-all ${opts.compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${
           onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
         } ${
           t.completed ? "opacity-60"
@@ -5346,13 +5347,13 @@ function TodoPanel({
             className="flex-shrink-0"
             title={t.completed ? "완료 해제" : "완료 처리"}
           >
-            {t.completed ? <CheckCircle2 size={18} style={{ color }} /> : <Circle size={18} className="text-muted-foreground" />}
+            {t.completed ? <CheckCircle2 size={opts.compact ? 16 : 18} style={{ color }} /> : <Circle size={opts.compact ? 16 : 18} className="text-muted-foreground" />}
           </button>
         ) : (
           /* 달성률 미포함 항목은 완료 개념이 없음 — 체크박스 자리만 유지해 카드 정렬을 맞춤. */
           <span className="w-[18px] flex-shrink-0" />
         )}
-        <span className="w-0.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+        <span className={`w-0.5 rounded-full flex-shrink-0 ${opts.compact ? "h-6" : "h-8"}`} style={{ backgroundColor: color }} />
         <div className="flex-1 min-w-0">
           {editingId === t.id ? (
             <input
@@ -5370,7 +5371,7 @@ function TodoPanel({
           ) : (
             <div className="flex items-baseline gap-1.5 min-w-0">
               {t.repeatGroupId && <span title="반복 할 일" className="text-xs text-muted-foreground flex-shrink-0">↻</span>}
-              <span className={`min-w-0 truncate text-sm font-medium ${t.completed ? "line-through text-muted-foreground" : ""}`}>{t.title}</span>
+              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "line-through text-muted-foreground" : ""}`}>{t.title}</span>
               {opts.showCategory && t.category && !opts.compact && (
                 <span
                   className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-sm flex-shrink-0"
@@ -5380,10 +5381,10 @@ function TodoPanel({
             </div>
           )}
           {editingId !== t.id && (dateLabel || t.memo || clItems.length > 0 || (opts.compact && opts.showCategory && t.category)) && (
-            <div className="flex items-center gap-2 min-w-0 text-[11px] text-muted-foreground">
+            <div className={`flex items-center gap-2 min-w-0 text-muted-foreground ${opts.compact ? "text-[10px] leading-tight" : "text-[11px]"}`}>
               {opts.compact && opts.showCategory && t.category && (
                 <span
-                  className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-sm flex-shrink-0 truncate max-w-[60%]"
+                  className="text-[9px] leading-tight font-semibold uppercase tracking-wide px-1 py-px rounded-sm flex-shrink-0 truncate max-w-[60%]"
                   style={{ color, backgroundColor: color + "22" }}
                 >{t.category}</span>
               )}
@@ -5592,7 +5593,8 @@ function TodoPanel({
         </div>
         <div className="space-y-2">
           {/* 마감 — 해당 날짜 섹션의 가장 상단에 카드로 노출. */}
-          {rangeDeadlines.filter(dl => dl.dueDate === dateStr).map(dl => renderDeadlineCard(dl, compact))}
+          {/* 가로 열 배치(compact)에선 마감을 열 안에 섞지 않고 위쪽 전용 행에 따로 그린다. */}
+          {!compact && rangeDeadlines.filter(dl => dl.dueDate === dateStr).map(dl => renderDeadlineCard(dl))}
           {dayTodos.map(t => renderTodoCard(t, { showCategory: true, sectionDate: dateStr, compact }))}
           {/* 카테고리 드래그 중 드랍 자리 — hover 중인 섹션은 강조, 나머지는 옅은 자리 표시.
                (항목이 있는 날은 카드들이 이미 드랍 면적을 만들어 주므로 자리 표시 생략) */}
@@ -5844,6 +5846,25 @@ function TodoPanel({
                    일곱 열 모두 같은 조건으로 그린다. 구분선은 시간 그리드의 요일 경계선과 같은 색이라
                    함께 볼 때 한 선으로 이어진다. 첫 열의 왼쪽 선은 시간축(w-12) 자리와 만나는 경계이므로
                    그리드가 없는 할 일 단독 모드에서는 패널 가장자리라 생략. */
+              <>
+              {/* 마감 전용 행 — 할 일 열과 같은 열 구조로 그 날짜 칸에 마감 카드만 놓고, 옅은 배경과
+                   아래 구분선으로 할 일 영역과 확실히 구분한다. 마감이 하나도 없는 주엔 행 자체를 생략. */}
+              {rangeDeadlines.length > 0 && (
+                <div className="mb-3 pb-2 border-b border-border bg-muted/30 rounded-lg">
+                  <div className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold tracking-wide text-muted-foreground">마감</div>
+                  <div className="flex items-stretch">
+                    {!showDayHeader && <div className="w-12 flex-shrink-0" />}
+                    {viewDays.map((day, i) => {
+                      const ds = toDateStr(day);
+                      return (
+                        <div key={ds} className={`flex-1 min-w-0 px-2.5 space-y-1.5 ${i > 0 || !showDayHeader ? "border-l border-border" : ""}`}>
+                          {rangeDeadlines.filter(dl => dl.dueDate === ds).map(dl => renderDeadlineCard(dl, true))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="flex items-stretch flex-1">
                 {!showDayHeader && <div className="w-12 flex-shrink-0" />}
                 {viewDays.map((day, i) => (
@@ -5855,6 +5876,7 @@ function TodoPanel({
                   </div>
                 ))}
               </div>
+              </>
             ) : (
               /* 카테고리 수는 정해져 있지 않으므로 열 최소 폭을 두고 넘치면 가로 스크롤. 카테고리가
                    한둘뿐일 때 열이 화면 폭을 통째로 차지하지 않도록 최대 폭도 둔다. */
