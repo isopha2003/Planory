@@ -1027,12 +1027,50 @@ export default function App() {
     })();
   }, [pomPhaseSec, pomPhase, pomodoroOn, timerState, pomWork, pomBreak]);
 
+  // ── 실행 취소용 저수준 적용 함수 ──
+  // 되돌리기/다시 실행 안에서 쓰는 "스택에 다시 쌓지 않는" 적용 경로. 화면 상태·상세 패널·DB 를
+  // 한 번에 맞춘다. 일반 UI 경로(updateBlock 등)는 이걸 호출한 뒤 undo/redo 쌍을 push 한다.
+  const applyBlockPatchRaw = async (id: string, changes: Partial<Block>) => {
+    updateBlockLocal(id, changes);
+    setSelectedBlock(prev => (prev?.id === id ? { ...prev, ...changes } : prev));
+    await patchBlock(id, changes);
+  };
+  // changes 에 들어 있는 키만 골라 "바꾸기 전" 값을 만든다 — 되돌릴 때 그 키들만 원복.
+  const pickPrev = <T extends object>(from: T, changes: Partial<T>): Partial<T> => {
+    const out: Partial<T> = {};
+    for (const k of Object.keys(changes) as (keyof T)[]) out[k] = from[k];
+    return out;
+  };
+
   const toggleBlock = (id: string) => {
     const target = blocks.find(b => b.id === id);
     if (!target) return;
     const completed = !target.completed;
     setBlocks(bs => bs.map(b => b.id === id ? { ...b, completed } : b));
     patchBlock(id, { completed }).catch(notifyError("완료 상태 저장 실패"));
+    pushUndo(
+      () => applyBlockPatchRaw(id, { completed: !completed }),
+      () => applyBlockPatchRaw(id, { completed }),
+    );
+  };
+
+  // 새로 만든 블록의 되돌리기 — 지우기 / 다시 실행 — 같은 내용으로 다시 만들기.
+  // 다시 만들면 id 가 바뀌므로 holder 로 "지금 화면에 있는 그 블록" 을 추적한다.
+  const pushAddBlockUndo = (created: Block) => {
+    const holder = { id: created.id };
+    pushUndo(
+      async () => {
+        const id = holder.id;
+        setBlocks(bs => bs.filter(b => b.id !== id && b.parentBlockId !== id));
+        setSelectedBlock(prev => (prev?.id === id ? null : prev));
+        await deleteBlockRow(id);
+      },
+      async () => {
+        const restored = await insertBlock({ ...created, parentBlockId: undefined, nextBlockId: undefined });
+        holder.id = restored.id;
+        setBlocks(bs => [...bs, restored]);
+      },
+    );
   };
 
   // Optimistic insert: shows instantly with a temp id, then swapped for the real DB row.
@@ -1065,6 +1103,7 @@ export default function App() {
           setBlocks(bs => [...bs, real]);
           openBlockDetail(real);
           if (options.openInline) setJustCreatedBlockId(real.id);
+          pushAddBlockUndo(real);
         })
         .catch(notifyError("블록 추가 실패"));
       return;
@@ -1081,6 +1120,7 @@ export default function App() {
         // 이후 patchBlock(temp-id) 는 UPDATE 0 rows 로 조용히 사라지고 checklist_items 등
         // FK 컬럼에 temp-id 를 저장하려는 시도는 FK 위반으로 실패함. 스왑을 selectedBlock 에도 반영.
         setSelectedBlock(prev => (prev?.id === tempId ? real : prev));
+        pushAddBlockUndo(real);
       })
       .catch(e => { setBlocks(bs => bs.filter(b => b.id !== tempId)); notifyError("블록 추가 실패")(e); });
   };
@@ -1090,9 +1130,16 @@ export default function App() {
   const updateBlockLocal = (id: string, changes: Partial<Block>) =>
     setBlocks(bs => bs.map(b => b.id === id ? { ...b, ...changes } : b));
 
-  const updateBlock = (id: string, changes: Partial<Block>) => {
+  // undoPrev — 호출 시점의 화면 상태가 이미 바뀐 값이라(드래그 리사이즈처럼 로컬 갱신을 먼저 한 경우)
+  // "바꾸기 전" 을 여기서 알 수 없을 때 호출자가 직접 넘긴다. 없으면 현재 상태에서 골라낸다.
+  const updateBlock = (id: string, changes: Partial<Block>, undoPrev?: Partial<Block>) => {
+    const current = blocksRefTop.current.find(b => b.id === id) ?? blocks.find(b => b.id === id);
     updateBlockLocal(id, changes);
     patchBlock(id, changes).catch(notifyError("블록 저장 실패"));
+    const prev = undoPrev ?? (current ? pickPrev(current, changes) : null);
+    if (prev && Object.keys(prev).length > 0) {
+      pushUndo(() => applyBlockPatchRaw(id, prev), () => applyBlockPatchRaw(id, changes));
+    }
   };
 
   // 반복 그룹 공유 필드를 이 블록 날짜 이후의 같은 그룹 인스턴스 전체에 반영.
@@ -1136,12 +1183,19 @@ export default function App() {
       .catch(() => {})
       .finally(() => { deleteBlockRow(id).catch(notifyError("블록 삭제 실패")); });
     if (snapshot) {
+      const holder = { id };
       pushUndo(async () => {
         try {
           const restored = await insertBlock({ ...snapshot, parentBlockId: undefined, nextBlockId: undefined, templateId: undefined });
           await insertChecklistItemsForBlock(restored.id, checklistSnapshot.items);
+          holder.id = restored.id;
           setBlocks(bs => [...bs, restored]);
         } catch (e) { notifyError("복구 실패")(e); }
+      }, async () => {
+        const cur = holder.id;
+        setBlocks(bs => bs.filter(b => b.id !== cur));
+        setSelectedBlock(prev => (prev?.id === cur ? null : prev));
+        await deleteBlockRow(cur);
       });
     }
   };
@@ -1313,6 +1367,10 @@ export default function App() {
   const deleteRepeatGroup = (id: string, fromDate: string) => {
     const block = blocks.find(b => b.id === id);
     const groupId = block?.repeatGroupId;
+    // 되돌리기용 스냅샷 — 지워질 최상위 인스턴스들(자식 블록은 부모 id 가 바뀌어 복원하지 않음).
+    const victims = groupId
+      ? blocks.filter(b => b.repeatGroupId === groupId && b.date >= fromDate && !b.parentBlockId)
+      : blocks.filter(b => b.id === id);
     // 반복 그룹에서 지운 블록의 자식(parent_block_id=반복 인스턴스)도 FK CASCADE로 DB에선
     // 함께 사라짐. 로컬 상태에서도 재귀로 훑어 함께 지워줘야 다음 refetch 전까지 유령 자식이
     // 남지 않음. 단일 블록 삭제 시 deleteBlock에서 한 것과 같은 fixed-point 방식.
@@ -1337,12 +1395,35 @@ export default function App() {
       }
       return bs.filter(b => !toDelete.has(b.id));
     });
-    if (!groupId) {
-      deleteBlockRow(id).catch(notifyError("블록 삭제 실패"));
-    } else {
-      apiDeleteRepeatGroup(groupId, fromDate).catch(notifyError("반복 블록 삭제 실패"));
-    }
+    // 체크리스트는 CASCADE 로 함께 사라지므로 삭제 전에 읽어 둔다(bulkDeleteBlocks 와 같은 패턴).
+    const checklists: { map: Map<string, ChecklistSnapshot[]> } = { map: new Map() };
+    fetchChecklistItemsByBlocks(victims.map(v => v.id))
+      .then(m => { checklists.map = m; })
+      .catch(() => {})
+      .finally(() => {
+        if (!groupId) deleteBlockRow(id).catch(notifyError("블록 삭제 실패"));
+        else apiDeleteRepeatGroup(groupId, fromDate).catch(notifyError("반복 블록 삭제 실패"));
+      });
     setSelectedBlock(null);
+    if (victims.length > 0) {
+      const holder = { ids: victims.map(v => v.id) };
+      pushUndo(async () => {
+        try {
+          const restored = await insertBlocksBulk(victims.map(v => ({ ...v, parentBlockId: undefined, nextBlockId: undefined, templateId: undefined })));
+          for (let i = 0; i < restored.length; i++) {
+            const items = checklists.map.get(victims[i]?.id ?? "");
+            if (items?.length) await insertChecklistItemsForBlock(restored[i].id, items);
+          }
+          holder.ids = restored.map(b => b.id);
+          setBlocks(bs => [...bs, ...restored]);
+        } catch (e) { notifyError("반복 블록 복구 실패")(e); }
+      }, async () => {
+        const ids = new Set(holder.ids);
+        setBlocks(bs => bs.filter(b => !ids.has(b.id)));
+        setSelectedBlock(prev => (prev && ids.has(prev.id) ? null : prev));
+        for (const bid of ids) { try { await deleteBlockRow(bid); } catch {} }
+      });
+    }
   };
 
   // 주간 반복에서 기준 항목의 요일이 새 규칙의 요일 목록에 없으면, 가장 가까운 선택 요일로
@@ -1568,6 +1649,31 @@ export default function App() {
     }
   };
 
+  const applyDeadlineToggleRaw = async (id: string, completed: boolean) => {
+    const completedAt = completed ? new Date().toISOString() : null;
+    setDeadlines(ds => ds.map(d => d.id === id ? { ...d, completed, completedAt } : d));
+    setSelectedDeadline(prev => (prev?.id === id ? { ...prev, completed, completedAt } : prev));
+    await toggleDeadlineRow(id, completed);
+  };
+  const applyDeadlinePatchRaw = async (id: string, changes: { title?: string; dueDate?: string; color?: string }) => {
+    setDeadlines(ds => ds.map(d => d.id === id ? { ...d, ...changes } : d));
+    setSelectedDeadline(prev => (prev?.id === id ? { ...prev, ...changes } : prev));
+    await updateDeadlineRow(id, changes);
+  };
+  // 마감 한 건을 스냅샷 그대로 다시 만든다(되돌리기/다시 실행 공용). id 는 새로 발급된다.
+  const recreateDeadline = async (snap: Deadline): Promise<Deadline> => {
+    const created = await createDeadline({ title: snap.title, dueDate: snap.dueDate, color: snap.color });
+    if (snap.completed) await toggleDeadlineRow(created.id, true);
+    const restored = { ...created, completed: snap.completed, completedAt: snap.completedAt };
+    setDeadlines(ds => [...ds, restored]);
+    return restored;
+  };
+  const removeDeadlineRaw = async (id: string) => {
+    setDeadlines(ds => ds.filter(d => d.id !== id));
+    setSelectedDeadline(prev => (prev?.id === id ? null : prev));
+    await deleteDeadlineRow(id);
+  };
+
   const toggleDeadline = (id: string) => {
     const target = deadlines.find(d => d.id === id);
     if (!target) return;
@@ -1576,17 +1682,31 @@ export default function App() {
     const completedAt = completed ? new Date().toISOString() : null;
     setDeadlines(ds => ds.map(d => d.id === id ? { ...d, completed, completedAt } : d));
     toggleDeadlineRow(id, completed).catch(notifyError("마감 저장 실패"));
+    pushUndo(() => applyDeadlineToggleRaw(id, !completed), () => applyDeadlineToggleRaw(id, completed));
   };
 
   const deleteDeadline = (id: string) => {
+    const snapshot = deadlines.find(d => d.id === id);
     setDeadlines(ds => ds.filter(d => d.id !== id));
     deleteDeadlineRow(id).catch(notifyError("마감 삭제 실패"));
+    if (snapshot) {
+      const holder = { id };
+      pushUndo(
+        async () => { try { holder.id = (await recreateDeadline(snapshot)).id; } catch (e) { notifyError("마감 복구 실패")(e); } },
+        () => removeDeadlineRaw(holder.id),
+      );
+    }
   };
 
   // 상세 패널에서 제목/마감일/색상 변경 시 호출 — 낙관적 업데이트 후 DB 저장.
   const updateDeadline = (id: string, changes: { title?: string; dueDate?: string; color?: string }) => {
+    const current = deadlines.find(d => d.id === id);
     setDeadlines(ds => ds.map(d => d.id === id ? { ...d, ...changes } : d));
     updateDeadlineRow(id, changes).catch(notifyError("마감 저장 실패"));
+    if (current) {
+      const prev = pickPrev(current, changes as Partial<Deadline>) as { title?: string; dueDate?: string; color?: string };
+      pushUndo(() => applyDeadlinePatchRaw(id, prev), () => applyDeadlinePatchRaw(id, changes));
+    }
   };
 
   const addTemplate = (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => {
@@ -1680,7 +1800,14 @@ export default function App() {
     const tempId = `temp-${crypto.randomUUID()}`;
     setDeadlines(ds => [...ds, { id: tempId, title: d.title, dueDate: d.dueDate, completed: false, completedAt: null, color: "" }]);
     createDeadline(d)
-      .then(real => setDeadlines(ds => ds.map(x => (x.id === tempId ? real : x))))
+      .then(real => {
+        setDeadlines(ds => ds.map(x => (x.id === tempId ? real : x)));
+        const holder: { id: string } = { id: real.id };
+        pushUndo(
+          () => removeDeadlineRaw(holder.id),
+          async () => { try { holder.id = (await recreateDeadline(real)).id; } catch (e) { notifyError("마감 다시 만들기 실패")(e); } },
+        );
+      })
       .catch(e => { setDeadlines(ds => ds.filter(x => x.id !== tempId)); notifyError("마감 추가 실패")(e); });
   };
 
@@ -1707,6 +1834,7 @@ export default function App() {
           openTodoDetail(real);
           setJustCreatedTodoId(real.id);
           if (nextSort !== 0) updateTodo(real.id, { sortOrder: nextSort }).catch(() => {});
+          pushAddTodoUndo({ ...real, sortOrder: nextSort });
         })
         .catch(notifyError("todo 추가 실패"));
       return;
@@ -1720,8 +1848,33 @@ export default function App() {
           // DB 는 아직 sort_order=0 이므로 즉시 patch. 실패해도 UI 는 유지 — 다음 로드에서 정정됨.
           updateTodo(real.id, { sortOrder: nextSort }).catch(() => {});
         }
+        pushAddTodoUndo({ ...real, sortOrder: nextSort });
       })
       .catch(e => { setTodos(ts => ts.filter(x => x.id !== tempId)); notifyError("todo 추가 실패")(e); });
+  };
+  // 새 할 일의 되돌리기(지우기)/다시 실행(같은 내용으로 다시 만들기). 다시 만들 땐 원래 id 를
+  // 그대로 써서(insertTodosBulk) 체크리스트 등 뒤따르는 되돌리기 항목이 어긋나지 않게 한다.
+  const removeTodoRaw = async (id: string) => {
+    setTodos(ts => ts.filter(t => t.id !== id));
+    setSelectedTodo(prev => (prev?.id === id ? null : prev));
+    await deleteTodoRow(id);
+  };
+  const pushAddTodoUndo = (created: Todo) => {
+    pushUndo(
+      () => removeTodoRaw(created.id),
+      async () => { await insertTodosBulk([created]); setTodos(ts => [...ts, created]); },
+    );
+  };
+  const applyTodoToggleRaw = async (id: string, completed: boolean) => {
+    const completedAt = completed ? new Date().toISOString() : null;
+    setTodos(ts => ts.map(t => t.id === id ? { ...t, completed, completedAt } : t));
+    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, completed, completedAt } : prev));
+    await toggleTodoRow(id, completed);
+  };
+  const applyTodoPatchRaw = async (id: string, changes: BlockDraftFields) => {
+    setTodos(ts => ts.map(t => t.id === id ? { ...t, ...changes } : t));
+    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, ...changes } : prev));
+    await updateTodo(id, changes);
   };
   const toggleTodo = (id: string) => {
     const target = todos.find(t => t.id === id);
@@ -1732,6 +1885,7 @@ export default function App() {
     setTodos(ts => ts.map(t => t.id === id ? { ...t, completed: nextCompleted, completedAt } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, completed: nextCompleted, completedAt } : prev));
     toggleTodoRow(id, nextCompleted).catch(notifyError("todo 완료 저장 실패"));
+    pushUndo(() => applyTodoToggleRaw(id, !nextCompleted), () => applyTodoToggleRaw(id, nextCompleted));
   };
   const deleteTodo = (id: string) => {
     const snapshot = todos.find(t => t.id === id);
@@ -1744,14 +1898,16 @@ export default function App() {
       .catch(() => {})
       .finally(() => { deleteTodoRow(id).catch(notifyError("todo 삭제 실패")); });
     if (snapshot) {
+      // 되살릴 땐 원래 id·순서를 그대로 쓴다(insertTodosBulk) — 목록에서 같은 자리로 돌아온다.
+      const revived: Todo = { ...snapshot, repeatGroupId: undefined, repeat: undefined };
       pushUndo(async () => {
         try {
-          const restored = await createTodo({ title: snapshot.title, date: snapshot.date, endDate: snapshot.endDate, color: snapshot.color, memo: snapshot.memo, category: snapshot.category, countInCompletion: snapshot.countInCompletion });
-          await insertTodoChecklistItemsForTodo(restored.id, checklistSnapshot.items);
-          setTodos(ts => [...ts, restored]);
+          await insertTodosBulk([revived]);
+          await insertTodoChecklistItemsForTodo(revived.id, checklistSnapshot.items);
+          setTodos(ts => [...ts, revived]);
           setTodoChecklistItems(await fetchAllTodoChecklistItems());
         } catch (e) { notifyError("todo 복구 실패")(e); }
-      });
+      }, () => removeTodoRaw(revived.id));
     }
   };
 
@@ -1770,15 +1926,38 @@ export default function App() {
   const deleteTodoRepeatGroup = (id: string, fromDate: string) => {
     const todo = todos.find(t => t.id === id);
     const groupId = todo?.repeatGroupId;
+    const victims = groupId
+      ? todos.filter(t => t.repeatGroupId === groupId && t.date >= fromDate)
+      : todos.filter(t => t.id === id);
     setTodos(ts => {
       if (!groupId) return ts.filter(t => t.id !== id);
       return ts.filter(t => !(t.repeatGroupId === groupId && t.date >= fromDate));
     });
     setSelectedTodo(prev => (prev?.id === id ? null : prev));
-    if (!groupId) {
-      deleteTodoRow(id).catch(notifyError("todo 삭제 실패"));
-    } else {
-      apiDeleteTodoRepeatGroup(groupId, fromDate).catch(notifyError("반복 할 일 삭제 실패"));
+    // 체크리스트는 삭제와 함께 사라지므로 먼저 읽어 둔 뒤 지운다(되돌리기용).
+    const checklists = new Map<string, ChecklistSnapshot[]>();
+    Promise.all(victims.map(async v => { try { checklists.set(v.id, await fetchTodoChecklistItems(v.id)); } catch {} }))
+      .finally(() => {
+        if (!groupId) deleteTodoRow(id).catch(notifyError("todo 삭제 실패"));
+        else apiDeleteTodoRepeatGroup(groupId, fromDate).catch(notifyError("반복 할 일 삭제 실패"));
+      });
+    if (victims.length > 0) {
+      pushUndo(async () => {
+        try {
+          await insertTodosBulk(victims);
+          for (const v of victims) {
+            const items = checklists.get(v.id);
+            if (items?.length) await insertTodoChecklistItemsForTodo(v.id, items);
+          }
+          setTodos(ts => [...ts, ...victims]);
+          setTodoChecklistItems(await fetchAllTodoChecklistItems());
+        } catch (e) { notifyError("반복 할 일 복구 실패")(e); }
+      }, async () => {
+        const ids = new Set(victims.map(v => v.id));
+        setTodos(ts => ts.filter(t => !ids.has(t.id)));
+        setSelectedTodo(prev => (prev && ids.has(prev.id) ? null : prev));
+        for (const v of victims) { try { await deleteTodoRow(v.id); } catch {} }
+      });
     }
   };
   // 반복 그룹 공유 필드를 이 할 일 날짜 이후의 그룹 전체에 반영 — applyBlockChangesToFollowing 의 todo 판.
@@ -1816,9 +1995,14 @@ export default function App() {
   // 이 할 일 한 건만 수정 — 반복 그룹 전파 여부는 호출자가 별도로 결정.
   const updateTodoFields = (id: string, changes: BlockDraftFields) => {
     if (Object.keys(changes).length === 0) return;
+    const current = todos.find(t => t.id === id);
     setTodos(ts => ts.map(t => t.id === id ? { ...t, ...changes } : t));
     setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, ...changes } : prev));
     updateTodo(id, changes).catch(notifyError("todo 저장 실패"));
+    if (current) {
+      const prev = pickPrev(current, changes as Partial<Todo>) as BlockDraftFields;
+      pushUndo(() => applyTodoPatchRaw(id, prev), () => applyTodoPatchRaw(id, changes));
+    }
   };
 
   const refetchTodos = async () => {
@@ -1943,6 +2127,19 @@ export default function App() {
   const reorderTodos = (targetTodos: { id: string; date: string; sortOrder: number }[]) => {
     const map = new Map(targetTodos.map(t => [t.id, t]));
     const snapshot = todos;
+    const applyOrder = (items: { id: string; date: string; sortOrder: number }[]) => {
+      const m = new Map(items.map(t => [t.id, t]));
+      setTodos(ts => ts.map(t => {
+        const upd = m.get(t.id);
+        return upd ? { ...t, date: upd.date, sortOrder: upd.sortOrder } : t;
+      }));
+      setSelectedTodo(prev => { const upd = prev && m.get(prev.id); return prev && upd ? { ...prev, date: upd.date, sortOrder: upd.sortOrder } : prev; });
+    };
+    // 되돌리기용 — 바뀌는 항목들의 원래 (날짜, 순서).
+    const before = targetTodos
+      .map(t => snapshot.find(x => x.id === t.id))
+      .filter((t): t is Todo => !!t)
+      .map(t => ({ id: t.id, date: t.date, sortOrder: t.sortOrder }));
     setTodos(ts => ts.map(t => {
       const upd = map.get(t.id);
       return upd ? { ...t, date: upd.date, sortOrder: upd.sortOrder } : t;
@@ -1951,6 +2148,13 @@ export default function App() {
       setTodos(snapshot);
       notifyError("todo 순서 저장 실패")(e);
     });
+    const changed = before.some(b => { const n = map.get(b.id); return n && (n.date !== b.date || n.sortOrder !== b.sortOrder); });
+    if (changed) {
+      pushUndo(
+        async () => { applyOrder(before); await bulkUpdateTodoOrder(before); },
+        async () => { applyOrder(targetTodos); await bulkUpdateTodoOrder(targetTodos); },
+      );
+    }
   };
 
   // 지정 todo 를 새 날짜의 마지막에 붙임(단순 컬럼 이동).
@@ -2269,7 +2473,6 @@ export default function App() {
               onPasteBlocks={pasteBlocks}
               onBulkDelete={bulkDeleteBlocks}
               onBulkSetRepeat={bulkSetRepeatForBlocks}
-              pushUndo={pushUndo}
               todos={todos}
               onAddTodo={addTodo}
               onDeleteTodo={requestDeleteTodo}
@@ -3379,7 +3582,7 @@ function CalendarSection({
   onSelect, onSelectTodo, onSelectDeadline, onToggle, onToggleDeadline, onAddBlock, onUpdateBlock, onUpdateBlockLocal, onDeleteBlock,
   onAddTemplate, onDeleteBlockTemplate,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
-  blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat, pushUndo,
+  blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat,
   todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onReorderTodo, onToggleTodo, onUpdateTodoCategory,
   categoryRankFor, globalCategoryOrder, onReorderCategory, onReorderCategoryGlobal,
 }: {
@@ -3395,7 +3598,7 @@ function CalendarSection({
   onToggle: (id: string) => void;
   onToggleDeadline: (id: string) => void;
   onAddBlock: (block: Block, options?: { select?: boolean; openInline?: boolean }) => void;
-  onUpdateBlock: (id: string, changes: Partial<Block>) => void;
+  onUpdateBlock: (id: string, changes: Partial<Block>, undoPrev?: Partial<Block>) => void;
   onUpdateBlockLocal: (id: string, changes: Partial<Block>) => void;
   onDeleteBlock: (id: string) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
@@ -3409,7 +3612,6 @@ function CalendarSection({
   onPasteBlocks: (source: Block[], targetDate: string) => Promise<void>;
   onBulkDelete: (ids: string[]) => Promise<void>;
   onBulkSetRepeat: (ids: string[], repeat: BlockRepeat) => void;
-  pushUndo: (fn: () => Promise<void> | void) => void;
   todos: Todo[];
   onAddTodo: (t: { title: string; date: string; endDate?: string | null; color?: string }, options?: { openInline?: boolean }) => void;
   onDeleteTodo: (id: string) => void;
@@ -3735,7 +3937,12 @@ function CalendarSection({
     };
     const onUp = () => {
       const final = blocksRef.current.find(b => b.id === resizing.blockId);
-      if (final) onUpdateBlock(final.id, { startH: final.startH, startM: final.startM, endH: final.endH, endM: final.endM });
+      // 드래그 중 로컬 상태가 이미 새 값이라, 되돌리기용 원래 시각은 드래그 시작 때 잡아둔 값으로 넘긴다.
+      const prev = {
+        startH: Math.floor(resizing.origStartMin / 60), startM: resizing.origStartMin % 60,
+        endH: Math.floor(resizing.origEndMin / 60), endM: resizing.origEndMin % 60,
+      };
+      if (final) onUpdateBlock(final.id, { startH: final.startH, startM: final.startM, endH: final.endH, endM: final.endM }, prev);
       setResizing(null);
       justResizedRef.current = true;
       setTimeout(() => { justResizedRef.current = false; }, 0);
@@ -4069,14 +4276,12 @@ function CalendarSection({
                       const newEnd = Math.min(TOTAL_H * 60, newStart + dur);
                       const adjustedStart = newEnd === TOTAL_H * 60 ? TOTAL_H * 60 - dur : newStart;
                       if (!hasOverlapForDate(dateStr, adjustedStart, adjustedStart + dur, movedBlockId)) {
-                        // 원 위치 캡처해서 Ctrl+Z 로 되돌릴 수 있게.
-                        const prev = { date: block.date, startH: block.startH, startM: block.startM, endH: block.endH, endM: block.endM };
+                        // 되돌리기(Ctrl+Z)는 onUpdateBlock 이 바꾸기 전 값을 스스로 기록한다.
                         onUpdateBlock(movedBlockId, {
                           date: dateStr,
                           startH: Math.floor(adjustedStart / 60), startM: adjustedStart % 60,
                           endH: Math.floor((adjustedStart + dur) / 60), endM: (adjustedStart + dur) % 60,
                         });
-                        pushUndo(() => onUpdateBlock(movedBlockId, prev));
                       }
                     }
                     setMarquee(null);
