@@ -5198,7 +5198,7 @@ function TodoPanel({
       <div
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
-        className={`flex items-center rounded-xl border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2.5 px-3 py-2.5" : "gap-3 px-4 py-3"} ${d.completed ? "bg-card opacity-60" : ""}`}
+        className={`flex items-center rounded-xl border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-2.5" : "gap-3 px-4 py-3"} ${d.completed ? "bg-card opacity-60" : ""}`}
         style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
         title="클릭: 상세 열기"
       >
@@ -5324,7 +5324,7 @@ function TodoPanel({
           else { setEditingDraft(t.title); setEditingId(t.id); }
         }}
         onDoubleClick={e => { e.stopPropagation(); setEditingDraft(t.title); setEditingId(t.id); }}
-        className={`group/todo relative flex items-center rounded-xl border bg-card transition-all ${opts.compact ? "gap-2.5 px-3 py-2.5" : "gap-3 px-4 py-3"} ${
+        className={`group/todo relative flex items-center rounded-xl border bg-card transition-all ${opts.compact ? "gap-2 px-2.5 py-2.5" : "gap-3 px-4 py-3"} ${
           onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
         } ${
           t.completed ? "opacity-60"
@@ -5801,7 +5801,7 @@ function TodoPanel({
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCatDragging(false); }}
         onDrop={() => setCatDragging(false)}
       >
-        <div className={horizontal ? "w-full min-w-0" : "max-w-lg w-full mx-auto"}>
+        <div className={horizontal ? "w-full min-w-0 min-h-full flex flex-col" : "max-w-lg w-full mx-auto"}>
           {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼 오른쪽 끝을 카드 컬럼 오른쪽 끝에 맞춤.
                ⚠ translate 로 옮기면 새 stacking context 가 생겨 아래 카드가 드롭다운을 가림 —
                위치 조정은 transform 대신 flex 로만.
@@ -5840,10 +5840,17 @@ function TodoPanel({
                  시간 그리드와 함께 보일 때(showDayHeader=false)는 그리드의 시간축(w-12)만큼 왼쪽을
                  비워 위의 요일 열과 정확히 겹치게 한다. */
             groupMode === "date" ? (
-              <div className="flex items-start">
+              /* 열마다 같은 안쪽 여백(px-2.5)과 왼쪽 구분선 — 양 끝(일·토)만 여백이 다르게 보이지 않게
+                   일곱 열 모두 같은 조건으로 그린다. 구분선은 시간 그리드의 요일 경계선과 같은 색이라
+                   함께 볼 때 한 선으로 이어진다. 첫 열의 왼쪽 선은 시간축(w-12) 자리와 만나는 경계이므로
+                   그리드가 없는 할 일 단독 모드에서는 패널 가장자리라 생략. */
+              <div className="flex items-stretch flex-1">
                 {!showDayHeader && <div className="w-12 flex-shrink-0" />}
-                {viewDays.map(day => (
-                  <div key={toDateStr(day)} className="flex-1 min-w-0 px-1">
+                {viewDays.map((day, i) => (
+                  <div
+                    key={toDateStr(day)}
+                    className={`flex-1 min-w-0 px-2.5 ${i > 0 || !showDayHeader ? "border-l border-border" : ""}`}
+                  >
                     {renderDateSection(day, true)}
                   </div>
                 ))}
