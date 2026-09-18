@@ -5783,16 +5783,17 @@ function TodoPanel({
     <div className="h-full flex flex-col overflow-hidden">
       {showDayHeader && (
         /* 요일/날짜 헤더 — 좌/우 끝 chevron 으로 기간 이동.
-             chevron 을 둘 다 absolute 로 얹는 이유: 예전엔 이전 chevron 만 흐름 안의 w-12 자리를
-             차지해서 7개 컬럼이 [48px, 오른쪽 끝] 을 나눠 가졌다. 그래서 컬럼 폭이 (W-48)/7 이 되고
-             전체가 오른쪽으로 치우쳐, 월 뷰(양쪽 chevron 이 absolute → 컬럼이 W/7 로 균등)와
-             요일 위치가 어긋났다. 시간표 뷰의 헤더는 아래 시간축 게이지(w-12)와 컬럼을 맞춰야 해서
-             그쪽은 흐름 자리를 유지하지만, 할 일 목록은 아래에 게이지가 없어 맞출 대상이 없다. */
-        <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden">
+             주 보기(가로 열)에서는 chevron 이 흐름 안에서 양쪽 w-8 자리를 차지하고, 아래 열 본문도
+             양쪽에 같은 w-8 빈칸을 두어 요일 머리글과 카드 열이 정확히 같은 폭·위치로 겹친다.
+             (예전엔 chevron 을 absolute 로 얹어 열이 그 아래까지 깔렸는데, 본문 열은 그렇지 않아
+             양 끝 열의 카드가 머리글보다 안쪽에 있는 것처럼 보였다.)
+             일 보기(열 하나)에서는 맞출 열이 없어 예전처럼 absolute 로 얹는다.
+             scrollbar-gutter 는 본문 스크롤 영역과 같은 값 — 스크롤바 폭만큼 머리글이 더 넓어지지 않게. */
+        <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden [scrollbar-gutter:stable]">
           {onGoPrev && (
             <button
               onClick={onGoPrev}
-              className="absolute left-0 top-0 bottom-0 w-8 z-10 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-r"
+              className={`${horizontal ? "w-8 flex-shrink-0" : "absolute left-0 top-0 bottom-0 w-8 z-10"} flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-r`}
               title="이전"
             ><ChevronLeft size={16} /></button>
           )}
@@ -5822,7 +5823,7 @@ function TodoPanel({
           {onGoNext && (
             <button
               onClick={onGoNext}
-              className="absolute right-0 top-0 bottom-0 w-8 z-10 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-l"
+              className={`${horizontal ? "w-8 flex-shrink-0" : "absolute right-0 top-0 bottom-0 w-8 z-10"} flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-l`}
               title="다음"
             ><ChevronRight size={16} /></button>
           )}
@@ -5865,28 +5866,28 @@ function TodoPanel({
               {rangeDeadlines.length > 0 && (
                 <div className="mb-3 py-2 border-b border-border bg-muted/30 rounded-lg">
                   <div className="flex items-stretch">
-                    {!showDayHeader && <div className="w-12 flex-shrink-0" />}
-                    {viewDays.map((day, i) => {
+                    <div className={`flex-shrink-0 ${showDayHeader ? "w-8" : "w-12"}`} />
+                    {viewDays.map(day => {
                       const ds = toDateStr(day);
                       return (
-                        <div key={ds} className={`flex-1 min-w-0 px-2.5 space-y-1.5 ${i > 0 || !showDayHeader ? "border-l border-border" : ""}`}>
+                        <div key={ds} className="flex-1 min-w-0 px-2.5 space-y-1.5 border-l border-border">
                           {rangeDeadlines.filter(dl => dl.dueDate === ds).map(dl => renderDeadlineCard(dl, true))}
                         </div>
                       );
                     })}
+                    {showDayHeader && <div className="w-8 flex-shrink-0 border-l border-border" />}
                   </div>
                 </div>
               )}
+              {/* 양쪽 빈칸은 위 머리글의 chevron(w-8) / 시간 그리드의 시간축(w-12)과 같은 폭 — 열이 정확히 겹친다. */}
               <div className="flex items-stretch flex-1">
-                {!showDayHeader && <div className="w-12 flex-shrink-0" />}
-                {viewDays.map((day, i) => (
-                  <div
-                    key={toDateStr(day)}
-                    className={`flex-1 min-w-0 px-2.5 ${i > 0 || !showDayHeader ? "border-l border-border" : ""}`}
-                  >
+                <div className={`flex-shrink-0 ${showDayHeader ? "w-8" : "w-12"}`} />
+                {viewDays.map(day => (
+                  <div key={toDateStr(day)} className="flex-1 min-w-0 px-2.5 border-l border-border">
                     {renderDateSection(day, true, true)}
                   </div>
                 ))}
+                {showDayHeader && <div className="w-8 flex-shrink-0 border-l border-border" />}
               </div>
               </>
             ) : (
