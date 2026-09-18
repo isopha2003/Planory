@@ -5531,10 +5531,33 @@ function TodoPanel({
   };
   // 날짜 섹션 하나(헤더 + 마감/할 일 카드 + 드랍 자리 + "+ 새 할 일" 고스트).
   // compact — 주 보기의 가로 열 배치용(좁은 열에 맞춰 헤더를 짧게, 카드를 촘촘히).
-  const renderDateSection = (day: Date, compact: boolean) => {
+  // 날짜 섹션 머리글 — 날짜 + 공휴일 + (오늘) 배지 + 라인. 날짜를 누르면 그 날짜로 이동.
+  // 가로 열 배치에서는 열 본문과 떼어 맨 위 행(그룹 기준 버튼과 같은 줄)에 따로 놓는다.
+  const renderDateHeader = (day: Date, compact: boolean) => {
     const dateStr = toDateStr(day);
     const isToday = dateStr === TODAY_STR;
     const dow = day.getDay();
+    return (
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          onClick={onSelectDate ? () => onSelectDate(dateStr) : undefined}
+          title={onSelectDate ? "이 날짜로 이동" : undefined}
+          className={`text-[11px] font-semibold tracking-wide rounded px-1 -mx-1 transition-colors ${onSelectDate ? "cursor-pointer hover:bg-muted/60" : ""} ${isToday ? "text-primary" : isHoliday(dateStr) || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}
+        >
+          {compact ? `${day.getMonth() + 1}/${day.getDate()} (${DAYS_KO[dow]})` : `${day.getMonth() + 1}월 ${day.getDate()}일 (${DAYS_KO[dow]})`}
+        </span>
+        {getHoliday(dateStr) && (
+          <span className="text-[10px] font-medium text-red-400 truncate">{getHoliday(dateStr)}</span>
+        )}
+        {isToday && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground flex-shrink-0">오늘</span>}
+        <div className="flex-1 h-px bg-border/60" />
+      </div>
+    );
+  };
+
+  // hideHeader — 머리글을 바깥(상단 행)에서 따로 그릴 때.
+  const renderDateSection = (day: Date, compact: boolean, hideHeader = false) => {
+    const dateStr = toDateStr(day);
     const dayTodos = sortTodosByCategory(todos.filter(t => coversDate(t, dateStr)), categoryRankFor(dateStr));
     return (
       <div
@@ -5576,21 +5599,7 @@ function TodoPanel({
         }}
         className={`rounded-xl transition-colors ${tplHoverKey === dateStr ? "bg-primary/5" : ""}`}
       >
-        {/* 섹션 헤더 — 날짜 + (오늘) 배지 + 라인. 날짜를 누르면 그 날짜로 이동. */}
-        <div className="flex items-center gap-2 mb-2">
-          <span
-            onClick={onSelectDate ? () => onSelectDate(dateStr) : undefined}
-            title={onSelectDate ? "이 날짜로 이동" : undefined}
-            className={`text-[11px] font-semibold tracking-wide rounded px-1 -mx-1 transition-colors ${onSelectDate ? "cursor-pointer hover:bg-muted/60" : ""} ${isToday ? "text-primary" : isHoliday(dateStr) || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}
-          >
-            {compact ? `${day.getMonth() + 1}/${day.getDate()} (${DAYS_KO[dow]})` : `${day.getMonth() + 1}월 ${day.getDate()}일 (${DAYS_KO[dow]})`}
-          </span>
-          {getHoliday(dateStr) && (
-            <span className="text-[10px] font-medium text-red-400">{getHoliday(dateStr)}</span>
-          )}
-          {isToday && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground">오늘</span>}
-          <div className="flex-1 h-px bg-border/60" />
-        </div>
+        {!hideHeader && <div className="mb-2">{renderDateHeader(day, compact)}</div>}
         <div className="space-y-2">
           {/* 마감 — 해당 날짜 섹션의 가장 상단에 카드로 노출. */}
           {/* 가로 열 배치(compact)에선 마감을 열 안에 섞지 않고 위쪽 전용 행에 따로 그린다. */}
@@ -5803,13 +5812,13 @@ function TodoPanel({
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCatDragging(false); }}
         onDrop={() => setCatDragging(false)}
       >
-        <div className={horizontal ? "w-full min-w-0 min-h-full flex flex-col" : "max-w-lg w-full mx-auto"}>
+        <div className={horizontal ? "relative w-full min-w-0 min-h-full flex flex-col" : "max-w-lg w-full mx-auto"}>
           {/* 그룹 기준 드롭다운 — 리스트 우상단. 버튼 오른쪽 끝을 카드 컬럼 오른쪽 끝에 맞춤.
                ⚠ translate 로 옮기면 새 stacking context 가 생겨 아래 카드가 드롭다운을 가림 —
                위치 조정은 transform 대신 flex 로만.
                ⚠ 부모에 space-y-6 를 두면 버튼 아래 24px 갭이 강제로 붙어 버튼이 붕 떠 보임 —
                space-y-6 는 실제 섹션 목록에만 걸고, 버튼-섹션 사이 간격은 mb-2 로 좁게. */}
-          <div className="flex justify-end mb-2">
+          <div className={horizontal && groupMode === "date" ? "absolute right-2.5 top-0 z-20" : "flex justify-end mb-2"}>
             <div className="relative" ref={sortRef}>
               <button
                 onClick={() => setSortOpen(v => !v)}
@@ -5847,6 +5856,20 @@ function TodoPanel({
                    함께 볼 때 한 선으로 이어진다. 첫 열의 왼쪽 선은 시간축(w-12) 자리와 만나는 경계이므로
                    그리드가 없는 할 일 단독 모드에서는 패널 가장자리라 생략. */
               <>
+              {/* 날짜 머리글 행 — 그룹 기준 버튼(오른쪽 위, absolute)과 같은 줄. 버튼 높이(h-7)에
+                   맞춰 세로 가운데 정렬해 두 요소가 한 줄로 읽히게 한다. 맨 오른쪽 열은 버튼과
+                   겹치지 않도록 그만큼 오른쪽 여백을 둔다. */}
+              <div className="flex items-stretch h-7 mb-2">
+                {!showDayHeader && <div className="w-12 flex-shrink-0" />}
+                {viewDays.map((day, i) => (
+                  <div
+                    key={`h:${toDateStr(day)}`}
+                    className={`flex-1 min-w-0 px-2.5 flex items-center ${i > 0 || !showDayHeader ? "border-l border-border" : ""} ${i === viewDays.length - 1 ? "pr-28" : ""}`}
+                  >
+                    <div className="flex-1 min-w-0">{renderDateHeader(day, true)}</div>
+                  </div>
+                ))}
+              </div>
               {/* 마감 전용 행 — 할 일 열과 같은 열 구조로 그 날짜 칸에 마감 카드만 놓고, 옅은 배경과
                    아래 구분선으로 할 일 영역과 확실히 구분한다. 마감이 하나도 없는 주엔 행 자체를 생략. */}
               {rangeDeadlines.length > 0 && (
@@ -5872,7 +5895,7 @@ function TodoPanel({
                     key={toDateStr(day)}
                     className={`flex-1 min-w-0 px-2.5 ${i > 0 || !showDayHeader ? "border-l border-border" : ""}`}
                   >
-                    {renderDateSection(day, true)}
+                    {renderDateSection(day, true, true)}
                   </div>
                 ))}
               </div>
