@@ -4044,7 +4044,8 @@ function CalendarSection({
            각 요일 컬럼별로 그 날짜의 마감을 남은 일수 톤으로 나열하고 D-day 배지를 붙임.
            scrollbar-gutter:stable 로 아래 스크롤 영역과 컬럼 폭을 맞춤. */}
       <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden [scrollbar-gutter:stable]">
-        <div className="w-12 flex-shrink-0 flex items-start justify-end pt-1 pr-2 text-[9px] text-muted-foreground select-none">마감</div>
+        {/* 시간축 자리만 비워 둔다 — 마감 카드의 색·D-day 배지만으로 충분히 구분돼 글자 라벨은 뺐다. */}
+        <div className="w-12 flex-shrink-0" />
         {days.map((day, i) => {
           const ds = toDateStr(day);
           const cellDeadlines = deadlines.filter(d => d.dueDate === ds);
@@ -4840,9 +4841,10 @@ function CalendarSection({
           )}
         </div>
         <div className="flex-1 flex items-center gap-2 justify-end">
-          {/* 할 일 그룹 기준(날짜별/카테고리별) — 할 일 목록이 보일 때만. 예전엔 목록 패널 안 우상단에
-               있었는데, 주 보기 가로 열 배치에서 열 머리글과 자리를 다퉈 상단 헤더로 올렸다. */}
-          {calView !== "month" && contentView !== "grid" && (
+          {/* 할 일 그룹 기준(날짜별/카테고리별) — 주 보기에서 할 일 목록이 보일 때만. 하루만 보는
+               일 보기는 묶을 날짜가 하나뿐이라 의미가 없어 숨긴다(그때는 항상 날짜별처럼 그린다).
+               예전엔 목록 패널 안 우상단에 있었는데, 가로 열 배치에서 열 머리글과 자리를 다퉈 상단으로. */}
+          {calView === "week" && contentView !== "grid" && (
             <TodoGroupModeMenu value={todoGroupMode} onChange={setTodoGroupMode} />
           )}
           {calView !== "month" && (
@@ -4920,7 +4922,7 @@ function CalendarSection({
                   viewDays={viewDays}
                   focusDate={toDateStr(viewDate)}
                   paletteColors={paletteColors}
-                  groupMode={todoGroupMode}
+                  groupMode={calView === "day" ? "date" : todoGroupMode}
                   onAdd={onAddTodo}
                   onAddTemplate={onAddTemplate}
                   onDeleteBlockTemplate={onDeleteBlockTemplate}
@@ -5861,8 +5863,7 @@ function TodoPanel({
               {/* 마감 전용 행 — 할 일 열과 같은 열 구조로 그 날짜 칸에 마감 카드만 놓고, 옅은 배경과
                    아래 구분선으로 할 일 영역과 확실히 구분한다. 마감이 하나도 없는 주엔 행 자체를 생략. */}
               {rangeDeadlines.length > 0 && (
-                <div className="mb-3 pb-2 border-b border-border bg-muted/30 rounded-lg">
-                  <div className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold tracking-wide text-muted-foreground">마감</div>
+                <div className="mb-3 py-2 border-b border-border bg-muted/30 rounded-lg">
                   <div className="flex items-stretch">
                     {!showDayHeader && <div className="w-12 flex-shrink-0" />}
                     {viewDays.map((day, i) => {
