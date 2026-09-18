@@ -5629,7 +5629,7 @@ function TodoPanel({
             onMoveTodo(todoId, dateStr);
           }
         }}
-        className={`rounded-xl transition-colors ${tplHoverKey === dateStr ? "bg-primary/5" : ""}`}
+        className={`rounded-xl transition-colors ${hideHeader ? "flex-1 min-h-0" : ""} ${tplHoverKey === dateStr ? "bg-primary/5" : ""}`}
       >
         {!hideHeader && <div className="mb-2">{renderDateHeader(day, compact)}</div>}
         <div className="space-y-2">
@@ -5867,27 +5867,29 @@ function TodoPanel({
                 <div className="mb-3 py-2 border-b border-border bg-muted/30 rounded-lg">
                   <div className="flex items-stretch">
                     <div className={`flex-shrink-0 ${showDayHeader ? "w-8" : "w-12"}`} />
-                    {viewDays.map(day => {
+                    {viewDays.map((day, i) => {
                       const ds = toDateStr(day);
                       return (
-                        <div key={ds} className="flex-1 min-w-0 px-2.5 space-y-1.5 border-l border-border">
+                        <div key={ds} className={`flex-1 min-w-0 px-2.5 space-y-1.5 ${i > 0 ? "border-l border-border" : ""}`}>
                           {rangeDeadlines.filter(dl => dl.dueDate === ds).map(dl => renderDeadlineCard(dl, true))}
                         </div>
                       );
                     })}
-                    {showDayHeader && <div className="w-8 flex-shrink-0 border-l border-border" />}
+                    {showDayHeader && <div className="w-8 flex-shrink-0" />}
                   </div>
                 </div>
               )}
               {/* 양쪽 빈칸은 위 머리글의 chevron(w-8) / 시간 그리드의 시간축(w-12)과 같은 폭 — 열이 정확히 겹친다. */}
               <div className="flex items-stretch flex-1">
                 <div className={`flex-shrink-0 ${showDayHeader ? "w-8" : "w-12"}`} />
-                {viewDays.map(day => (
-                  <div key={toDateStr(day)} className="flex-1 min-w-0 px-2.5 border-l border-border">
+                {viewDays.map((day, i) => (
+                  /* 요일 사이에만 선을 긋는다 — 맨 왼쪽·오른쪽 가장자리 선은 패널 테두리와 겹쳐 보여 생략.
+                     열을 세로 flex 로 두어 섹션이 열 높이를 다 채우게 함(아래 빈 공간 hover 도 "+ 새 할 일"). */
+                  <div key={toDateStr(day)} className={`flex-1 min-w-0 px-2.5 flex flex-col ${i > 0 ? "border-l border-border" : ""}`}>
                     {renderDateSection(day, true, true)}
                   </div>
                 ))}
-                {showDayHeader && <div className="w-8 flex-shrink-0 border-l border-border" />}
+                {showDayHeader && <div className="w-8 flex-shrink-0" />}
               </div>
               </>
             ) : (
