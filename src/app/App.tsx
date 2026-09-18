@@ -9247,6 +9247,16 @@ function NoteEditor({
       // 이 앱이 엔터 한 번을 줄바꿈으로 치기 때문(remarkBreaks) — 빈 줄이 없어도 이미지는
       // 제 줄에 그려진다. 넣어 두면 쓰지도 않은 빈 줄이 원본 위아래에 남는다.
       const snippet = refs.map(r => imageMarkdown(r)).join("\n");
+      // textarea 가 아직 살아 있으면 Tab 들여쓰기와 같은 경로(execCommand)로 넣는다 — 그래야
+      // 붙여넣은 이미지가 브라우저 실행취소 기록에 남아 Ctrl+Z 로 되돌릴 수 있다. 예전엔
+      // setContent 로 값을 통째로 바꿔서 실행취소 스택이 끊겼고, Ctrl+Z 를 눌러도 이미지가
+      // 사라지지 않았다. (applyTextareaEdit 은 input 이벤트를 일으켜 content 도 같이 갱신됨.)
+      const live = mdSrcRef.current;
+      if (live) {
+        const pos = at === null || at > live.value.length ? live.value.length : at;
+        applyTextareaEdit(live, pos, pos, snippet, pos + snippet.length, pos + snippet.length);
+        return;
+      }
       setContent(prev => {
         const pos = at === null || at > prev.length ? prev.length : at;
         return prev.slice(0, pos) + snippet + prev.slice(pos);
