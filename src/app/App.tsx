@@ -67,6 +67,7 @@ import { notifyError } from "../lib/notify";
 import { getHoliday, isHoliday } from "../lib/holidays";
 import { Toaster } from "./components/ui/sonner";
 import { emit, listen } from "@tauri-apps/api/event";
+import { register as registerGlobalShortcut, unregister as unregisterGlobalShortcut } from "@tauri-apps/plugin-global-shortcut";
 import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { useTimerWindow } from "./useTimerWindow";
 
@@ -249,6 +250,11 @@ let TODAY_STR = toDateStr(new Date());
 // 실행 중인 타이머 세션의 생존 신호를 남기는 주기. 앱이 비정상 종료되면 세션은 마지막
 // 신호 시각으로 마감되므로, 이 값이 곧 최대 오차이자 DB 쓰기 빈도의 트레이드오프.
 const TIMER_HEARTBEAT_MS = 15000;
+
+// 다른 앱에서도 타이머를 켜고 끄는 시스템 전역 단축키. 앱 안에서는 Ctrl+Space.
+// Ctrl+Alt+Space 는 Windows 에서 다른 프로그램(IME 등)이 선점하고 있어 등록이 안 되는 경우가 있어
+// Ctrl+Alt+P(Planory) 를 쓴다. 이클립스 등 IDE 의 기본 단축키와도 겹치지 않는 조합.
+const TIMER_GLOBAL_SHORTCUT = "CommandOrControl+Alt+P";
 
 const fmt2 = (n: number) => String(n).padStart(2, "0");
 const fmtTime = (h: number, m: number) => `${fmt2(h)}:${fmt2(m)}`;
@@ -852,13 +858,62 @@ export default function App() {
   const endSessionRef = useRef<((reason: "manual" | "auto") => void) | undefined>(undefined);
   startSessionRef.current = startSession;
   endSessionRef.current = endSession;
+  // "toggle" 은 키보드 단축키용 — 돌고 있으면 정지, 아니면(정지·자동 일시정지) 시작.
+  const toggleTimerRef = useRef<() => void>(() => {});
+  toggleTimerRef.current = () => {
+    if (timerState === "running") endSession("manual");
+    else startSession();
+  };
   useEffect(() => {
-    const unlisten = listen<{ type: "start" | "stop" }>("timer:action", (e) => {
+    const unlisten = listen<{ type: "start" | "stop" | "toggle" }>("timer:action", (e) => {
       if (e.payload.type === "start") startSessionRef.current?.();
+      else if (e.payload.type === "toggle") toggleTimerRef.current();
       else endSessionRef.current?.("manual");
     });
     return () => { unlisten.then(fn => fn()); };
   }, []);
+
+  // 키보드로 타이머 시작/정지.
+  //  - 앱 안: Ctrl+Space. 입력 필드 안에서도 동작한다 — 글자를 넣는 조합이 아니라서
+  //    타이핑을 방해하지 않고, 메모를 쓰다가도 손을 떼지 않고 타이머를 켜고 끌 수 있다.
+  //  - 시스템 전역: Ctrl+Alt+P (macOS 는 ⌘+Alt+P). 다른 앱에서 작업 중에도 통한다.
+  //    앱 안에서 Ctrl+Alt+P 를 누르면 전역 단축키가 먼저 잡으므로 앱 핸들러는 Alt 조합을
+  //    무시해 두 번 토글되지 않게 한다.
+  //    등록 실패(다른 프로그램이 선점 등)는 조용히 넘긴다 — 앱 안 단축키는 그대로 쓸 수 있다.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return;
+      if (e.code !== "Space" && e.key !== " ") return;
+      e.preventDefault();
+      toggleTimerRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    let registered = false;
+    (async () => {
+      // 같은 조합이 이 프로세스에 이미 걸려 있으면(개발 중 페이지 새로고침 등) 먼저 풀고 다시 건다 —
+      // 안 풀면 "already registered" 로 실패하고, 옛 핸들러는 사라진 페이지를 가리켜 아무 일도 안 한다.
+      await unregisterGlobalShortcut(TIMER_GLOBAL_SHORTCUT).catch(() => {});
+      if (cancelled) return;
+      try {
+        await registerGlobalShortcut(TIMER_GLOBAL_SHORTCUT, (ev) => {
+          if (ev.state === "Pressed") toggleTimerRef.current();
+        });
+        registered = true;
+      } catch (e) {
+        // 다른 프로그램이 같은 조합을 선점했을 때가 대부분 — 앱 안 단축키(Ctrl+Space)는 그대로 쓸 수 있다.
+        notifyError("전역 타이머 단축키(Ctrl+Alt+P) 등록 실패")(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (registered) unregisterGlobalShortcut(TIMER_GLOBAL_SHORTCUT).catch(() => {});
+    };
+  }, [loading]);
 
   // 자정 롤오버 — 탭을 안 닫고 자정을 넘기면 TODAY_STR이 그대로 어제로 남아있던 버그.
   // 30초마다 실제 날짜와 비교해서, 바뀌었으면 (1) 실행 중이던 세션을 어제 날짜로 마감하고
@@ -2632,7 +2687,7 @@ function GlobalTimer({
           {isStopped && (
             <button
               onClick={onStart}
-              title="타이머 시작"
+              title="타이머 시작 (Ctrl+Space · 어디서든 Ctrl+Alt+P)"
               className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-sky-600 text-white text-xs font-medium hover:bg-sky-700 transition-colors"
             >
               <Play size={11} fill="white" /> 시작
@@ -2641,7 +2696,7 @@ function GlobalTimer({
           {isRunning && (
             <button
               onClick={onManualStop}
-              title="정지"
+              title="정지 (Ctrl+Space · 어디서든 Ctrl+Alt+P)"
               className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"
             >
               <Pause size={14} fill="currentColor" />
@@ -2651,7 +2706,7 @@ function GlobalTimer({
             <>
               <button
                 onClick={onStart}
-                title="재시작"
+                title="재시작 (Ctrl+Space · 어디서든 Ctrl+Alt+P)"
                 className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-sky-600 text-white text-xs font-medium hover:bg-sky-700 transition-colors"
               >
                 <Play size={11} fill="white" /> 재시작

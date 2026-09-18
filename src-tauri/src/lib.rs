@@ -8,6 +8,8 @@ pub fn run() {
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_opener::init())
+    // 다른 앱을 쓰는 중에도 타이머를 시작/정지할 수 있는 시스템 전역 단축키(등록은 JS 쪽).
+    .plugin(tauri_plugin_global_shortcut::Builder::new().build())
     .setup(|app| {
       // macOS 전용: 창 생성 시점의 maximized:true 대신 webview 가 붙은 뒤 최대화한다.
       // decorations:false 인 macOS 창은 borderless NSWindow 라 생성 시점에 지정한 최대화
