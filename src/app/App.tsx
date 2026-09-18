@@ -902,6 +902,11 @@ export default function App() {
   // Calendar UI state
   const [calView, setCalView] = useState<"day" | "week" | "month">("week");
 
+  // 메모 탭을 처음 연 뒤로는 계속 마운트해 둔다(숨김 전환만). 앱 시작 때부터 마운트하지 않는
+  // 이유는 메모를 안 쓰는 세션에서 굳이 노트 전체를 읽어올 필요가 없어서.
+  const [memoMounted, setMemoMounted] = useState(false);
+  useEffect(() => { if (section === "memo") setMemoMounted(true); }, [section]);
+
   useEffect(() => {
     if (timerState !== "running") return;
     const id = setInterval(() => {
@@ -2242,12 +2247,19 @@ export default function App() {
               focusSecByDate={focusSecByDate}
             />
           )}
-          {section === "memo" && (
-            <MemoSection
-              paletteColors={paletteColors}
-              onAddPaletteColor={addPaletteColor}
-              onRemovePaletteColor={removePaletteColor}
-            />
+          {/* 메모는 한 번 들어가면 언마운트하지 않고 숨기기만 한다 — 다른 탭에 갔다 와도 보던
+               메모·편집 중이던(아직 저장 안 한) 내용·스크롤 위치가 그대로 남는다. 예전엔 탭을
+               옮기는 순간 편집기가 통째로 사라져서 쓰다 만 글이 날아갔다.
+               display:contents 래퍼라 보일 때는 레이아웃에 영향이 없고, 숨길 때만 display:none. */}
+          {memoMounted && (
+            <div className={section === "memo" ? "contents" : "hidden"}>
+              <MemoSection
+                active={section === "memo"}
+                paletteColors={paletteColors}
+                onAddPaletteColor={addPaletteColor}
+                onRemovePaletteColor={removePaletteColor}
+              />
+            </div>
           )}
           {section === "settings" && (
             <SettingsSection
@@ -7418,8 +7430,11 @@ function flattenFolderTree(folders: NoteFolder[], parentId: string | null = null
 }
 
 function MemoSection({
-  paletteColors, onAddPaletteColor, onRemovePaletteColor,
+  active, paletteColors, onAddPaletteColor, onRemovePaletteColor,
 }: {
+  // 지금 화면에 보이는지. 숨겨진 채로도 마운트가 유지되므로, 전역 단축키(Ctrl+S 등)는
+  // 보일 때만 반응해야 한다 — 안 그러면 다른 탭에서 누른 Ctrl+S 가 메모를 저장해 버린다.
+  active: boolean;
   paletteColors: string[];
   onAddPaletteColor: (color: string) => void;
   onRemovePaletteColor: (color: string) => void;
@@ -7469,6 +7484,7 @@ function MemoSection({
   if (editingNote) {
     return (
       <NoteEditor
+        active={active}
         note={editingNote}
         folders={folders}
         allCategories={Array.from(new Set(notes.map(n => n.category).filter(Boolean)))}
@@ -9094,8 +9110,9 @@ function RichToolbar({ editor }: { editor: Editor }) {
 
 // ── 메모 편집기 뷰 (생성·수정 공용) ─────────────────────────────────
 function NoteEditor({
-  note, folders, allCategories, onBack, onChangeLocal,
+  active, note, folders, allCategories, onBack, onChangeLocal,
 }: {
+  active: boolean;
   note: Note;
   folders: NoteFolder[];
   allCategories: string[];
@@ -9356,8 +9373,12 @@ function NoteEditor({
   // title/content 를 붙든 채로 굳어서, 한참 쓴 뒤에 Ctrl+S 를 누르면 처음 상태가 저장된다.
   const saveInPlaceRef = useRef(saveInPlace);
   saveInPlaceRef.current = saveInPlace;
+  // 메모 탭이 숨겨져 있는 동안(다른 탭)에는 반응하지 않는다 — 편집기는 마운트된 채 남아 있으므로.
+  const activeRef = useRef(active);
+  activeRef.current = active;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!activeRef.current) return;
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
       if (e.key.toLowerCase() !== "s") return;
       e.preventDefault();
