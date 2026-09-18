@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Play, Pause, X } from "lucide-react";
 import { emit, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type TimerState, fmtSec } from "../lib/timer";
-import { TIMER_WIN_DEFAULT, TIMER_WIN_MIN } from "./useTimerWindow";
+import { TIMER_WIN_DEFAULT } from "./useTimerWindow";
 
 // 뜬 타이머 창(src-tauri가 별도 webview로 띄움)의 내용물. 메인 창과는 별개 프로세스의
 // 별도 document라 상태를 직접 공유할 수 없어 Tauri 이벤트로만 주고받음 — 메인 창이
@@ -18,23 +18,31 @@ type TimerStatePayload = {
   pomPhaseRemainSec?: number;
 };
 
-// 창 크기에 맞춰 내용물을 통째로 확대/축소한다.
+// 창 크기에 맞춰 내용물을 통째로 확대/축소한다 — 창은 가로·세로 자유롭게 바꿀 수 있다.
 //
-// 기본 크기(260×120)를 기준 레이아웃으로 두고, 창이 커지거나 작아지면 그 비율만큼
-// transform:scale 로 키운다. 글자·버튼·간격이 모두 같은 비율로 따라오므로 어떤 크기에서도
-// 배치가 그대로다. 가로·세로 비율이 기준과 다르면 작은 쪽에 맞추고 남는 쪽은 여백.
-function useContentScale() {
-  const calc = () => Math.max(0.3, Math.min(
-    window.innerWidth / TIMER_WIN_DEFAULT.width,
-    window.innerHeight / TIMER_WIN_DEFAULT.height,
-  ));
-  const [scale, setScale] = useState(calc);
+// 기준 레이아웃 두 가지를 두고, 지금 창 모양에서 더 크게 들어가는 쪽을 고른다:
+//  - stack(260×120): 시간 위, 버튼 아래. 기본 모양·세로로 긴 창.
+//  - row(340×64): 시간과 버튼을 나란히. 가로로 납작하게 늘인 창.
+// 고른 레이아웃을 창에 딱 들어가는 배율로 transform:scale 해서 글자·버튼·간격이 같은 비율로
+// 따라온다. 비율이 기준과 다르면 작은 쪽에 맞추고 남는 쪽은 여백 — 창 비율을 강제로 맞추진 않는다.
+const STACK = { width: TIMER_WIN_DEFAULT.width, height: TIMER_WIN_DEFAULT.height };
+const ROW = { width: 340, height: 64 };
+function useContentLayout() {
+  const calc = () => {
+    const w = window.innerWidth, h = window.innerHeight;
+    const stack = Math.min(w / STACK.width, h / STACK.height);
+    const row = Math.min(w / ROW.width, h / ROW.height);
+    return row > stack
+      ? { layout: "row" as const, scale: Math.max(0.3, row) }
+      : { layout: "stack" as const, scale: Math.max(0.3, stack) };
+  };
+  const [state, setState] = useState(calc);
   useEffect(() => {
-    const onResize = () => setScale(calc());
+    const onResize = () => setState(calc());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  return scale;
+  return state;
 }
 
 export default function TimerWindow() {
@@ -46,7 +54,7 @@ export default function TimerWindow() {
   // 메인 창에서 첫 상태를 받았는지. 받기 전에는 00:00 대신 --:-- 를 보여준다 —
   // 0초라고 단정해 버리면 "오늘 공부한 시간이 초기화됐다" 로 잘못 읽힌다.
   const [synced, setSynced] = useState(false);
-  const scale = useContentScale();
+  const { layout, scale } = useContentLayout();
 
   // 메인 창은 상태가 바뀔 때만 "timer:state" 를 쏘기 때문에, 타이머가 멈춰 있으면
   // 이 창을 띄워도 한동안(= 다음 변화까지) 아무 것도 오지 않아 00:00 이 그대로 남았다.
@@ -82,42 +90,6 @@ export default function TimerWindow() {
     return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
-  // 창 비율을 기본 크기(260×120)와 같게 유지한다.
-  //
-  // 내용물은 창에 맞춰 비례 확대되므로, 가로·세로를 따로 늘리면 한쪽에만 빈 여백이 생겨
-  // 커다란 창 한가운데 작은 타이머가 떠 있는 모양이 됐다. 크기 조절이 멈춘 직후(250ms 디바운스)
-  // "사용자가 바꾼 쪽"(직전 안정 크기 대비 더 많이 달라진 축)을 기준으로 다른 쪽을 맞춘다.
-  // 가로만 줄이면 세로가 따라 줄고, 세로만 늘리면 가로가 따라 는다 — 어느 축을 끌든 그 뜻대로.
-  // (예전엔 "더 큰 쪽" 기준이라 한 축을 줄이면 다른 축이 이겨서 도로 커져 버렸다.)
-  // Tauri 창에는 비율 고정 옵션이 없어 이렇게 처리.
-  useEffect(() => {
-    const win = getCurrentWindow();
-    let timer: number | undefined;
-    const ratio = TIMER_WIN_DEFAULT.height / TIMER_WIN_DEFAULT.width;
-    // 마지막으로 비율이 맞아 있던 크기 — 어느 축이 바뀌었는지 판단하는 기준.
-    let stable: { width: number; height: number } | null = null;
-    const snap = async () => {
-      try {
-        const scale = await win.scaleFactor();
-        const size = (await win.innerSize()).toLogical(scale);
-        const base = stable ?? { width: size.width, height: size.height };
-        const dw = Math.abs(size.width - base.width);
-        const dh = Math.abs(size.height - base.height);
-        // 세로를 더 많이 바꿨으면 세로 기준, 아니면 가로 기준.
-        let width = dh > dw ? size.height / ratio : size.width;
-        width = Math.round(Math.max(width, TIMER_WIN_MIN.width));
-        const height = Math.round(width * ratio);
-        stable = { width, height };
-        if (Math.abs(width - size.width) > 1 || Math.abs(height - size.height) > 1) {
-          await win.setSize(new LogicalSize(width, height));
-        }
-      } catch {}
-    };
-    // 처음 한 번은 지금 크기를 기준으로 잡아 둔다(저장된 크기로 열렸을 때 등).
-    snap();
-    const unlisten = win.onResized(() => { window.clearTimeout(timer); timer = window.setTimeout(snap, 250); });
-    return () => { window.clearTimeout(timer); unlisten.then(fn => fn()).catch(() => {}); };
-  }, []);
 
   // Ctrl+Space — 이 창에 포커스가 있을 때 시작/정지 토글. 메인 창과 같은 단축키.
   // 실제 시작/정지 판단은 메인 창이 하므로 여기서는 "toggle" 만 보낸다.
@@ -157,21 +129,26 @@ export default function TimerWindow() {
         isBreak ? "bg-indigo-50" : isRunning ? "bg-sky-50" : isAutoPaused ? "bg-amber-50" : "bg-card border border-border shadow-lg"
       } ${dimmed ? "opacity-40 hover:opacity-100" : "opacity-100"}`}
     >
+      {/* 닫기 — 창 자체의 오른쪽 위 모서리에 고정(확대/축소 대상 아님). */}
+      <button
+        onClick={closeWindow}
+        title="닫기"
+        className="absolute top-1.5 right-1.5 z-10 p-1 rounded-md hover:bg-black/10 text-muted-foreground"
+      >
+        <X size={12} />
+      </button>
+
       {/* 기준 크기의 레이아웃을 창 크기에 맞춰 통째로 확대/축소 */}
       <div
         data-tauri-drag-region
-        className="flex flex-col items-center justify-center gap-1 flex-shrink-0"
-        style={{ width: TIMER_WIN_DEFAULT.width, height: TIMER_WIN_DEFAULT.height, transform: `scale(${scale})`, transformOrigin: "center" }}
+        className={`flex items-center justify-center flex-shrink-0 ${layout === "row" ? "flex-row gap-4" : "flex-col gap-1"}`}
+        style={{
+          width: layout === "row" ? ROW.width : STACK.width,
+          height: layout === "row" ? ROW.height : STACK.height,
+          transform: `scale(${scale})`, transformOrigin: "center",
+        }}
       >
-        <button
-          onClick={closeWindow}
-          title="닫기"
-          className="absolute top-1.5 right-1.5 p-1 rounded-md hover:bg-black/10 text-muted-foreground"
-        >
-          <X size={12} />
-        </button>
-
-        {pomodoroOn && isRunning && (
+        {pomodoroOn && isRunning && layout === "stack" && (
           <div className={`text-[10px] font-medium tabular-nums ${isBreak ? "text-indigo-700" : "text-sky-700"}`}>
             {isBreak ? "휴식" : "집중"} · {fmtSec(pomPhaseRemainSec)}
           </div>
@@ -184,6 +161,12 @@ export default function TimerWindow() {
           }`}
         >
           {synced ? fmtSec(timerSec) : "--:--"}
+          {/* 가로 배치에선 뽀모도로 남은 시간을 시간 옆에 작게 붙인다(위에 놓을 줄이 없음). */}
+          {pomodoroOn && isRunning && layout === "row" && (
+            <span className={`ml-2 text-[10px] font-medium align-middle ${isBreak ? "text-indigo-700" : "text-sky-700"}`}>
+              {isBreak ? "휴식" : "집중"} {fmtSec(pomPhaseRemainSec)}
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           {timerState === "stopped" && (
