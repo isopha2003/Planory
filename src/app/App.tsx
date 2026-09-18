@@ -1285,6 +1285,32 @@ export default function App() {
     setSelectedBlock(null);
   };
 
+  // 주간 반복에서 기준 항목의 요일이 새 규칙의 요일 목록에 없으면, 가장 가까운 선택 요일로
+  // 옮긴 날짜를 돌려준다(그 외에는 원래 날짜 그대로).
+  //
+  // 예전엔 "월요일 반복 → 화요일 반복" 으로 바꾸면 이후 인스턴스만 화요일로 옮겨지고, 정작
+  // 사용자가 눌러서 수정한 블록은 월요일에 그대로 남았다. 규칙을 바꿨는데 그 블록만 규칙에
+  // 어긋나는 요일에 홀로 남으니 사용자 입장에선 "안 옮겨졌다" 로 보였음.
+  //
+  // 앞·뒤 거리가 같으면 앞(미래)쪽을 고른다 — 지나간 날짜로 되돌리는 것보다 자연스럽다.
+  const alignDateToWeeklyDays = (dateStr: string, repeat: BlockRepeat): string => {
+    if (repeat.type !== "weekly" || repeat.days.length === 0) return dateStr;
+    const d = parseLocalDate(dateStr);
+    const dow = d.getDay();
+    if (repeat.days.includes(dow)) return dateStr;
+    let best = 0;
+    let bestDist = Infinity;
+    for (const day of repeat.days) {
+      const fwd = (day - dow + 7) % 7;
+      const back = (dow - day + 7) % 7;
+      const dist = Math.min(fwd, back);
+      const delta = fwd <= back ? fwd : -back;
+      if (dist < bestDist || (dist === bestDist && delta > best)) { bestDist = dist; best = delta; }
+    }
+    d.setDate(d.getDate() + best);
+    return toDateStr(d);
+  };
+
   // 반복 규칙이 만들어내는 미래 날짜 목록(원본 날짜 제외) — 블록/할 일이 공유.
   // 종료 조건별 상한:
   //  - count: 요청한 횟수를 정확히 채우도록 (monthly/yearly 는 없는 날짜를 건너뛰므로 여유분 포함)
@@ -1378,11 +1404,15 @@ export default function App() {
     // 위에 겹쳐 쌓였음(매일 → 매주 월 로 바꿔도 변화가 없어 보이고, 다시 매일로 되돌리면
     // 같은 블록이 두 벌씩 생김).
     const groupId = block.repeatGroupId ?? `rg-${id}`;
+    // 주간 규칙의 요일에 기준 블록이 어긋나면 기준 블록부터 가장 가까운 선택 요일로 옮긴다.
+    // overrides 에 날짜가 있으면 그 날짜를 기준으로 맞춘다(상세 패널에서 날짜와 반복을 함께 고친 경우).
+    const alignedDate = alignDateToWeeklyDays(overrides?.date ?? block.date, repeat);
+    const effectiveOverrides: Partial<Block> = alignedDate !== block.date ? { ...overrides, date: alignedDate } : { ...overrides };
     // 규칙 재적용은 이 블록 날짜 이후에만 영향 — 지나간 인스턴스는 기록이라 그대로 둠.
     // 같은 저장에서 날짜를 앞당겼다면 새 날짜부터 훑어야 함 — 옛 날짜만 기준으로 잡으면
     // 새 날짜~옛 날짜 사이에 남아 있던 기존 인스턴스가 정리되지 않아 그 구간이 겹쳐 보인다.
-    const fromDate = overrides?.date && overrides.date < block.date ? overrides.date : block.date;
-    const updated = { ...block, ...overrides, repeat, repeatGroupId: groupId };
+    const fromDate = alignedDate < block.date ? alignedDate : block.date;
+    const updated = { ...block, ...effectiveOverrides, repeat, repeatGroupId: groupId };
     const instances = generateRepeatInstances(updated, repeat);
 
     // optimistic: show immediately with temp ids, then reconcile against the DB
@@ -1390,10 +1420,12 @@ export default function App() {
       const filtered = bs.filter(b => !(b.repeatGroupId === groupId && b.date >= fromDate && b.id !== id));
       return [...filtered.map(b => (b.id === id ? updated : b)), ...instances];
     });
+    // 상세 패널이 열려 있으면 옮겨진 날짜·규칙을 바로 반영 — 안 그러면 패널은 옛 날짜를 보여준다.
+    setSelectedBlock(prev => (prev?.id === id ? { ...prev, ...effectiveOverrides, repeat, repeatGroupId: groupId } : prev));
 
     (async () => {
       try {
-        await patchBlock(id, { ...overrides, repeat, repeatGroupId: groupId });
+        await patchBlock(id, { ...effectiveOverrides, repeat, repeatGroupId: groupId });
         // 재저장 시 이전 규칙으로 만든 인스턴스가 DB에 남아있으면 새/구가 섞이므로 먼저 정리.
         // 기준 블록은 유지하고 그 날짜 이후의 그룹 인스턴스만 삭제한 뒤 새 인스턴스를 insert.
         await deleteRepeatInstancesFrom(groupId, fromDate, id);
@@ -1758,18 +1790,32 @@ export default function App() {
     if (!todo) return;
     // setBlockRepeat 과 같은 이유로 기존 그룹을 재사용하고, 이 할 일 날짜 이후에만 반영.
     const groupId = todo.repeatGroupId ?? `trg-${id}`;
+    // setBlockRepeat 과 같은 이유로 기준 할 일도 새 규칙의 요일로 옮긴다. 기간 할 일(endDate)은
+    // 같은 길이만큼 함께 밀어서 기간이 깨지지 않게 한다.
+    const baseDate = overrides?.date ?? todo.date;
+    const alignedDate = alignDateToWeeklyDays(baseDate, repeat);
+    const effectiveOverrides: Partial<Todo> = { ...overrides };
+    if (alignedDate !== baseDate) {
+      effectiveOverrides.date = alignedDate;
+      const baseEnd = overrides?.endDate !== undefined ? overrides.endDate : todo.endDate;
+      if (baseEnd) {
+        const span = Math.round((parseLocalDate(baseEnd).getTime() - parseLocalDate(baseDate).getTime()) / 86400000);
+        const e = parseLocalDate(alignedDate); e.setDate(e.getDate() + Math.max(0, span));
+        effectiveOverrides.endDate = toDateStr(e);
+      }
+    }
     // setBlockRepeat 과 같은 이유로, 날짜를 앞당긴 저장이면 새 날짜부터 정리한다.
-    const fromDate = overrides?.date && overrides.date < todo.date ? overrides.date : todo.date;
-    const updated = { ...todo, ...overrides, repeat, repeatGroupId: groupId };
+    const fromDate = alignedDate < todo.date ? alignedDate : todo.date;
+    const updated = { ...todo, ...effectiveOverrides, repeat, repeatGroupId: groupId };
     const instances = generateTodoRepeatInstances(updated, repeat);
     setTodos(ts => {
       const filtered = ts.filter(t => !(t.repeatGroupId === groupId && t.date >= fromDate && t.id !== id));
       return [...filtered.map(t => (t.id === id ? updated : t)), ...instances];
     });
-    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, ...overrides, repeat, repeatGroupId: groupId } : prev));
+    setSelectedTodo(prev => (prev && prev.id === id ? { ...prev, ...effectiveOverrides, repeat, repeatGroupId: groupId } : prev));
     (async () => {
       try {
-        await updateTodo(id, { ...overrides, repeat, repeatGroupId: groupId });
+        await updateTodo(id, { ...effectiveOverrides, repeat, repeatGroupId: groupId });
         // 규칙 재적용 시 이전 규칙의 인스턴스가 남으면 새/구가 섞이므로 정리 후 재삽입.
         await deleteTodoRepeatInstancesFrom(groupId, fromDate, id);
         if (instances.length) {
