@@ -5870,7 +5870,7 @@ function TodoPanel({
                     {viewDays.map((day, i) => {
                       const ds = toDateStr(day);
                       return (
-                        <div key={ds} className={`flex-1 min-w-0 px-2.5 space-y-1.5 ${i > 0 ? "border-l border-border" : ""}`}>
+                        <div key={ds} className={`flex-1 min-w-0 px-2.5 space-y-1.5 border-l border-border ${i === viewDays.length - 1 ? "border-r" : ""}`}>
                           {rangeDeadlines.filter(dl => dl.dueDate === ds).map(dl => renderDeadlineCard(dl, true))}
                         </div>
                       );
@@ -5883,9 +5883,9 @@ function TodoPanel({
               <div className="flex items-stretch flex-1">
                 <div className={`flex-shrink-0 ${showDayHeader ? "w-8" : "w-12"}`} />
                 {viewDays.map((day, i) => (
-                  /* 요일 사이에만 선을 긋는다 — 맨 왼쪽·오른쪽 가장자리 선은 패널 테두리와 겹쳐 보여 생략.
+                  /* 열마다 왼쪽 선, 마지막 열은 오른쪽 선까지 — 일곱 열이 모두 양쪽 선으로 둘러싸인다.
                      열을 세로 flex 로 두어 섹션이 열 높이를 다 채우게 함(아래 빈 공간 hover 도 "+ 새 할 일"). */
-                  <div key={toDateStr(day)} className={`flex-1 min-w-0 px-2.5 flex flex-col ${i > 0 ? "border-l border-border" : ""}`}>
+                  <div key={toDateStr(day)} className={`flex-1 min-w-0 px-2.5 flex flex-col border-l border-border ${i === viewDays.length - 1 ? "border-r" : ""}`}>
                     {renderDateSection(day, true, true)}
                   </div>
                 ))}
