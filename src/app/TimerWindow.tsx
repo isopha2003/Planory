@@ -86,25 +86,35 @@ export default function TimerWindow() {
   //
   // 내용물은 창에 맞춰 비례 확대되므로, 가로·세로를 따로 늘리면 한쪽에만 빈 여백이 생겨
   // 커다란 창 한가운데 작은 타이머가 떠 있는 모양이 됐다. 크기 조절이 멈춘 직후(250ms 디바운스)
-  // 더 많이 늘어난 쪽 기준으로 다른 쪽을 맞춰 준다 — 어느 방향으로 끌어도 창이 커지고,
-  // 손을 떼면 비율이 바로 돌아온다. Tauri 창에는 비율 고정 옵션이 없어 이렇게 처리.
+  // "사용자가 바꾼 쪽"(직전 안정 크기 대비 더 많이 달라진 축)을 기준으로 다른 쪽을 맞춘다.
+  // 가로만 줄이면 세로가 따라 줄고, 세로만 늘리면 가로가 따라 는다 — 어느 축을 끌든 그 뜻대로.
+  // (예전엔 "더 큰 쪽" 기준이라 한 축을 줄이면 다른 축이 이겨서 도로 커져 버렸다.)
+  // Tauri 창에는 비율 고정 옵션이 없어 이렇게 처리.
   useEffect(() => {
     const win = getCurrentWindow();
     let timer: number | undefined;
     const ratio = TIMER_WIN_DEFAULT.height / TIMER_WIN_DEFAULT.width;
+    // 마지막으로 비율이 맞아 있던 크기 — 어느 축이 바뀌었는지 판단하는 기준.
+    let stable: { width: number; height: number } | null = null;
     const snap = async () => {
       try {
         const scale = await win.scaleFactor();
         const size = (await win.innerSize()).toLogical(scale);
-        const byWidth = size.width;
-        const byHeight = size.height / ratio;
-        const width = Math.round(Math.max(byWidth, byHeight, TIMER_WIN_MIN.width));
+        const base = stable ?? { width: size.width, height: size.height };
+        const dw = Math.abs(size.width - base.width);
+        const dh = Math.abs(size.height - base.height);
+        // 세로를 더 많이 바꿨으면 세로 기준, 아니면 가로 기준.
+        let width = dh > dw ? size.height / ratio : size.width;
+        width = Math.round(Math.max(width, TIMER_WIN_MIN.width));
         const height = Math.round(width * ratio);
+        stable = { width, height };
         if (Math.abs(width - size.width) > 1 || Math.abs(height - size.height) > 1) {
           await win.setSize(new LogicalSize(width, height));
         }
       } catch {}
     };
+    // 처음 한 번은 지금 크기를 기준으로 잡아 둔다(저장된 크기로 열렸을 때 등).
+    snap();
     const unlisten = win.onResized(() => { window.clearTimeout(timer); timer = window.setTimeout(snap, 250); });
     return () => { window.clearTimeout(timer); unlisten.then(fn => fn()).catch(() => {}); };
   }, []);
