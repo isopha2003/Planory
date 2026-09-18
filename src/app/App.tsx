@@ -1150,14 +1150,17 @@ export default function App() {
     // undo 는 이 홀더를 나중에 읽으므로 스냅샷이 채워지기 전에 pushUndo 해도 안전하고,
     // 등록 순서(= undo 스택 순서)도 사용자 액션 순서 그대로 유지됨.
     const checklistSnapshot: { items: ChecklistSnapshot[] } = { items: [] };
-    fetchChecklistItems(id)
+    // 체크리스트 스냅샷이 채워지고 삭제가 끝난 뒤에 undo 가 돌게 promise 를 붙잡아 둔다 —
+    // 지우자마자 Ctrl+Z 를 누르면 빈 스냅샷으로 복구돼 체크리스트가 사라졌다.
+    const deletion = fetchChecklistItems(id)
       .then(items => { checklistSnapshot.items = items; })
       .catch(() => {})
-      .finally(() => { deleteBlockRow(id).catch(notifyError("블록 삭제 실패")); });
+      .then(() => deleteBlockRow(id).catch(notifyError("블록 삭제 실패")));
     if (snapshot) {
       const holder = { id };
       pushUndo(async () => {
         try {
+          await deletion;
           const restored = await insertBlock({ ...snapshot, parentBlockId: undefined, nextBlockId: undefined, templateId: undefined });
           await insertChecklistItemsForBlock(restored.id, checklistSnapshot.items);
           holder.id = restored.id;
@@ -1369,18 +1372,18 @@ export default function App() {
     });
     // 체크리스트는 CASCADE 로 함께 사라지므로 삭제 전에 읽어 둔다(bulkDeleteBlocks 와 같은 패턴).
     const checklists: { map: Map<string, ChecklistSnapshot[]> } = { map: new Map() };
-    fetchChecklistItemsByBlocks(victims.map(v => v.id))
+    const deletion = fetchChecklistItemsByBlocks(victims.map(v => v.id))
       .then(m => { checklists.map = m; })
       .catch(() => {})
-      .finally(() => {
-        if (!groupId) deleteBlockRow(id).catch(notifyError("블록 삭제 실패"));
-        else apiDeleteRepeatGroup(groupId, fromDate).catch(notifyError("반복 블록 삭제 실패"));
-      });
+      .then(() => (!groupId
+        ? deleteBlockRow(id).catch(notifyError("블록 삭제 실패"))
+        : apiDeleteRepeatGroup(groupId, fromDate).catch(notifyError("반복 블록 삭제 실패"))));
     setSelectedBlock(null);
     if (victims.length > 0) {
       const holder = { ids: victims.map(v => v.id) };
       pushUndo(async () => {
         try {
+          await deletion;
           const restored = await insertBlocksBulk(victims.map(v => ({ ...v, parentBlockId: undefined, nextBlockId: undefined, templateId: undefined })));
           for (let i = 0; i < restored.length; i++) {
             const items = checklists.map.get(victims[i]?.id ?? "");
@@ -1520,7 +1523,8 @@ export default function App() {
     // 주간 규칙의 요일에 기준 블록이 어긋나면 기준 블록부터 가장 가까운 선택 요일로 옮긴다.
     // overrides 에 날짜가 있으면 그 날짜를 기준으로 맞춘다(상세 패널에서 날짜와 반복을 함께 고친 경우).
     const alignedDate = alignDateToWeeklyDays(overrides?.date ?? block.date, repeat);
-    const effectiveOverrides: Partial<Block> = alignedDate !== block.date ? { ...overrides, date: alignedDate } : { ...overrides };
+    const effectiveOverrides: Partial<Block> = { ...overrides };
+    if (overrides?.date !== undefined || alignedDate !== block.date) effectiveOverrides.date = alignedDate;
     // 규칙 재적용은 이 블록 날짜 이후에만 영향 — 지나간 인스턴스는 기록이라 그대로 둠.
     // 같은 저장에서 날짜를 앞당겼다면 새 날짜부터 훑어야 함 — 옛 날짜만 기준으로 잡으면
     // 새 날짜~옛 날짜 사이에 남아 있던 기존 인스턴스가 정리되지 않아 그 구간이 겹쳐 보인다.
@@ -1865,15 +1869,19 @@ export default function App() {
     setSelectedTodo(prev => (prev?.id === id ? null : prev));
     // 블록 삭제와 동일 — CASCADE 로 사라질 체크리스트를 먼저 읽어두고 undo 때 되살림.
     const checklistSnapshot: { items: ChecklistSnapshot[] } = { items: [] };
-    fetchTodoChecklistItems(id)
+    // 되돌리기는 같은 id 로 다시 INSERT 하므로, 삭제가 DB 에서 실제로 끝난 뒤에 돌아야 한다 —
+    // 지우자마자 Ctrl+Z 를 누르면 아직 남아 있는 행과 충돌해 복구가 실패하고 그 뒤 삭제가 도착해
+    // 항목이 사라지는 경합이 있었다. 삭제 promise 를 붙잡아 두고 undo 가 먼저 기다린다.
+    const deletion = fetchTodoChecklistItems(id)
       .then(items => { checklistSnapshot.items = items; })
       .catch(() => {})
-      .finally(() => { deleteTodoRow(id).catch(notifyError("todo 삭제 실패")); });
+      .then(() => deleteTodoRow(id).catch(notifyError("todo 삭제 실패")));
     if (snapshot) {
       // 되살릴 땐 원래 id·순서를 그대로 쓴다(insertTodosBulk) — 목록에서 같은 자리로 돌아온다.
       const revived: Todo = { ...snapshot, repeatGroupId: undefined, repeat: undefined };
       pushUndo(async () => {
         try {
+          await deletion;
           await insertTodosBulk([revived]);
           await insertTodoChecklistItemsForTodo(revived.id, checklistSnapshot.items);
           setTodos(ts => [...ts, revived]);
@@ -1908,14 +1916,15 @@ export default function App() {
     setSelectedTodo(prev => (prev?.id === id ? null : prev));
     // 체크리스트는 삭제와 함께 사라지므로 먼저 읽어 둔 뒤 지운다(되돌리기용).
     const checklists = new Map<string, ChecklistSnapshot[]>();
-    Promise.all(victims.map(async v => { try { checklists.set(v.id, await fetchTodoChecklistItems(v.id)); } catch {} }))
-      .finally(() => {
-        if (!groupId) deleteTodoRow(id).catch(notifyError("todo 삭제 실패"));
-        else apiDeleteTodoRepeatGroup(groupId, fromDate).catch(notifyError("반복 할 일 삭제 실패"));
-      });
+    // 같은 id 로 되살리므로 삭제가 끝난 뒤에 undo 가 돌아야 한다(deleteTodo 와 같은 이유).
+    const deletion = Promise.all(victims.map(async v => { try { checklists.set(v.id, await fetchTodoChecklistItems(v.id)); } catch {} }))
+      .then(() => (!groupId
+        ? deleteTodoRow(id).catch(notifyError("todo 삭제 실패"))
+        : apiDeleteTodoRepeatGroup(groupId, fromDate).catch(notifyError("반복 할 일 삭제 실패"))));
     if (victims.length > 0) {
       pushUndo(async () => {
         try {
+          await deletion;
           await insertTodosBulk(victims);
           for (const v of victims) {
             const items = checklists.get(v.id);
