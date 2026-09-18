@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Play, Pause, X } from "lucide-react";
 import { emit, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { type TimerState, fmtSec } from "../lib/timer";
-import { TIMER_WIN_DEFAULT } from "./useTimerWindow";
+import { TIMER_WIN_DEFAULT, TIMER_WIN_MIN } from "./useTimerWindow";
 
 // 뜬 타이머 창(src-tauri가 별도 webview로 띄움)의 내용물. 메인 창과는 별개 프로세스의
 // 별도 document라 상태를 직접 공유할 수 없어 Tauri 이벤트로만 주고받음 — 메인 창이
@@ -80,6 +80,33 @@ export default function TimerWindow() {
     const onVis = () => { if (!document.hidden) reassert(); };
     document.addEventListener("visibilitychange", onVis);
     return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+
+  // 창 비율을 기본 크기(260×120)와 같게 유지한다.
+  //
+  // 내용물은 창에 맞춰 비례 확대되므로, 가로·세로를 따로 늘리면 한쪽에만 빈 여백이 생겨
+  // 커다란 창 한가운데 작은 타이머가 떠 있는 모양이 됐다. 크기 조절이 멈춘 직후(250ms 디바운스)
+  // 더 많이 늘어난 쪽 기준으로 다른 쪽을 맞춰 준다 — 어느 방향으로 끌어도 창이 커지고,
+  // 손을 떼면 비율이 바로 돌아온다. Tauri 창에는 비율 고정 옵션이 없어 이렇게 처리.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let timer: number | undefined;
+    const ratio = TIMER_WIN_DEFAULT.height / TIMER_WIN_DEFAULT.width;
+    const snap = async () => {
+      try {
+        const scale = await win.scaleFactor();
+        const size = (await win.innerSize()).toLogical(scale);
+        const byWidth = size.width;
+        const byHeight = size.height / ratio;
+        const width = Math.round(Math.max(byWidth, byHeight, TIMER_WIN_MIN.width));
+        const height = Math.round(width * ratio);
+        if (Math.abs(width - size.width) > 1 || Math.abs(height - size.height) > 1) {
+          await win.setSize(new LogicalSize(width, height));
+        }
+      } catch {}
+    };
+    const unlisten = win.onResized(() => { window.clearTimeout(timer); timer = window.setTimeout(snap, 250); });
+    return () => { window.clearTimeout(timer); unlisten.then(fn => fn()).catch(() => {}); };
   }, []);
 
   // Ctrl+Space — 이 창에 포커스가 있을 때 시작/정지 토글. 메인 창과 같은 단축키.
