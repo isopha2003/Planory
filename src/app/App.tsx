@@ -3305,8 +3305,8 @@ function TodaySection({
                 return (
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "bg-muted/40 border-transparent opacity-60 hover:border-transparent" : "hover:brightness-[0.97]"}`}
-                    style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-60" : "hover:brightness-[0.97]"}`}
+                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
@@ -3339,8 +3339,8 @@ function TodaySection({
                 return (
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "bg-muted/40 border-transparent opacity-60 hover:border-transparent" : "hover:brightness-[0.97]"}`}
-                    style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-60" : "hover:brightness-[0.97]"}`}
+                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
@@ -3417,10 +3417,11 @@ function TodaySection({
                     className={`group/todo relative flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
                       onSelectTodo ? "cursor-pointer" : onReorderTodo ? "cursor-grab active:cursor-grabbing" : ""
                     } ${
-                      t.completed ? "bg-muted/40 border-transparent opacity-60"
-                        : dragTodoId === t.id ? "bg-card border-primary/40 opacity-50"
-                        : "bg-card border-border hover:border-primary/40"
+                      t.completed ? "opacity-60"
+                        : dragTodoId === t.id ? "opacity-50"
+                        : "hover:brightness-[0.97]"
                     }`}
+                    style={{ backgroundColor: color + "18", borderColor: color + "55" }}
                   >
                     {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
                     {dropTarget?.id === t.id && (
@@ -3491,10 +3492,9 @@ function TodaySection({
             <div
               key={block.id}
               className={`group flex items-center gap-3 px-4 py-3.5 rounded-xl border transition-all cursor-pointer ${
-                block.completed
-                  ? "bg-muted/30 border-transparent opacity-60"
-                  : "bg-card border-border hover:shadow-sm"
+                block.completed ? "opacity-60" : "hover:shadow-sm"
               }`}
+              style={{ backgroundColor: color + "18", borderColor: color + "55" }}
               onClick={() => onSelect(block)}
             >
               <button
@@ -4640,7 +4640,8 @@ function CalendarSection({
                     return (
                     <div key={t.id}
                       onClick={e => { e.stopPropagation(); onSelectTodo?.(t); }}
-                      className={`rounded border bg-card overflow-hidden text-[9px] cursor-pointer transition-all flex items-center gap-1 px-1 py-0.5 ${t.completed ? "opacity-60" : "hover:shadow-sm"}`}
+                      className={`rounded border overflow-hidden text-[9px] cursor-pointer transition-all flex items-center gap-1 px-1 py-0.5 ${t.completed ? "opacity-60" : "hover:shadow-sm"}`}
+                      style={{ backgroundColor: color + "18", borderColor: color + "55" }}
                       title={t.category ? `[${t.category}] 상세 열기` : "상세 열기"}
                     >
                       <button
@@ -5228,8 +5229,8 @@ function TodoPanel({
       <div
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
-        className={`flex items-center rounded-xl border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "bg-card opacity-60" : ""}`}
-        style={d.completed ? undefined : { backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+        className={`flex items-center rounded-xl border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "opacity-60" : ""}`}
+        style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
         title="클릭: 상세 열기"
       >
         <button
@@ -5353,13 +5354,14 @@ function TodoPanel({
           else { setEditingDraft(t.title); setEditingId(t.id); }
         }}
         onDoubleClick={e => { e.stopPropagation(); setEditingDraft(t.title); setEditingId(t.id); }}
-        className={`group/todo relative flex items-center rounded-xl border bg-card transition-all ${opts.compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${
+        className={`group/todo relative flex items-center rounded-xl border transition-all ${opts.compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${
           onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
         } ${
           t.completed ? "opacity-60"
             : dragTodoId === t.id ? "opacity-50"
             : "hover:shadow-sm"
         }`}
+        style={{ backgroundColor: color + "18", borderColor: color + "55" }}
         title="클릭: 상세 열기 · 더블클릭: 제목 편집"
       >
         {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
