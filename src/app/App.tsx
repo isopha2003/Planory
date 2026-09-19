@@ -3513,7 +3513,7 @@ function TodaySection({
               <div className="w-0.5 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
 
               <div className="flex-1 min-w-0">
-                <div className={`text-sm font-medium leading-snug ${block.completed ? "line-through text-muted-foreground" : ""}`}>
+                <div className={`text-sm font-medium leading-snug ${block.completed ? "text-muted-foreground" : ""}`}>
                   {block.title}
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5" >
@@ -4614,7 +4614,7 @@ function CalendarSection({
                           title={`${hh}:${mm} ${b.title || "제목 없음"}`}
                         >
                           <span
-                            className={`truncate leading-tight block px-1 py-0.5 font-medium ${b.completed ? "line-through" : ""}`}
+                            className="truncate leading-tight block px-1 py-0.5 font-medium"
                             style={{ color }}
                           >
                             <span className="opacity-70 mr-1">{hh}:{mm}</span>
@@ -10878,7 +10878,7 @@ function BlockDetailPanel({
             {block.completed
               ? <CheckCircle2 size={16} style={{ color }} />
               : <Circle size={16} className="text-muted-foreground" />}
-            <span className={`text-xs ${block.completed ? "text-muted-foreground line-through" : ""}`}>
+            <span className={`text-xs ${block.completed ? "text-muted-foreground" : ""}`}>
               {block.completed ? "완료됨 — 다시 열기" : "완료 처리"}
             </span>
           </button>
