@@ -3608,6 +3608,11 @@ function CalendarSection({
   const HOUR_H = 64;
   const TOTAL_H = 24;
   const gridScrollRef = useRef<HTMLDivElement>(null);
+  // 콘텐츠 모드 — grid(시간표): 주 그리드/월(블록만) 전환 가능. todos(할 일): 월 보기(할 일만) 고정.
+  // 세션 간 유지. 예전 키(cal_content_view)는 "both" 값이 있어 새 키로 시작.
+  const [contentView, setContentView] = usePersistedState<"grid" | "todos">("cal_content_mode", "grid");
+  // 실제로 그리는 뷰 — 할 일 모드는 항상 월. 이동/라벨/팝오버는 전부 이 값을 기준으로.
+  const view: "week" | "month" = contentView === "todos" ? "month" : calView;
 
   // 글씨 크기 설정이 html에 CSS zoom을 걸어 앱 전체를 스케일하는데,
   // 마우스 이벤트 좌표와 getBoundingClientRect는 시각적 viewport px로 반환되는 반면
@@ -3835,7 +3840,7 @@ function CalendarSection({
   // ⚠ 스크롤 위치는 값이 바뀌어도 리렌더가 필요 없으므로 usePersistedState 대신
   //   ref + 이벤트 리스너로 처리해 프레임당 setState 폭주를 피함.
   useEffect(() => {
-    if (calView === "month") return;
+    if (view === "month") return;
     const el = gridScrollRef.current;
     if (!el) return;
     const KEY = "cal_grid_scroll_top";
@@ -3863,7 +3868,7 @@ function CalendarSection({
       el.removeEventListener("scroll", onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [calView]);
+  }, [view]);
 
   // Resize mouse tracking — uses the local-only updater for live visual feedback on every
   // mousemove (hitting the DB that often would be wasteful); the final value is persisted
@@ -3906,13 +3911,13 @@ function CalendarSection({
   // Navigation helpers
   const goPrev = () => {
     const d = new Date(viewDate);
-    if (calView === "week") d.setDate(d.getDate() - 7);
+    if (view === "week") d.setDate(d.getDate() - 7);
     else d.setMonth(d.getMonth() - 1);
     setViewDate(d);
   };
   const goNext = () => {
     const d = new Date(viewDate);
-    if (calView === "week") d.setDate(d.getDate() + 7);
+    if (view === "week") d.setDate(d.getDate() + 7);
     else d.setMonth(d.getMonth() + 1);
     setViewDate(d);
   };
@@ -3928,7 +3933,7 @@ function CalendarSection({
 
   // 상세 날짜/요일은 아래 요일 헤더가 보여주므로 상단 라벨은 연/월만 표시.
   const headerLabel = (() => {
-    if (calView === "week") {
+    if (view === "week") {
       const s = viewDays[0], e = viewDays[6];
       if (s.getMonth() !== e.getMonth()) {
         return s.getFullYear() === e.getFullYear()
@@ -4452,7 +4457,8 @@ function CalendarSection({
   );
 
   // ── Month grid renderer ─────────────────────────────────────────
-  const renderMonthGrid = () => {
+  // mode — blocks: 시간표 모드의 월 보기(시간 블록만). todos: 할 일 모드(할 일 + 마감만).
+  const renderMonthGrid = (mode: "blocks" | "todos") => {
     const year = viewDate.getFullYear();
     const month = viewDate.getMonth();
     const firstDow = new Date(year, month, 1).getDay();
@@ -4499,28 +4505,36 @@ function CalendarSection({
             const isFuture = dateStr > TODAY_STR;
             const col = i % 7;
             const row = Math.floor(i / 7);
-            const dayDeadlines = deadlines.filter(d => d.dueDate === dateStr);
+            const dayDeadlines = mode === "todos" ? deadlines.filter(d => d.dueDate === dateStr) : [];
             // multi-day todo 는 date~endDate 범위 안에 있는 셀에도 표시. 카테고리 기준 정렬.
-            const dayTodos = sortTodosByCategory(
-              todos.filter(t => t.date === dateStr || (t.endDate && dateStr >= t.date && dateStr <= t.endDate)),
-              categoryRankFor(dateStr)
-            );
+            const dayTodos = mode === "todos"
+              ? sortTodosByCategory(
+                  todos.filter(t => t.date === dateStr || (t.endDate && dateStr >= t.date && dateStr <= t.endDate)),
+                  categoryRankFor(dateStr)
+                )
+              : [];
             // 시간표 블록 — 좁은 월 셀이 도배되지 않도록 달성률 포함(countInCompletion=true) 블록만 표시.
             // 자유시간/이동 같은 통계 제외 블록은 월 뷰에서도 감춤. 시작 시각 기준 정렬.
-            const dayBlocks = blocks
-              .filter(b => b.date === dateStr && b.countInCompletion !== false)
-              .sort((a, b) => (a.startH * 60 + a.startM) - (b.startH * 60 + b.startM));
-            const showHoverGhost = monthHoverDate === dateStr;
+            const dayBlocks = mode === "blocks"
+              ? blocks
+                  .filter(b => b.date === dateStr && b.countInCompletion !== false)
+                  .sort((a, b) => (a.startH * 60 + a.startM) - (b.startH * 60 + b.startM))
+              : [];
+            // "새 일정" hover 고스트는 할 일 모드에서만 — 블록은 시간이 필요해 주 그리드에서 만든다.
+            const showHoverGhost = mode === "todos" && monthHoverDate === dateStr;
             return (
               <div key={dateStr}
                 onMouseEnter={() => setMonthHoverDate(dateStr)}
                 onMouseLeave={() => setMonthHoverDate(prev => prev === dateStr ? null : prev)}
                 className={`min-h-0 min-w-0 overflow-hidden p-1.5 relative flex flex-col ${col!==6?"border-r border-border":""} ${row<totalRows-1?"border-b border-border":""} ${isToday?"ring-1 ring-inset ring-primary/40":""} ${isFuture?"bg-muted/5":""}`}
                 onClick={e => {
-                  // 셀 배경 직접 클릭 → 일/주 뷰와 동일하게 새 할 일 생성 + 상세 패널 오픈.
                   if (e.target !== e.currentTarget) return;
-                  onAddTodo({ title: "새 할 일", date: dateStr }, { openInline: true });
+                  // 셀 배경 직접 클릭 — 할 일 모드: 새 할 일 생성 + 상세 패널 오픈.
+                  // 시간표 모드: 그 날짜가 속한 주의 시간 그리드로 이동(블록은 거기서 만든다).
+                  if (mode === "todos") onAddTodo({ title: "새 할 일", date: dateStr }, { openInline: true });
+                  else { setViewDate(day); setCalView("week"); }
                 }}
+                title={mode === "blocks" ? "클릭: 이 주 시간표 열기" : undefined}
               >
                 <div className="flex items-center justify-start mb-1 gap-1.5 min-w-0">
                   <span
@@ -4649,14 +4663,17 @@ function CalendarSection({
       {/* Header — 3분할: 좌(뷰 세그먼트) · 중앙(날짜 라벨 양옆 chevron) · 우(리스트/그리드 + 콘텐츠 모드) */}
       <div className="flex items-center px-5 py-3 border-b border-border flex-shrink-0 bg-card/50">
         <div className="flex-1 flex items-center gap-3">
-          <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
-            {(["week","month"] as const).map(v => (
-              <button key={v} onClick={() => setCalView(v)}
-                className={`px-3 py-1 text-xs rounded-md transition-all ${calView===v?"bg-card shadow-sm font-medium":"text-muted-foreground hover:text-foreground"}`}>
-                {v==="week"?"주":"월"}
-              </button>
-            ))}
-          </div>
+          {/* 주/월 전환은 시간표 모드에서만 — 할 일 모드는 월 보기 하나뿐이라 세그먼트를 감춘다. */}
+          {contentView === "grid" && (
+            <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
+              {(["week","month"] as const).map(v => (
+                <button key={v} onClick={() => setCalView(v)}
+                  className={`px-3 py-1 text-xs rounded-md transition-all ${calView===v?"bg-card shadow-sm font-medium":"text-muted-foreground hover:text-foreground"}`}>
+                  {v==="week"?"주":"월"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {/* 중앙: 날짜 라벨. 클릭하면 연/월 점프 팝오버가 열려 화살표로 한 칸씩 옮기지 않고
              원하는 연·월로 바로 이동. 위치 계산 단순화를 위해 relative 컨테이너 안에 absolute 팝오버.
@@ -4671,12 +4688,12 @@ function CalendarSection({
               setMonthPickerOpen(v => !v);
             }}
             className="text-xs px-2 py-1 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors min-w-[180px] text-center"
-            title={calView === "month" ? "연·월 바로 이동" : calView === "week" ? "연·월·주 바로 이동" : "연·월·일 바로 이동"}
+            title={view === "month" ? "연·월 바로 이동" : view === "week" ? "연·월·주 바로 이동" : "연·월·일 바로 이동"}
           >
             {headerLabel}
           </button>
           {monthPickerOpen && (
-            <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-1 z-40 rounded-lg border border-border bg-card shadow-lg p-3 ${calView === "month" ? "w-64" : "w-72"}`}>
+            <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-1 z-40 rounded-lg border border-border bg-card shadow-lg p-3 ${view === "month" ? "w-64" : "w-72"}`}>
               {/* 연도 조절 — 화살표로 ±1, 가운데 숫자 클릭하면 올해로 리셋. */}
               <div className="flex items-center justify-between mb-3">
                 <button
@@ -4702,12 +4719,12 @@ function CalendarSection({
                 {Array.from({ length: 12 }, (_, i) => i).map(mi => {
                   const isCurrentView = monthPickerYear === viewDate.getFullYear() && mi === viewDate.getMonth();
                   const isToday = monthPickerYear === TODAY_DATE.getFullYear() && mi === TODAY_DATE.getMonth();
-                  const isPickerMonth = calView !== "month" && mi === monthPickerMonth;
+                  const isPickerMonth = view !== "month" && mi === monthPickerMonth;
                   return (
                     <button
                       key={mi}
                       onClick={() => {
-                        if (calView === "month") {
+                        if (view === "month") {
                           setViewDate(new Date(monthPickerYear, mi, 1));
                           setMonthPickerOpen(false);
                         } else {
@@ -4729,7 +4746,7 @@ function CalendarSection({
               </div>
               {/* 일/주 뷰에서만 뜨는 일 그리드 — 원하는 날짜/주로 바로 이동.
                  주 뷰에선 그 날이 포함된 주(getWeekDays) 로, 일 뷰에선 그 날로 이동. */}
-              {calView !== "month" && (() => {
+              {view !== "month" && (() => {
                 const firstDow = new Date(monthPickerYear, monthPickerMonth, 1).getDay();
                 const daysInMonth = new Date(monthPickerYear, monthPickerMonth + 1, 0).getDate();
                 const cells: Array<number | null> = [
@@ -4738,7 +4755,7 @@ function CalendarSection({
                 ];
                 while (cells.length % 7 !== 0) cells.push(null);
                 // 주 뷰에서 현재 보고 있는 주에 속한 날짜들(YYYY-MM-DD) — 강조 배경용.
-                const currentWeekDates = calView === "week"
+                const currentWeekDates = view === "week"
                   ? new Set(getWeekDays(viewDate).map(d => toDateStr(d)))
                   : new Set<string>();
                 return (
@@ -4784,17 +4801,34 @@ function CalendarSection({
               <button
                 onClick={() => { setViewDate(TODAY_DATE); setMonthPickerOpen(false); }}
                 className="mt-3 w-full px-3 py-1.5 text-xs rounded-md border border-border hover:bg-muted transition-colors"
-              >{calView === "week" ? "이번 주로 이동" : "이번 달로 이동"}</button>
+              >{view === "week" ? "이번 주로 이동" : "이번 달로 이동"}</button>
             </div>
           )}
         </div>
         <div className="flex-1 flex items-center gap-2 justify-end">
+          {/* 시간표 ↔ 할 일 모드 토글. 활성 표시는 절대 위치 인디케이터 하나가 좌우로 미끄러지는 형태. */}
+          <button
+            onClick={() => setContentView(contentView === "grid" ? "todos" : "grid")}
+            className="relative inline-flex items-center rounded-full bg-muted h-7 w-[140px] hover:bg-muted/80 transition-colors overflow-hidden"
+            title={contentView === "grid" ? "할 일 보기로 전환" : "시간표 보기로 전환"}
+          >
+            <span
+              aria-hidden
+              className="absolute top-0.5 bottom-0.5 rounded-full bg-card shadow-sm transition-[left] duration-200 ease-out"
+              style={{ width: "calc(50% - 2px)", left: contentView === "grid" ? 2 : "50%" }}
+            />
+            <span className={`relative z-10 flex-1 text-center text-[11px] transition-colors ${contentView === "grid" ? "font-medium text-foreground" : "text-muted-foreground"}`}>시간표</span>
+            <span className={`relative z-10 flex-1 text-center text-[11px] transition-colors ${contentView === "todos" ? "font-medium text-foreground" : "text-muted-foreground"}`}>할 일</span>
+          </button>
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden min-h-0">
-        {/* Content — 월은 월 그리드, 주는 시간 그리드. 할 일은 월 보기 셀과 오늘 탭에서만 다룬다. */}
-        {calView === "month" ? renderMonthGrid() : renderTimeGrid(viewDays)}
+        {/* Content — 시간표 모드: 주 = 시간 그리드, 월 = 블록만 있는 월 그리드.
+             할 일 모드: 할 일(+마감)만 있는 월 그리드. */}
+        {contentView === "todos"
+          ? renderMonthGrid("todos")
+          : view === "month" ? renderMonthGrid("blocks") : renderTimeGrid(viewDays)}
       </div>
 
       {/* 다중 선택 상태에서 우클릭 시 뜨는 컨텍스트 메뉴 — 화면 절대 좌표 위치.
