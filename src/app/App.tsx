@@ -929,7 +929,7 @@ export default function App() {
   }, []);
 
   // Calendar UI state
-  const [calView, setCalView] = useState<"week" | "month">("week");
+  const [calView, setCalView] = useState<"day" | "week" | "month">("week");
 
   // 메모 탭을 처음 연 뒤로는 계속 마운트해 둔다(숨김 전환만). 앱 시작 때부터 마운트하지 않는
   // 이유는 메모를 안 쓰는 세션에서 굳이 노트 전체를 읽어올 필요가 없어서.
@@ -2419,7 +2419,7 @@ export default function App() {
               onSelect={openBlockDetail}
               onSelectTodo={openTodoDetail}
               onSelectDeadline={openDeadlineDetail}
-              onGoToCalendar={() => { setCalendarInitialDate(todayViewDate); setSection("calendar"); }}
+              onGoToCalendar={() => { setCalendarInitialDate(todayViewDate); setCalView("day"); setSection("calendar"); }}
             />
             );
           })()}
@@ -3584,8 +3584,8 @@ function CalendarSection({
   initialDate: Date;
   // 날짜 하나를 자세히 보기 — 오늘 탭을 그 날짜로 연다(일 보기 대체).
   onOpenDay: (date: Date) => void;
-  calView: "week" | "month";
-  setCalView: (v: "week" | "month") => void;
+  calView: "day" | "week" | "month";
+  setCalView: (v: "day" | "week" | "month") => void;
   onSelect: (b: Block) => void;
   onSelectTodo?: (t: Todo) => void;
   onSelectDeadline?: (d: Deadline) => void;
@@ -3608,11 +3608,11 @@ function CalendarSection({
   const HOUR_H = 64;
   const TOTAL_H = 24;
   const gridScrollRef = useRef<HTMLDivElement>(null);
-  // 콘텐츠 모드 — grid(시간표): 주 그리드/월(블록만) 전환 가능. todos(할 일): 월 보기(할 일만) 고정.
+  // 콘텐츠 모드 — grid(시간표): 일/주 그리드, 월(블록만) 전환 가능. todos(할 일): 월 보기(할 일만) 고정.
   // 세션 간 유지. 예전 키(cal_content_view)는 "both" 값이 있어 새 키로 시작.
   const [contentView, setContentView] = usePersistedState<"grid" | "todos">("cal_content_mode", "grid");
   // 실제로 그리는 뷰 — 할 일 모드는 항상 월. 이동/라벨/팝오버는 전부 이 값을 기준으로.
-  const view: "week" | "month" = contentView === "todos" ? "month" : calView;
+  const view: "day" | "week" | "month" = contentView === "todos" ? "month" : calView;
 
   // 글씨 크기 설정이 html에 CSS zoom을 걸어 앱 전체를 스케일하는데,
   // 마우스 이벤트 좌표와 getBoundingClientRect는 시각적 viewport px로 반환되는 반면
@@ -3911,13 +3911,15 @@ function CalendarSection({
   // Navigation helpers
   const goPrev = () => {
     const d = new Date(viewDate);
-    if (view === "week") d.setDate(d.getDate() - 7);
+    if (view === "day") d.setDate(d.getDate() - 1);
+    else if (view === "week") d.setDate(d.getDate() - 7);
     else d.setMonth(d.getMonth() - 1);
     setViewDate(d);
   };
   const goNext = () => {
     const d = new Date(viewDate);
-    if (view === "week") d.setDate(d.getDate() + 7);
+    if (view === "day") d.setDate(d.getDate() + 1);
+    else if (view === "week") d.setDate(d.getDate() + 7);
     else d.setMonth(d.getMonth() + 1);
     setViewDate(d);
   };
@@ -3929,7 +3931,8 @@ function CalendarSection({
     return Array.from({ length: 7 }, (_, i) => { const d = new Date(sun); d.setDate(sun.getDate() + i); return d; });
   };
 
-  const viewDays = getWeekDays(viewDate);
+  // 시간 그리드에 그릴 날짜들 — 일 보기는 하루, 그 외엔 그 주 7일.
+  const viewDays = view === "day" ? [viewDate] : getWeekDays(viewDate);
 
   // 상세 날짜/요일은 아래 요일 헤더가 보여주므로 상단 라벨은 연/월만 표시.
   const headerLabel = (() => {
@@ -3975,8 +3978,8 @@ function CalendarSection({
             <div
               key={i}
               className="flex-1 text-center py-2 min-w-0 cursor-pointer hover:bg-muted/40 transition-colors rounded-lg"
-              onClick={() => onOpenDay(day)}
-              title={holiday ? `${holiday} — 이 날짜 자세히 보기` : "이 날짜 자세히 보기"}
+              onClick={() => { setViewDate(day); setCalView("day"); }}
+              title={holiday ? `${holiday} — 이 날짜 시간표 열기` : "이 날짜 시간표 열기"}
             >
               <div className={`text-[10px] ${holiday || (days.length > 1 && dow === 0) ? "text-red-400" : days.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
                 {DAYS_KO[dow]}
@@ -4530,11 +4533,11 @@ function CalendarSection({
                 onClick={e => {
                   if (e.target !== e.currentTarget) return;
                   // 셀 배경 직접 클릭 — 할 일 모드: 새 할 일 생성 + 상세 패널 오픈.
-                  // 시간표 모드: 그 날짜가 속한 주의 시간 그리드로 이동(블록은 거기서 만든다).
+                  // 시간표 모드: 그 날짜의 일 시간 그리드로 줌인(블록은 거기서 만든다).
                   if (mode === "todos") onAddTodo({ title: "새 할 일", date: dateStr }, { openInline: true });
-                  else { setViewDate(day); setCalView("week"); }
+                  else { setViewDate(day); setCalView("day"); }
                 }}
-                title={mode === "blocks" ? "클릭: 이 주 시간표 열기" : undefined}
+                title={mode === "blocks" ? "클릭: 이 날짜 시간표 열기" : undefined}
               >
                 <div className="flex items-center justify-start mb-1 gap-1.5 min-w-0">
                   <span
@@ -4666,10 +4669,10 @@ function CalendarSection({
           {/* 주/월 전환은 시간표 모드에서만 — 할 일 모드는 월 보기 하나뿐이라 세그먼트를 감춘다. */}
           {contentView === "grid" && (
             <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
-              {(["week","month"] as const).map(v => (
+              {(["day","week","month"] as const).map(v => (
                 <button key={v} onClick={() => setCalView(v)}
                   className={`px-3 py-1 text-xs rounded-md transition-all ${calView===v?"bg-card shadow-sm font-medium":"text-muted-foreground hover:text-foreground"}`}>
-                  {v==="week"?"주":"월"}
+                  {v==="day"?"일":v==="week"?"주":"월"}
                 </button>
               ))}
             </div>
@@ -4758,6 +4761,7 @@ function CalendarSection({
                 const currentWeekDates = view === "week"
                   ? new Set(getWeekDays(viewDate).map(d => toDateStr(d)))
                   : new Set<string>();
+                const currentDayStr = view === "day" ? toDateStr(viewDate) : "";
                 return (
                   <div className="mt-3 pt-3 border-t border-border">
                     <div className="grid grid-cols-7 gap-0.5 mb-1">
@@ -4770,7 +4774,7 @@ function CalendarSection({
                         if (!day) return <div key={`e-${idx}`} />;
                         const cellDate = new Date(monthPickerYear, monthPickerMonth, day);
                         const cellStr = toDateStr(cellDate);
-                        const isSelected = currentWeekDates.has(cellStr);
+                        const isSelected = view === "day" ? cellStr === currentDayStr : currentWeekDates.has(cellStr);
                         const isTodayCell = cellStr === TODAY_STR;
                         const col = idx % 7;
                         const holiday = isHoliday(cellStr);
@@ -4801,7 +4805,7 @@ function CalendarSection({
               <button
                 onClick={() => { setViewDate(TODAY_DATE); setMonthPickerOpen(false); }}
                 className="mt-3 w-full px-3 py-1.5 text-xs rounded-md border border-border hover:bg-muted transition-colors"
-              >{view === "week" ? "이번 주로 이동" : "이번 달로 이동"}</button>
+              >{view === "day" ? "오늘로 이동" : view === "week" ? "이번 주로 이동" : "이번 달로 이동"}</button>
             </div>
           )}
         </div>
@@ -4824,7 +4828,7 @@ function CalendarSection({
       </div>
 
       <div className="flex flex-1 overflow-hidden min-h-0">
-        {/* Content — 시간표 모드: 주 = 시간 그리드, 월 = 블록만 있는 월 그리드.
+        {/* Content — 시간표 모드: 일/주 = 시간 그리드, 월 = 블록만 있는 월 그리드.
              할 일 모드: 할 일(+마감)만 있는 월 그리드. */}
         {contentView === "todos"
           ? renderMonthGrid("todos")
