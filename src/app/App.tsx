@@ -412,6 +412,11 @@ function usePersistedState<T>(key: string, initial: T): [T, React.Dispatch<React
 // ── App ────────────────────────────────────────────────────────────
 export default function App() {
   const [section, setSection] = useState<Section>("today");
+  // 오늘 탭이 보여주는 날짜 — 기본은 오늘. 캘린더에서 날짜를 누르면 그 날짜로 바뀌고(일 보기 역할),
+  // 사이드바 "오늘" 을 누르면 다시 오늘로 돌아온다.
+  const [todayViewDate, setTodayViewDate] = useState<Date>(TODAY_DATE);
+  // 오늘 탭 → "캘린더로 이동" 시 캘린더가 열릴 날짜(보고 있던 날짜가 속한 주).
+  const [calendarInitialDate, setCalendarInitialDate] = useState<Date>(TODAY_DATE);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -931,7 +936,7 @@ export default function App() {
   }, []);
 
   // Calendar UI state
-  const [calView, setCalView] = useState<"day" | "week" | "month">("week");
+  const [calView, setCalView] = useState<"week" | "month">("week");
 
   // 메모 탭을 처음 연 뒤로는 계속 마운트해 둔다(숨김 전환만). 앱 시작 때부터 마운트하지 않는
   // 이유는 메모를 안 쓰는 세션에서 굳이 노트 전체를 읽어올 필요가 없어서.
@@ -2385,7 +2390,7 @@ export default function App() {
             {navItems.map(({ id, label, Icon }) => (
               <button
                 key={id}
-                onClick={() => setSection(id)}
+                onClick={() => { if (id === "today") setTodayViewDate(TODAY_DATE); setSection(id); }}
                 title={label}
                 className={`flex items-center justify-center lg:justify-start gap-2.5 px-2 lg:px-3 py-2.5 rounded-lg text-sm transition-all ${
                   section === id
@@ -2402,19 +2407,22 @@ export default function App() {
 
         {/* Main content */}
         <main className="flex-1 overflow-hidden flex min-w-0">
-          {section === "today" && (
+          {section === "today" && (() => {
+            const viewStr = toDateStr(todayViewDate);
+            return (
             <TodaySection
-              // 오늘 달성률에 포함되지 않은(countInCompletion=false) 항목은 오늘 탭에서 아예 숨김.
+              viewDate={todayViewDate}
+              onChangeDate={setTodayViewDate}
+              // 달성률에 포함되지 않은(countInCompletion=false) 항목은 오늘 탭에서 아예 숨김.
               // 순수 참고용 계획(자유시간·이동 등)은 캘린더에서만 확인, 오늘 탭은 실제 트래킹만 노출.
-              blocks={todayBlocks.filter(b => b.countInCompletion !== false)}
+              blocks={blocks.filter(b => b.date === viewStr && !b.parentBlockId && b.countInCompletion !== false)}
               deadlines={deadlines.filter(d => !d.completed)}
               todos={todos.filter(t =>
-                (t.date === TODAY_STR || (t.endDate && TODAY_STR >= t.date && TODAY_STR <= t.endDate))
+                (t.date === viewStr || (t.endDate && viewStr >= t.date && viewStr <= t.endDate))
                 && t.countInCompletion !== false
               )}
               templates={templates}
               todoChecklistItems={todoChecklistItems}
-              completionRate={completionRate}
               onToggle={toggleBlock}
               onToggleDeadline={toggleDeadline}
               onToggleTodo={toggleTodo}
@@ -2422,16 +2430,19 @@ export default function App() {
               onAddTodo={addTodo}
               onReorderTodos={reorderTodos}
               onReorderTodo={reorderTodoBeside}
-              categoryRank={categoryRankFor(TODAY_STR)}
+              categoryRank={categoryRankFor(viewStr)}
               onReorderCategory={requestCategoryReorder}
               onSelect={openBlockDetail}
               onSelectTodo={openTodoDetail}
               onSelectDeadline={openDeadlineDetail}
-              onGoToCalendar={() => setSection("calendar")}
+              onGoToCalendar={() => { setCalendarInitialDate(todayViewDate); setSection("calendar"); }}
             />
-          )}
+            );
+          })()}
           {section === "calendar" && (
             <CalendarSection
+              initialDate={calendarInitialDate}
+              onOpenDay={d => { setTodayViewDate(d); setSection("today"); }}
               blocks={blocks}
               deadlines={deadlines}
               templates={templates}
@@ -3237,15 +3248,19 @@ function DatePickerField({
 }
 
 // ── Today Section ──────────────────────────────────────────────────
+// 오늘 탭 — 한 날짜를 집중해서 보는 화면(= 일 보기). 기본은 오늘이고 ‹ › 로 날짜를 옮길 수 있다.
+// 캘린더는 주/월 조망만 맡고, 날짜 하나의 상세(메모·체크리스트·완료 토글·순서 변경)는 전부 여기서.
 function TodaySection({
-  blocks, deadlines, todos, templates, todoChecklistItems, completionRate, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onReorderTodo, categoryRank, onReorderCategory, onSelect, onSelectTodo, onSelectDeadline, onGoToCalendar,
+  viewDate, onChangeDate, blocks, deadlines, todos, templates, todoChecklistItems, onToggle, onToggleDeadline, onToggleTodo, onDeleteTodo, onAddTodo, onReorderTodos, onReorderTodo, categoryRank, onReorderCategory, onSelect, onSelectTodo, onSelectDeadline, onGoToCalendar,
 }: {
+  // 보고 있는 날짜. 부모가 이 날짜 기준으로 blocks/todos 를 걸러서 넘긴다.
+  viewDate: Date;
+  onChangeDate: (d: Date) => void;
   blocks: Block[];
   deadlines: Deadline[];
   todos: Todo[];
   templates: Template[];
   todoChecklistItems: TodoChecklistItemT[];
-  completionRate: number;
   onToggle: (id: string) => void;
   onToggleDeadline: (id: string) => void;
   onToggleTodo: (id: string) => void;
@@ -3263,20 +3278,27 @@ function TodaySection({
   onSelectDeadline?: (d: Deadline) => void;
   onGoToCalendar: () => void;
 }) {
+  const viewStr = toDateStr(viewDate);
+  const isToday = viewStr === TODAY_STR;
+  const shiftDate = (days: number) => {
+    const d = new Date(viewDate);
+    d.setDate(d.getDate() + days);
+    onChangeDate(d);
+  };
   const sorted = [...blocks].sort((a, b) => a.startH * 60 + a.startM - (b.startH * 60 + b.startM));
-  const done = blocks.filter(b => b.completed).length;
+  // 마감 섹션은 보고 있는 날짜 기준 — 그 날짜 전에 지난 것 / 그 날짜부터 7일 안에 오는 것.
+  // 배지의 "N일 초과"·D-day 숫자는 실제 오늘 기준(그게 D-day 의 뜻)이라 그대로 둔다.
   const overdueDeadlines = deadlines
-    .filter(d => d.dueDate < TODAY_STR)
+    .filter(d => d.dueDate < viewStr)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  // 오늘부터 7일 뒤(포함) 까지의 마감만 노출 — 달력 주(월~일) 가 아니라 슬라이딩 7일 창.
-  // 화면에 매일 "일주일 내 임박한 마감" 만 유지돼 오늘 기준으로 급함을 판단하기 좋음.
+  // 보고 있는 날짜부터 7일 뒤(포함) 까지의 마감만 노출 — 달력 주(월~일) 가 아니라 슬라이딩 7일 창.
   const oneWeekAheadStr = (() => {
-    const d = new Date(TODAY_DATE);
+    const d = new Date(viewDate);
     d.setDate(d.getDate() + 7);
     return toDateStr(d);
   })();
   const upcomingDeadlines = deadlines
-    .filter(d => d.dueDate >= TODAY_STR && d.dueDate <= oneWeekAheadStr)
+    .filter(d => d.dueDate >= viewStr && d.dueDate <= oneWeekAheadStr)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const [todoDraft, setTodoDraft] = useState("");
   const [dragTodoId, setDragTodoId] = useState<string | null>(null);
@@ -3288,10 +3310,30 @@ function TodaySection({
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-xl mx-auto px-8 pt-16 pb-8">
-        {/* 오늘 달성률은 상단 헤더 타이머 옆 배지로 대체 — 여기선 별도 요약을 두지 않음.
-             대신 이 페이지가 "오늘" 시점임을 상기시키는 작은 날짜 라벨만 얹음. */}
-        <div className="text-[11px] text-muted-foreground mb-6">
-          {`${TODAY_DATE.getFullYear()}년 ${TODAY_DATE.getMonth() + 1}월 ${TODAY_DATE.getDate()}일 ${DAYS_KO[TODAY_DATE.getDay()]}요일`}
+        {/* 달성률은 상단 헤더 타이머 옆 배지로 대체 — 여기선 별도 요약을 두지 않음.
+             날짜 라벨 양옆 ‹ › 로 하루씩 이동하고, 오늘이 아니면 "오늘로" 로 바로 돌아온다. */}
+        <div className="flex items-center gap-1 mb-6 text-[11px] text-muted-foreground">
+          <button
+            onClick={() => shiftDate(-1)}
+            className="size-6 -ml-1.5 rounded-md flex items-center justify-center hover:bg-muted/60 hover:text-foreground transition-colors"
+            title="이전 날"
+          ><ChevronLeft size={14} /></button>
+          <span className={`px-1 ${isToday ? "" : "text-foreground font-medium"}`}>
+            {`${viewDate.getFullYear()}년 ${viewDate.getMonth() + 1}월 ${viewDate.getDate()}일 ${DAYS_KO[viewDate.getDay()]}요일`}
+          </span>
+          <button
+            onClick={() => shiftDate(1)}
+            className="size-6 rounded-md flex items-center justify-center hover:bg-muted/60 hover:text-foreground transition-colors"
+            title="다음 날"
+          ><ChevronRight size={14} /></button>
+          {isToday
+            ? <span className="ml-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground">오늘</span>
+            : (
+              <button
+                onClick={() => onChangeDate(TODAY_DATE)}
+                className="ml-1 text-[10px] px-2 py-0.5 rounded-full border border-border hover:bg-muted transition-colors"
+              >오늘로</button>
+            )}
         </div>
 
         {/* 지난 마감 — 이미 놓친 것. 배지는 항상 빨강 톤, 블록 색은 마감 커스텀 색이 있으면 그것을 우선. */}
@@ -3365,7 +3407,7 @@ function TodaySection({
               드래그로 서로 자리를 교체할 수 있고, 시간대는 지정하지 않음.
               카테고리별로 묶어 순서만 유지 — 카드마다 카테고리 뱃지와 색이 있어 그룹 헤더/구분선은 두지 않음. */}
         <div className="mb-4">
-          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">오늘 일정</div>
+          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">{isToday ? "오늘 일정" : "일정"}</div>
           <div className="space-y-1.5">
             {todoGroups.map(group => (
               <div key={group.category || "__none__"} className="space-y-1.5">
@@ -3405,10 +3447,10 @@ function TodaySection({
                       const srcCat = (src?.category ?? "").trim();
                       const dstCat = (t.category ?? "").trim();
                       if (onReorderCategory && src && srcCat && dstCat && srcCat !== dstCat) {
-                        onReorderCategory(TODAY_STR, srcCat, dstCat);
+                        onReorderCategory(viewStr, srcCat, dstCat);
                         return;
                       }
-                      onReorderTodo(otherId, t.id, place, TODAY_STR);
+                      onReorderTodo(otherId, t.id, place, viewStr);
                     }}
                     onClick={() => onSelectTodo?.(t)}
                     className={`group/todo relative flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
@@ -3470,7 +3512,7 @@ function TodaySection({
               onKeyDown={e => {
                 if (e.key === "Enter") {
                   const v = todoDraft.trim();
-                  if (v) { onAddTodo({ title: v, date: TODAY_STR }); setTodoDraft(""); }
+                  if (v) { onAddTodo({ title: v, date: viewStr }); setTodoDraft(""); }
                 }
               }}
               placeholder="+ 새 일정"
@@ -3480,7 +3522,7 @@ function TodaySection({
         </div>
 
         {/* Block list — 시간 단위 블록 (todo 와 구분해서 아래에) */}
-        <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">오늘 시간표</div>
+        <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">{isToday ? "오늘 시간표" : "시간표"}</div>
         <div className="space-y-2">
           {sorted.map(block => {
             const color = getCategoryColor(templates, block.category);
@@ -3539,7 +3581,7 @@ function TodaySection({
         {blocks.length === 0 && (
           <div className={`text-center ${todos.length === 0 ? "mt-10 py-8" : "mt-6"}`}>
             {todos.length === 0 && (
-              <div className="text-sm font-medium text-muted-foreground">오늘 계획된 활동이 없습니다</div>
+              <div className="text-sm font-medium text-muted-foreground">{isToday ? "오늘" : "이 날"} 계획된 활동이 없습니다</div>
             )}
             <button
               onClick={onGoToCalendar}
@@ -3565,14 +3607,18 @@ function CalendarSection({
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat,
   todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onReorderTodo, onToggleTodo,
-  categoryRankFor, onReorderCategory,
+  categoryRankFor, onReorderCategory, initialDate, onOpenDay,
 }: {
   blocks: Block[];
   deadlines: Deadline[];
   templates: Template[];
   todoChecklistItems: TodoChecklistItemT[];
-  calView: "day" | "week" | "month";
-  setCalView: (v: "day" | "week" | "month") => void;
+  // 캘린더가 처음 열릴 때 보여줄 날짜(오늘 탭에서 "캘린더로 이동" 시 보던 날짜를 이어받음).
+  initialDate: Date;
+  // 날짜 하나를 자세히 보기 — 오늘 탭을 그 날짜로 연다(일 보기 대체).
+  onOpenDay: (date: Date) => void;
+  calView: "week" | "month";
+  setCalView: (v: "week" | "month") => void;
   onSelect: (b: Block) => void;
   onSelectTodo?: (t: Todo) => void;
   onSelectDeadline?: (d: Deadline) => void;
@@ -3619,7 +3665,7 @@ function CalendarSection({
   // 최상위 블록만 표시됨 — 안 그러면 부모 시간대 안에 자식이 겹쳐 보이거나 통계가 중복 집계됨.
   const topLevelBlocks = blocks.filter(b => !b.parentBlockId);
 
-  const [viewDate, setViewDate] = useState(TODAY_DATE);
+  const [viewDate, setViewDate] = useState(initialDate);
   const [dragTplId, setDragTplId] = useState<string | null>(null);
   const [dragBlockId, setDragBlockId] = useState<string | null>(null);
   const [dragBlockOffsetMin, setDragBlockOffsetMin] = useState(0); // minutes from block top to mouse
@@ -3930,15 +3976,13 @@ function CalendarSection({
   // Navigation helpers
   const goPrev = () => {
     const d = new Date(viewDate);
-    if (calView === "day") d.setDate(d.getDate() - 1);
-    else if (calView === "week") d.setDate(d.getDate() - 7);
+    if (calView === "week") d.setDate(d.getDate() - 7);
     else d.setMonth(d.getMonth() - 1);
     setViewDate(d);
   };
   const goNext = () => {
     const d = new Date(viewDate);
-    if (calView === "day") d.setDate(d.getDate() + 1);
-    else if (calView === "week") d.setDate(d.getDate() + 7);
+    if (calView === "week") d.setDate(d.getDate() + 7);
     else d.setMonth(d.getMonth() + 1);
     setViewDate(d);
   };
@@ -3950,7 +3994,7 @@ function CalendarSection({
     return Array.from({ length: 7 }, (_, i) => { const d = new Date(sun); d.setDate(sun.getDate() + i); return d; });
   };
 
-  const viewDays = calView === "day" ? [viewDate] : getWeekDays(viewDate);
+  const viewDays = getWeekDays(viewDate);
 
   // 상세 날짜/요일은 아래 요일 헤더가 보여주므로 상단 라벨은 연/월만 표시.
   const headerLabel = (() => {
@@ -3996,8 +4040,8 @@ function CalendarSection({
             <div
               key={i}
               className="flex-1 text-center py-2 min-w-0 cursor-pointer hover:bg-muted/40 transition-colors rounded-lg"
-              onClick={() => { setViewDate(day); setCalView("day"); }}
-              title={holiday ? `${holiday} — 이 날짜 일 캘린더로 이동` : "이 날짜 일 캘린더로 이동"}
+              onClick={() => onOpenDay(day)}
+              title={holiday ? `${holiday} — 이 날짜 자세히 보기` : "이 날짜 자세히 보기"}
             >
               <div className={`text-[10px] ${holiday || (days.length > 1 && dow === 0) ? "text-red-400" : days.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
                 {DAYS_KO[dow]}
@@ -4550,9 +4594,9 @@ function CalendarSection({
               >
                 <div className="flex items-center justify-start mb-1 gap-1.5 min-w-0">
                   <span
-                    onClick={e => { e.stopPropagation(); setViewDate(day); setCalView("day"); }}
+                    onClick={e => { e.stopPropagation(); onOpenDay(day); }}
                     className={`text-xs font-medium inline-flex items-center justify-center leading-none cursor-pointer hover:opacity-70 transition-opacity flex-shrink-0 ${isToday?"size-5 rounded-full bg-primary text-primary-foreground text-[10px]":isHoliday(dateStr)||col===0?"text-red-400":col===6?"text-blue-400":"text-muted-foreground"}`}
-                    title={getHoliday(dateStr) ? `${getHoliday(dateStr)} — 이 날짜 일 캘린더로 이동` : "이 날짜 일 캘린더로 이동"}
+                    title={getHoliday(dateStr) ? `${getHoliday(dateStr)} — 이 날짜 자세히 보기` : "이 날짜 자세히 보기"}
                   >
                     {day.getDate()}
                   </span>
@@ -4685,10 +4729,10 @@ function CalendarSection({
       <div className="flex items-center px-5 py-3 border-b border-border flex-shrink-0 bg-card/50">
         <div className="flex-1 flex items-center gap-3">
           <div className="flex items-center rounded-lg bg-muted p-0.5 gap-0.5">
-            {(["day","week","month"] as const).map(v => (
+            {(["week","month"] as const).map(v => (
               <button key={v} onClick={() => setCalView(v)}
                 className={`px-3 py-1 text-xs rounded-md transition-all ${calView===v?"bg-card shadow-sm font-medium":"text-muted-foreground hover:text-foreground"}`}>
-                {v==="day"?"일":v==="week"?"주":"월"}
+                {v==="week"?"주":"월"}
               </button>
             ))}
           </div>
@@ -4776,7 +4820,6 @@ function CalendarSection({
                 const currentWeekDates = calView === "week"
                   ? new Set(getWeekDays(viewDate).map(d => toDateStr(d)))
                   : new Set<string>();
-                const currentDayStr = calView === "day" ? toDateStr(viewDate) : "";
                 return (
                   <div className="mt-3 pt-3 border-t border-border">
                     <div className="grid grid-cols-7 gap-0.5 mb-1">
@@ -4789,9 +4832,7 @@ function CalendarSection({
                         if (!day) return <div key={`e-${idx}`} />;
                         const cellDate = new Date(monthPickerYear, monthPickerMonth, day);
                         const cellStr = toDateStr(cellDate);
-                        const isSelected = calView === "day"
-                          ? cellStr === currentDayStr
-                          : currentWeekDates.has(cellStr);
+                        const isSelected = currentWeekDates.has(cellStr);
                         const isTodayCell = cellStr === TODAY_STR;
                         const col = idx % 7;
                         const holiday = isHoliday(cellStr);
@@ -4822,7 +4863,7 @@ function CalendarSection({
               <button
                 onClick={() => { setViewDate(TODAY_DATE); setMonthPickerOpen(false); }}
                 className="mt-3 w-full px-3 py-1.5 text-xs rounded-md border border-border hover:bg-muted transition-colors"
-              >{calView === "day" ? "오늘로 이동" : calView === "week" ? "이번 주로 이동" : "이번 달로 이동"}</button>
+              >{calView === "week" ? "이번 주로 이동" : "이번 달로 이동"}</button>
             </div>
           )}
         </div>
@@ -4900,7 +4941,6 @@ function CalendarSection({
                   templates={templates}
                   todoChecklistItems={todoChecklistItems}
                   viewDays={viewDays}
-                  focusDate={toDateStr(viewDate)}
                   paletteColors={paletteColors}
                   onAdd={onAddTodo}
                   onAddTemplate={onAddTemplate}
@@ -4915,7 +4955,7 @@ function CalendarSection({
                   showDayHeader={contentView === "todos"}
                   onGoPrev={goPrev}
                   onGoNext={goNext}
-                  onSelectDate={ds => { setViewDate(parseLocalDate(ds)); setCalView("day"); }}
+                  onSelectDate={ds => onOpenDay(parseLocalDate(ds))}
                   onMoveTodo={(id, date) => onMoveTodo(id, date)}
                   onReorderTodo={onReorderTodo}
                   categoryRankFor={categoryRankFor}
@@ -4993,11 +5033,10 @@ function CalendarSection({
 }
 
 
-// 일/주 뷰 하단(또는 단독)에 뜨는 할 일 리스트 패널. 원형 체크박스 + 카테고리 색 카드로 렌더하고,
-// viewDays 의 각 날짜를 한 섹션으로 묶는다. 새 할 일 추가는 섹션 hover 시 "+ 새 할 일" 고스트
-// (카테고리 픽커를 거쳐 생성).
+// 주 보기 하단(또는 단독)에 뜨는 할 일 패널. 7일을 가로 열로 놓고 각 열이 그 날짜의 카테고리 색
+// 카드 목록. 새 할 일 추가는 열 hover 시 "+ 새 할 일" 고스트(카테고리 픽커를 거쳐 생성).
 function TodoPanel({
-  todos, templates, todoChecklistItems, viewDays, focusDate, paletteColors,
+  todos, templates, todoChecklistItems, viewDays, paletteColors,
   onAdd, onAddTemplate, onDeleteBlockTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo,
   deadlines, onToggleDeadline, onSelectDeadline,
   showDayHeader, onGoPrev, onGoNext, onSelectDate, onMoveTodo, onReorderTodo,
@@ -5007,9 +5046,6 @@ function TodoPanel({
   templates: Template[];
   todoChecklistItems: TodoChecklistItemT[];
   viewDays: Date[];
-  // 지금 보고 있는 날짜(캘린더의 viewDate). 새 할 일의 기본 날짜로 씀 — 며칠 뒤를 보면서
-  // 할 일을 추가했는데 오늘 날짜로 꽂히면 매번 고쳐야 해서.
-  focusDate: string;
   paletteColors: string[];
   onAdd: (t: { title: string; date: string; endDate?: string | null; color?: string; category?: string }, options?: { openInline?: boolean }) => void;
   onAddTemplate: (t: { title: string; color: string; tags: string[]; kind?: "time" | "todo" }) => void;
@@ -5064,11 +5100,8 @@ function TodoPanel({
   const [editingDraft, setEditingDraft] = useState("");
   // 섹션 hover 상태 — hover 시 "+ 새 할 일" 프리뷰(shadow)를 노출.
   const [hoverKey, setHoverKey] = useState<string | null>(null);
-  // "+ 새 할 일" 클릭 시 열리는 추가 폼이 붙는 위치. 날짜 섹션이면 date 고정, 하단 공통
-  // 버튼(__global__)이면 자유(addDate 로 선택).
-  const [addPicker, setAddPicker] = useState<null | { key: string; date?: string }>(null);
-  // 추가 폼의 날짜 선택값 — 폼을 열 때마다 보고 있는 날짜로 리셋.
-  const [addDate, setAddDate] = useState<string>(focusDate);
+  // "+ 새 할 일" 클릭 시 열리는 추가 폼이 붙은 날짜 열(dateStr). 날짜는 그 열로 고정.
+  const [addPicker, setAddPicker] = useState<string | null>(null);
   // 카테고리 선택 UI 안에서 "새 카테고리" 인라인 폼이 열려있는지.
   const [newCatMode, setNewCatMode] = useState(false);
   const [newCatTitle, setNewCatTitle] = useState("");
@@ -5121,30 +5154,15 @@ function TodoPanel({
   };
 
   const viewDateStrs = viewDays.map(toDateStr);
-  // 여러 날을 한꺼번에 보는 주 보기에서는 세로 목록 대신 가로 열 배치.
-  const horizontal = viewDays.length > 1;
-  const firstDs = viewDateStrs[0];
-  const lastDs = viewDateStrs[viewDateStrs.length - 1];
-  // 날짜를 지정할 수 없는 자리(카테고리별 보기)와 추가 폼의 기본 날짜 — 지금 보고 있는 날짜.
-  // 주 보기처럼 여러 날이 함께 보일 때도 viewDate 는 그 기간 안에 있지만, 혹시 벗어나면 기간 첫날.
-  const defaultAddDate = focusDate >= firstDs && focusDate <= lastDs ? focusDate : firstDs;
   // 마감 — 할 일 단독 모드에서만 카드로 노출 (시간 그리드가 함께 보일 땐 그쪽 상단 마감 행이 유일한 소스).
   const rangeDeadlines = showDayHeader
     ? deadlines.filter(d => viewDateStrs.includes(d.dueDate)).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
     : [];
-  // 날짜별 보기에서 실제로 렌더되는 날짜 섹션 — 할 일이나 마감이 있는 날만.
-  // (카테고리를 끌고 있는 동안에는 드랍 자리를 만들기 위해 모든 날짜를 펼친다.)
-  // 섹션마다 자체 hover 고스트가 붙으므로, 하단 공통 "+ 새 할 일" 의 노출 조건으로도 쓴다.
-  const dateSectionDays = viewDays.filter(d => {
-    if (catDragging) return true;
-    const ds = toDateStr(d);
-    return todos.some(t => coversDate(t, ds)) || rangeDeadlines.some(dl => dl.dueDate === ds);
-  });
 
-  // 마감 카드 — 할 일 카드와 같은 블록 형태(원형 체크 + 스트라이프).
-  // 블록 색(배경/스트라이프/체크 아이콘)은 마감 커스텀 색이 있으면 그것을, 없으면 D-day 톤.
+  // 마감 카드 — 할 일 카드와 같은 카드 형태(원형 체크 + 제목 + D-day 배지). 열 머리글이 이미
+  // 날짜라 날짜 줄은 없다. 카드 색은 마감 커스텀 색이 있으면 그것을, 없으면 D-day 톤.
   // D-day 배지는 항상 D-day 톤(>10 초록, 이하 노랑/주황/빨강)을 그대로 사용.
-  const renderDeadlineCard = (d: Deadline, compact = false) => {
+  const renderDeadlineCard = (d: Deadline) => {
     const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
     const dayColor = deadlineToneHex(daysLeft);
     const blockColor = d.color || dayColor;
@@ -5152,7 +5170,7 @@ function TodoPanel({
       <div
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
-        className={`flex items-center rounded-lg border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "opacity-40" : ""}`}
+        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border cursor-pointer hover:shadow-sm transition-all ${d.completed ? "opacity-40" : ""}`}
         style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
         title="클릭: 상세 열기"
       >
@@ -5162,16 +5180,14 @@ function TodoPanel({
           title={d.completed ? "완료 해제" : "완료 처리"}
         >
           {d.completed
-            ? <CheckCircle2 size={compact ? 16 : 18} style={{ color: blockColor }} />
-            : <Circle size={compact ? 16 : 18} className="text-muted-foreground" />}
+            ? <CheckCircle2 size={16} style={{ color: blockColor }} />
+            : <Circle size={16} className="text-muted-foreground" />}
         </button>
         <div className="flex-1 min-w-0">
-          <div className={`font-medium truncate ${compact ? "text-[13px] leading-snug" : "text-sm"} ${d.completed ? "text-muted-foreground" : ""}`} style={d.completed ? undefined : { color: titleColor(blockColor) }}>{d.title}</div>
-          {/* 가로 열 배치에선 열 머리글이 이미 날짜라 날짜 줄을 생략해 카드를 낮게 유지. */}
-          {!compact && <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>}
+          <div className={`font-medium truncate text-[13px] leading-snug ${d.completed ? "text-muted-foreground" : ""}`} style={d.completed ? undefined : { color: titleColor(blockColor) }}>{d.title}</div>
         </div>
         <span
-          className={`font-semibold rounded-full flex-shrink-0 ${compact ? "text-[10px] px-1.5 py-px" : "text-[11px] px-2 py-0.5"}`}
+          className="font-semibold rounded-full flex-shrink-0 text-[10px] px-1.5 py-px"
           style={{ backgroundColor: dayColor + "22", color: dayColor }}
         >{formatDDay(daysLeft)}</span>
       </div>
@@ -5181,10 +5197,9 @@ function TodoPanel({
   const ghostCardCls = "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left bg-primary/5 ring-1 ring-primary/25 hover:ring-primary/40 transition-shadow";
   const ghostShadow = { boxShadow: "0 6px 16px -6px rgba(90, 169, 230, 0.35), 0 2px 6px -2px rgba(90, 169, 230, 0.25)" };
 
-  // 할 일 카드 — 스크린샷의 리스트 카드 디자인: 원형 체크박스 + 색 스트라이프 + 제목/부제.
-  // 클릭 → 상세 패널, 더블클릭 → 인라인 제목 편집. 드래그로 이동/스왑.
-  // compact — 주 보기 가로 열용. 여백을 줄이고 카테고리 배지는 생략(좁은 열에서 제목이 먼저 읽히게).
-  const renderTodoCard = (t: Todo, opts: { showCategory?: boolean; sectionDate?: string; compact?: boolean } = {}) => {
+  // 할 일 카드 — 카테고리 뱃지 + 제목(+ 기간/메모/체크리스트 부제). 좁은 열에 맞춰 촘촘하게.
+  // 클릭 → 상세 패널, 더블클릭 → 인라인 제목 편집. 드래그로 이동/스왑. 완료 토글은 상세 패널에서.
+  const renderTodoCard = (t: Todo, sectionDate: string) => {
     const color = getCategoryColor(templates, t.category);
     const clItems = todoChecklistItems.filter(c => c.todoId === t.id);
     const clDone = clItems.filter(c => c.completed).length;
@@ -5229,18 +5244,18 @@ function TodoPanel({
           const src = todos.find(x => x.id === otherId);
           const srcCat = (src?.category ?? "").trim();
           const dstCat = (t.category ?? "").trim();
-          if (opts.sectionDate && src && srcCat && dstCat && srcCat !== dstCat && coversDate(src, opts.sectionDate)) {
-            onReorderCategory(opts.sectionDate, srcCat, dstCat);
+          if (src && srcCat && dstCat && srcCat !== dstCat && coversDate(src, sectionDate)) {
+            onReorderCategory(sectionDate, srcCat, dstCat);
             return;
           }
-          onReorderTodo(otherId, t.id, place, opts.sectionDate);
+          onReorderTodo(otherId, t.id, place, sectionDate);
         }}
         onClick={() => {
           if (onSelectTodo) onSelectTodo(t);
           else { setEditingDraft(t.title); setEditingId(t.id); }
         }}
         onDoubleClick={e => { e.stopPropagation(); setEditingDraft(t.title); setEditingId(t.id); }}
-        className={`group/todo relative flex items-center rounded-lg border transition-all ${opts.compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${
+        className={`group/todo relative flex items-center gap-2 px-2.5 py-1.5 rounded-lg border transition-all ${
           onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
         } ${
           t.completed ? "opacity-40"
@@ -5257,26 +5272,12 @@ function TodoPanel({
             className={`absolute left-2 right-2 h-0.5 rounded-full bg-primary ${dropTarget.place === "before" ? "-top-1" : "-bottom-1"}`}
           />
         )}
-        {opts.compact ? (
-          /* 주 보기 열은 좁아서 체크박스 대신 그 자리에 카테고리 뱃지 — 완료 여부는 카드 흐림으로,
-               완료 토글은 상세 패널에서. */
-          t.category && (
-            <span
-              className="text-[9px] font-semibold uppercase tracking-wide rounded-sm flex-shrink-0 truncate max-w-[45%] px-1 py-px"
-              style={{ color, backgroundColor: color + "22" }}
-            >{t.category}</span>
-          )
-        ) : t.countInCompletion !== false ? (
-          <button
-            onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }}
-            className="flex-shrink-0"
-            title={t.completed ? "완료 해제" : "완료 처리"}
-          >
-            {t.completed ? <CheckCircle2 size={18} style={{ color }} /> : <Circle size={18} className="text-muted-foreground" />}
-          </button>
-        ) : (
-          /* 달성률 미포함 항목은 완료 개념이 없음 — 체크박스 자리만 유지해 카드 정렬을 맞춤. */
-          <span className="w-[18px] flex-shrink-0" />
+        {/* 열이 좁아서 체크박스 대신 그 자리에 카테고리 뱃지 — 완료 여부는 카드 흐림으로. */}
+        {t.category && (
+          <span
+            className="text-[9px] font-semibold uppercase tracking-wide rounded-sm flex-shrink-0 truncate max-w-[45%] px-1 py-px"
+            style={{ color, backgroundColor: color + "22" }}
+          >{t.category}</span>
         )}
         <div className="flex-1 min-w-0">
           {editingId === t.id ? (
@@ -5293,19 +5294,10 @@ function TodoPanel({
               className="w-full text-sm font-medium bg-transparent outline-none focus:ring-1 focus:ring-ring rounded px-1 -mx-1"
             />
           ) : (
-            <div className="flex items-baseline gap-1.5 min-w-0">
-              {/* 카테고리 뱃지는 제목 앞에(세로 목록에서만 — 주 보기 열에선 호출부가 showCategory 를 끈다). */}
-              {opts.showCategory && t.category && (
-                <span
-                  className="text-[9px] font-semibold uppercase tracking-wide rounded-sm flex-shrink-0 truncate px-1.5 py-0.5"
-                  style={{ color, backgroundColor: color + "22" }}
-                >{t.category}</span>
-              )}
-              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "text-muted-foreground" : ""}`} style={t.completed ? undefined : { color: titleColor(color) }}>{t.title}</span>
-            </div>
+            <span className={`block min-w-0 truncate font-medium text-[13px] leading-snug ${t.completed ? "text-muted-foreground" : ""}`} style={t.completed ? undefined : { color: titleColor(color) }}>{t.title}</span>
           )}
           {editingId !== t.id && (dateLabel || t.memo || clItems.length > 0) && (
-            <div className={`flex items-center gap-2 min-w-0 text-muted-foreground ${opts.compact ? "text-[10px] leading-tight" : "text-[11px]"}`}>
+            <div className="flex items-center gap-2 min-w-0 text-muted-foreground text-[10px] leading-tight">
               {dateLabel && <span className="flex-shrink-0">{dateLabel}</span>}
               {t.memo && <span className="truncate">{t.memo}</span>}
               {clItems.length > 0 && (
@@ -5327,12 +5319,10 @@ function TodoPanel({
     );
   };
 
-  // "+ 새 할 일" 클릭 시 열리는 추가 폼. 날짜가 자유로우면(전역/카테고리 섹션) 날짜 입력을 먼저
-  // 보여주고(기본값은 지금 보고 있는 날짜), 카테고리가 자유로우면 카테고리 목록을,
-  // 고정이면 추가 버튼만 보여준다.
+  // "+ 새 할 일" 클릭 시 열리는 추가 폼 — 날짜는 그 열로 고정이라 카테고리만 고른다.
   const renderAddPicker = () => {
     if (!addPicker) return null;
-    const effDate = addPicker.date ?? addDate;
+    const effDate = addPicker;
     return (
       /* 컨테이너 rounded-xl(12px) 안쪽에 p-1.5(6px) — 행은 rounded-lg(8px)로 두어
          모서리가 컨테이너 곡률을 넘지 않게(동심). 예전엔 p-1 + rounded(4px) 조합이라
@@ -5342,16 +5332,6 @@ function TodoPanel({
         className="rounded-xl bg-card border border-primary/25 shadow-lg p-1.5 space-y-0.5"
         style={ghostShadow}
       >
-        {addPicker.date == null && (
-          <div className="px-1.5 py-0.5 space-y-0.5">
-            <div className="text-[9px] text-muted-foreground uppercase tracking-wide">날짜</div>
-            <DatePickerField
-              value={addDate}
-              onChange={v => { if (v) setAddDate(v); }}
-              className="text-[11px] px-1.5 py-1 rounded bg-muted hover:bg-muted/70"
-            />
-          </div>
-        )}
         {(
           <>
             <div className="text-[9px] text-muted-foreground px-1.5 py-0.5 uppercase tracking-wide">카테고리 선택</div>
@@ -5441,34 +5421,10 @@ function TodoPanel({
       </div>
     );
   };
-  // 날짜 섹션 하나(헤더 + 마감/할 일 카드 + 드랍 자리 + "+ 새 할 일" 고스트).
-  // compact — 주 보기의 가로 열 배치용(좁은 열에 맞춰 헤더를 짧게, 카드를 촘촘히).
-  // 날짜 섹션 머리글 — 날짜 + 공휴일 + (오늘) 배지 + 라인. 날짜를 누르면 그 날짜로 이동.
-  // 가로 열 배치에서는 열 본문과 떼어 맨 위 행(그룹 기준 버튼과 같은 줄)에 따로 놓는다.
-  const renderDateHeader = (day: Date, compact: boolean) => {
-    const dateStr = toDateStr(day);
-    const isToday = dateStr === TODAY_STR;
-    const dow = day.getDay();
-    return (
-      <div className="flex items-center gap-2 min-w-0">
-        <span
-          onClick={onSelectDate ? () => onSelectDate(dateStr) : undefined}
-          title={onSelectDate ? "이 날짜로 이동" : undefined}
-          className={`text-[11px] font-semibold tracking-wide rounded px-1 -mx-1 transition-colors ${onSelectDate ? "cursor-pointer hover:bg-muted/60" : ""} ${isToday ? "text-primary" : isHoliday(dateStr) || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}
-        >
-          {compact ? `${day.getMonth() + 1}/${day.getDate()} (${DAYS_KO[dow]})` : `${day.getMonth() + 1}월 ${day.getDate()}일 (${DAYS_KO[dow]})`}
-        </span>
-        {getHoliday(dateStr) && (
-          <span className="text-[10px] font-medium text-red-400 truncate">{getHoliday(dateStr)}</span>
-        )}
-        {isToday && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground flex-shrink-0">오늘</span>}
-        <div className="flex-1 h-px bg-border/60" />
-      </div>
-    );
-  };
-
-  // hideHeader — 머리글을 바깥(상단 행)에서 따로 그릴 때.
-  const renderDateSection = (day: Date, compact: boolean, hideHeader = false) => {
+  // 날짜 열 하나(할 일 카드 + 드랍 자리 + "+ 새 할 일" 고스트). 날짜 머리글은 따로 그리지
+  // 않는다 — 위의 요일 헤더(할 일 단독 모드) 또는 시간 그리드 헤더(함께 보기)가 이미 같은 열
+  // 위치에 날짜를 보여 주므로 중복. 마감도 열 안에 섞지 않고 위쪽 전용 행에 따로 그린다.
+  const renderDateSection = (day: Date) => {
     const dateStr = toDateStr(day);
     const dayTodos = sortTodosByCategory(todos.filter(t => coversDate(t, dateStr)), categoryRankFor(dateStr));
     return (
@@ -5509,14 +5465,10 @@ function TodoPanel({
             onMoveTodo(todoId, dateStr);
           }
         }}
-        className={`rounded-xl transition-colors ${hideHeader ? "flex-1 min-h-0" : ""} ${tplHoverKey === dateStr ? "bg-primary/5" : ""}`}
+        className={`rounded-xl transition-colors flex-1 min-h-0 ${tplHoverKey === dateStr ? "bg-primary/5" : ""}`}
       >
-        {!hideHeader && <div className="mb-2">{renderDateHeader(day, compact)}</div>}
         <div className="space-y-2">
-          {/* 마감 — 해당 날짜 섹션의 가장 상단에 카드로 노출. */}
-          {/* 가로 열 배치(compact)에선 마감을 열 안에 섞지 않고 위쪽 전용 행에 따로 그린다. */}
-          {!compact && rangeDeadlines.filter(dl => dl.dueDate === dateStr).map(dl => renderDeadlineCard(dl))}
-          {dayTodos.map(t => renderTodoCard(t, { showCategory: !compact, sectionDate: dateStr, compact }))}
+          {dayTodos.map(t => renderTodoCard(t, dateStr))}
           {/* 카테고리 드래그 중 드랍 자리 — hover 중인 섹션은 강조, 나머지는 옅은 자리 표시.
                (항목이 있는 날은 카드들이 이미 드랍 면적을 만들어 주므로 자리 표시 생략) */}
           {tplHoverKey === dateStr ? (
@@ -5529,10 +5481,10 @@ function TodoPanel({
             </div>
           ) : null}
           {/* "+ 새 할 일" — hover 고스트 클릭 → 카테고리 픽커(날짜는 이 섹션으로 고정). */}
-          {addPicker?.key === dateStr ? renderAddPicker()
+          {addPicker === dateStr ? renderAddPicker()
             : hoverKey === dateStr && tplHoverKey !== dateStr ? (
               <button
-                onClick={() => { setAddPicker({ key: dateStr, date: dateStr }); setNewCatMode(false); }}
+                onClick={() => { setAddPicker(dateStr); setNewCatMode(false); }}
                 className={ghostCardCls}
                 style={ghostShadow}
                 title="새 할 일 추가"
@@ -5548,18 +5500,17 @@ function TodoPanel({
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {showDayHeader && (
-        /* 요일/날짜 헤더 — 좌/우 끝 chevron 으로 기간 이동.
-             주 보기(가로 열)에서는 chevron 이 흐름 안에서 양쪽 w-8 자리를 차지하고, 아래 열 본문도
-             양쪽에 같은 w-8 빈칸을 두어 요일 머리글과 카드 열이 정확히 같은 폭·위치로 겹친다.
+        /* 요일/날짜 헤더 — 좌/우 끝 chevron 으로 주 이동.
+             chevron 이 흐름 안에서 양쪽 w-8 자리를 차지하고, 아래 열 본문도 양쪽에 같은 w-8 빈칸을
+             두어 요일 머리글과 카드 열이 정확히 같은 폭·위치로 겹친다.
              (예전엔 chevron 을 absolute 로 얹어 열이 그 아래까지 깔렸는데, 본문 열은 그렇지 않아
              양 끝 열의 카드가 머리글보다 안쪽에 있는 것처럼 보였다.)
-             일 보기(열 하나)에서는 맞출 열이 없어 예전처럼 absolute 로 얹는다.
              scrollbar-gutter 는 본문 스크롤 영역과 같은 값 — 스크롤바 폭만큼 머리글이 더 넓어지지 않게. */
         <div className="relative flex border-b border-border flex-shrink-0 bg-card items-stretch overflow-hidden [scrollbar-gutter:stable]">
           {onGoPrev && (
             <button
               onClick={onGoPrev}
-              className={`${horizontal ? "w-8 flex-shrink-0" : "absolute left-0 top-0 bottom-0 w-8 z-10"} flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-r`}
+              className="w-8 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-r"
               title="이전"
             ><ChevronLeft size={16} /></button>
           )}
@@ -5577,7 +5528,7 @@ function TodoPanel({
                   ? (holiday ? `${holiday} — 이 날짜로 이동` : "이 날짜로 이동")
                   : holiday ?? undefined}
               >
-                <div className={`text-[10px] ${holiday || (viewDays.length > 1 && dow === 0) ? "text-red-400" : viewDays.length > 1 && dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
+                <div className={`text-[10px] ${holiday || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : "text-muted-foreground"}`}>
                   {DAYS_KO[dow]}
                 </div>
                 <div className={`inline-flex items-center justify-center w-7 h-7 mt-0.5 rounded-full text-xs font-medium ${isToday ? "bg-primary text-primary-foreground" : holiday ? "text-red-400" : "text-foreground"}`}>
@@ -5589,43 +5540,29 @@ function TodoPanel({
           {onGoNext && (
             <button
               onClick={onGoNext}
-              className={`${horizontal ? "w-8 flex-shrink-0" : "absolute right-0 top-0 bottom-0 w-8 z-10"} flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-l`}
+              className="w-8 flex-shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors rounded-l"
               title="다음"
             ><ChevronRight size={16} /></button>
           )}
         </div>
       )}
       <div
-        // scrollbar-gutter: stable both-edges — 세로 스크롤바가 생기면 콘텐츠 박스가 그만큼
-        // 좁아지고, 안쪽 mx-auto 가 좁아진 박스 기준으로 가운데를 잡아 카드 열이 왼쪽으로
-        // 밀렸다. 그래서 스크롤이 없는 일 뷰와 스크롤이 생기는 주 뷰의 블록 위치가 어긋났다.
-        // both-edges 로 양쪽에 같은 폭을 항상 예약해 두면 박스가 좌우 대칭이라, 스크롤바
-        // 유무와 무관하게 늘 패널 정중앙에 오고 두 뷰의 위치도 같아진다.
-        //
-        // 가로 열 배치(주 보기)에서는 반대로 오른쪽에만 예약한다 — 위 시간 그리드가 그렇게
+        // scrollbar-gutter: stable — 스크롤바 자리를 오른쪽에 항상 예약. 위 시간 그리드가 그렇게
         // 하고 있어서, 같은 규칙이어야 요일 열이 위아래로 맞아떨어진다.
-        className={`flex-1 overflow-y-auto ${horizontal ? "pt-3 pb-6 [scrollbar-gutter:stable]" : "p-6 [scrollbar-gutter:stable_both-edges]"}`}
+        className="flex-1 overflow-y-auto pt-3 pb-6 [scrollbar-gutter:stable]"
         // 패널 어디에 들어오든 "카테고리 드래그 중" 을 감지 — 섹션이 하나도 없는 빈 기간에도
         // 리스트 영역 자체가 이벤트를 받으므로 드랍 자리를 펼칠 수 있음.
         onDragOver={e => { if (isCategoryDrag(e)) setCatDragging(true); }}
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCatDragging(false); }}
         onDrop={() => setCatDragging(false)}
       >
-        <div className={horizontal ? "w-full min-w-0 min-h-full flex flex-col" : "max-w-lg w-full mx-auto"}>
-          {horizontal ? (
-            /* ── 주 보기(날짜별): 가로 열 배치 ──
-                 7일을 열로 나란히(빈 날도 열을 유지해 어느 요일인지 한눈에 보이고 드랍 자리도 생김).
-                 세로로 길게 쌓으면 일주일치가 한 화면에 안 들어와 훑어보기 어려웠다.
-                 시간 그리드와 함께 보일 때(showDayHeader=false)는 그리드의 시간축(w-12)만큼 왼쪽을
-                 비워 위의 요일 열과 정확히 겹치게 한다. */
-            (
-              /* 열마다 같은 안쪽 여백(px-2.5)과 왼쪽 구분선 — 양 끝(일·토)만 여백이 다르게 보이지 않게
-                   일곱 열 모두 같은 조건으로 그린다. 구분선은 시간 그리드의 요일 경계선과 같은 색이라
-                   함께 볼 때 한 선으로 이어진다. 첫 열의 왼쪽 선은 시간축(w-12) 자리와 만나는 경계이므로
-                   그리드가 없는 할 일 단독 모드에서는 패널 가장자리라 생략. */
-              <>
-              {/* 날짜 머리글은 따로 그리지 않는다 — 위의 요일 헤더(할 일 단독 모드) 또는 시간 그리드
-                   헤더(함께 보기)가 이미 같은 열 위치에 날짜를 보여 주므로 중복. */}
+        <div className="w-full min-w-0 min-h-full flex flex-col">
+          {/* 7일을 열로 나란히(빈 날도 열을 유지해 어느 요일인지 한눈에 보이고 드랍 자리도 생김).
+               시간 그리드와 함께 보일 때(showDayHeader=false)는 그리드의 시간축(w-12)만큼 왼쪽을
+               비워 위의 요일 열과 정확히 겹치게 한다.
+               열마다 같은 안쪽 여백(px-2.5)과 왼쪽 구분선 — 양 끝(일·토)만 여백이 다르게 보이지 않게
+               일곱 열 모두 같은 조건으로 그린다. 구분선은 시간 그리드의 요일 경계선과 같은 색이라
+               함께 볼 때 한 선으로 이어진다. */}
               {/* 마감 전용 행 — 할 일 열과 같은 열 구조로 그 날짜 칸에 마감 카드만 놓고, 옅은 배경과
                    아래 구분선으로 할 일 영역과 확실히 구분한다. 마감이 하나도 없는 주엔 행 자체를 생략. */}
               {rangeDeadlines.length > 0 && (
@@ -5636,7 +5573,7 @@ function TodoPanel({
                       const ds = toDateStr(day);
                       return (
                         <div key={ds} className={`flex-1 min-w-0 px-2.5 space-y-1.5 border-l border-border ${i === viewDays.length - 1 ? "border-r" : ""}`}>
-                          {rangeDeadlines.filter(dl => dl.dueDate === ds).map(dl => renderDeadlineCard(dl, true))}
+                          {rangeDeadlines.filter(dl => dl.dueDate === ds).map(dl => renderDeadlineCard(dl))}
                         </div>
                       );
                     })}
@@ -5651,43 +5588,11 @@ function TodoPanel({
                   /* 열마다 왼쪽 선, 마지막 열은 오른쪽 선까지 — 일곱 열이 모두 양쪽 선으로 둘러싸인다.
                      열을 세로 flex 로 두어 섹션이 열 높이를 다 채우게 함(아래 빈 공간 hover 도 "+ 새 할 일"). */
                   <div key={toDateStr(day)} className={`flex-1 min-w-0 px-2.5 flex flex-col border-l border-border ${i === viewDays.length - 1 ? "border-r" : ""}`}>
-                    {renderDateSection(day, true, true)}
+                    {renderDateSection(day)}
                   </div>
                 ))}
                 {showDayHeader && <div className="w-8 flex-shrink-0" />}
               </div>
-              </>
-            )
-          ) : (
-          <div className="space-y-6">
-          <>
-          {/* 빈 날짜 섹션은 숨김 — 할 일이나 마감이 있는 날만 날짜 헤더 + 카드 노출(dateSectionDays). */}
-          {dateSectionDays.map(day => renderDateSection(day, false))}
-          {!catDragging && dateSectionDays.length === 0 && (
-            <p className="text-sm text-muted-foreground pt-2 text-center">이 기간에 등록된 할 일이 없습니다</p>
-          )}
-          {/* 새 할 일 진입점(하단 공통) — 날짜(기본: 보고 있는 날짜)와 카테고리를 폼에서 선택해 추가.
-               날짜 섹션이 하나도 없으면 이게 유일한 진입점이라 항상 노출한다.
-               섹션이 있으면 각 섹션이 이미 자체 hover 고스트를 갖고 있어서, 항상 노출하면 섹션을
-               가리킬 때 "+ 새 할 일" 이 두 개로 보임 — 그래서 이 버튼에 hover 했을 때만 드러낸다.
-               숨길 때 언마운트하지 않고 opacity 로만 감추는 이유: 사라지면 hover 판정 영역도 함께
-               없어져 다시 띄울 방법이 없고, 리스트 하단 높이가 들썩인다. 섹션 고스트가 전환 없이
-               즉시 나타나므로 여기도 opacity 트랜지션은 두지 않아 톤을 맞춘다. */}
-          {addPicker?.key === "__global__" ? renderAddPicker() : (
-            <button
-              onClick={() => { setAddDate(defaultAddDate); setAddPicker({ key: "__global__" }); setNewCatMode(false); }}
-              className={dateSectionDays.length > 0
-                ? `${ghostCardCls} opacity-0 hover:opacity-100 focus-visible:opacity-100`
-                : ghostCardCls}
-              style={ghostShadow}
-              title="새 할 일 추가"
-            >
-              <span className="text-xs text-primary/70 font-medium">+ 새 할 일</span>
-            </button>
-          )}
-          </>
-          </div>
-          )}
         </div>
       </div>
     </div>
