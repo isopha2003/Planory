@@ -3362,16 +3362,12 @@ function TodaySection({
 
         {/* Todos — 마감과 시간 블록 사이. 시간표 블록과 동일한 스트라이프+체크박스 디자인.
               드래그로 서로 자리를 교체할 수 있고, 시간대는 지정하지 않음.
-              카테고리별로 그룹을 나눠 헤더 + 그룹 하단에 구분선을 그림. */}
+              카테고리별로 묶어 순서만 유지 — 카드마다 카테고리 뱃지와 색이 있어 그룹 헤더/구분선은 두지 않음. */}
         <div className="mb-4">
           <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">오늘 일정</div>
-          <div className="space-y-2">
-            {todoGroups.map((group, gi) => (
+          <div className="space-y-1.5">
+            {todoGroups.map(group => (
               <div key={group.category || "__none__"} className="space-y-1.5">
-                <div className="flex items-center gap-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                  <span>{group.category || "미분류"}</span>
-                  <div className="flex-1 h-px bg-border/60" />
-                </div>
                 {group.todos.map(t => {
                   const color = getCategoryColor(templates, t.category);
                   const clItems = todoChecklistItems.filter(c => c.todoId === t.id);
@@ -3436,7 +3432,7 @@ function TodaySection({
                         : <Circle size={16} className="text-muted-foreground" />}
                     </button>
                     <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                      {/* 제목 앞에 카테고리(있으면) 를 인라인 뱃지로. 헤더가 있어도 시각적 강조를 위해 표시. */}
+                      {/* 제목 앞에 카테고리(있으면) 를 인라인 뱃지로. */}
                       <div className="flex items-baseline gap-1.5 min-w-0">
                         {t.category && (
                           <span
@@ -3465,7 +3461,6 @@ function TodaySection({
                   </div>
                   );
                 })}
-                {gi < todoGroups.length - 1 && <div className="h-px bg-border/40" />}
               </div>
             ))}
             <input
