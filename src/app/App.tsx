@@ -3314,7 +3314,6 @@ function TodaySection({
                         ? <CheckCircle2 size={16} style={{ color: blockColor }} />
                         : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
-                    <span className="w-0.5 h-6 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
                     <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</span>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
@@ -3349,7 +3348,6 @@ function TodaySection({
                         ? <CheckCircle2 size={16} style={{ color: blockColor }} />
                         : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
-                    <span className="w-0.5 h-6 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
                     <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</span>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
@@ -3436,17 +3434,16 @@ function TodaySection({
                         ? <CheckCircle2 size={16} style={{ color }} />
                         : <Circle size={16} className="text-muted-foreground" />}
                     </button>
-                    <span className="w-0.5 self-stretch rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                     <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                      {/* 제목 옆에 카테고리(있으면) 를 인라인 뱃지로. 헤더가 있어도 시각적 강조를 위해 표시. */}
+                      {/* 제목 앞에 카테고리(있으면) 를 인라인 뱃지로. 헤더가 있어도 시각적 강조를 위해 표시. */}
                       <div className="flex items-baseline gap-1.5 min-w-0">
-                        <span className={`text-sm min-w-0 truncate ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
                         {t.category && (
                           <span
                             className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
                             style={{ color, backgroundColor: color + "20" }}
                           >{t.category}</span>
                         )}
+                        <span className={`text-sm min-w-0 truncate ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
                       </div>
                       {t.memo && (
                         <span className="text-[11px] text-muted-foreground line-clamp-2 whitespace-pre-wrap break-words">{t.memo}</span>
@@ -3510,11 +3507,18 @@ function TodaySection({
                 }
               </button>
 
-              <div className="w-0.5 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
 
               <div className="flex-1 min-w-0">
-                <div className={`text-sm font-medium leading-snug ${block.completed ? "text-muted-foreground" : ""}`}>
-                  {block.title}
+                <div className="flex items-baseline gap-1.5 min-w-0">
+                  {block.category && (
+                    <span
+                      className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+                      style={{ color, backgroundColor: color + "20" }}
+                    >{block.category}</span>
+                  )}
+                  <span className={`text-sm font-medium leading-snug min-w-0 truncate ${block.completed ? "text-muted-foreground" : ""}`}>
+                    {block.title}
+                  </span>
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5" >
                   {fmtTime(block.startH, block.startM)} – {fmtTime(block.endH, block.endM)}
@@ -5223,7 +5227,6 @@ function TodoPanel({
             ? <CheckCircle2 size={compact ? 16 : 18} style={{ color: blockColor }} />
             : <Circle size={compact ? 16 : 18} className="text-muted-foreground" />}
         </button>
-        <span className={`w-0.5 rounded-full flex-shrink-0 ${compact ? "h-6" : "h-8"}`} style={{ backgroundColor: blockColor }} />
         <div className="flex-1 min-w-0">
           <div className={`font-medium truncate ${compact ? "text-[13px] leading-snug" : "text-sm"} ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</div>
           {/* 가로 열 배치에선 열 머리글이 이미 날짜라 날짜 줄을 생략해 카드를 낮게 유지. */}
@@ -5365,7 +5368,6 @@ function TodoPanel({
           /* 달성률 미포함 항목은 완료 개념이 없음 — 체크박스 자리만 유지해 카드 정렬을 맞춤. */
           <span className="w-[18px] flex-shrink-0" />
         )}
-        <span className={`w-0.5 rounded-full flex-shrink-0 ${opts.compact ? "h-6" : "h-8"}`} style={{ backgroundColor: color }} />
         <div className="flex-1 min-w-0">
           {editingId === t.id ? (
             <input
@@ -5382,23 +5384,18 @@ function TodoPanel({
             />
           ) : (
             <div className="flex items-baseline gap-1.5 min-w-0">
-              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
-              {opts.showCategory && t.category && !opts.compact && (
+              {/* 카테고리 뱃지는 제목 앞에. 좁은 열(compact)에선 크기만 줄여 같은 줄에 둔다. */}
+              {opts.showCategory && t.category && (
                 <span
-                  className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-sm flex-shrink-0"
+                  className={`font-semibold uppercase tracking-wide rounded-sm flex-shrink-0 truncate ${opts.compact ? "text-[9px] leading-tight px-1 py-px max-w-[45%]" : "text-[9px] px-1.5 py-0.5"}`}
                   style={{ color, backgroundColor: color + "22" }}
                 >{t.category}</span>
               )}
+              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
             </div>
           )}
-          {editingId !== t.id && (dateLabel || t.memo || clItems.length > 0 || (opts.compact && opts.showCategory && t.category)) && (
+          {editingId !== t.id && (dateLabel || t.memo || clItems.length > 0) && (
             <div className={`flex items-center gap-2 min-w-0 text-muted-foreground ${opts.compact ? "text-[10px] leading-tight" : "text-[11px]"}`}>
-              {opts.compact && opts.showCategory && t.category && (
-                <span
-                  className="text-[9px] leading-tight font-semibold uppercase tracking-wide px-1 py-px rounded-sm flex-shrink-0 truncate max-w-[60%]"
-                  style={{ color, backgroundColor: color + "22" }}
-                >{t.category}</span>
-              )}
               {dateLabel && <span className="flex-shrink-0">{dateLabel}</span>}
               {t.memo && <span className="truncate">{t.memo}</span>}
               {clItems.length > 0 && (
