@@ -3306,8 +3306,8 @@ function TodaySection({
                 return (
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-60" : "hover:brightness-[0.97]"}`}
-                    style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-40" : "hover:brightness-[0.97]"}`}
+                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
@@ -3340,8 +3340,8 @@ function TodaySection({
                 return (
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
-                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-60" : "hover:brightness-[0.97]"}`}
-                    style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
+                    className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-40" : "hover:brightness-[0.97]"}`}
+                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
@@ -3414,11 +3414,11 @@ function TodaySection({
                     className={`group/todo relative flex items-start gap-3 px-3 py-2.5 rounded-lg border transition-colors ${
                       onSelectTodo ? "cursor-pointer" : onReorderTodo ? "cursor-grab active:cursor-grabbing" : ""
                     } ${
-                      t.completed ? "opacity-60"
+                      t.completed ? "opacity-40"
                         : dragTodoId === t.id ? "opacity-50"
                         : "hover:brightness-[0.97]"
                     }`}
-                    style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
+                    style={{ backgroundColor: color + "18", borderColor: color + "55" }}
                   >
                     {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
                     {dropTarget?.id === t.id && (
@@ -3488,9 +3488,9 @@ function TodaySection({
             <div
               key={block.id}
               className={`group flex items-center gap-3 px-4 py-3.5 rounded-lg border transition-all cursor-pointer ${
-                block.completed ? "opacity-60" : "hover:shadow-sm"
+                block.completed ? "opacity-40" : "hover:shadow-sm"
               }`}
-              style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
+              style={{ backgroundColor: color + "18", borderColor: color + "55" }}
               onClick={() => onSelect(block)}
             >
               <button
@@ -4036,7 +4036,7 @@ function CalendarSection({
                   <div
                     key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
-                    className={`rounded overflow-hidden text-[10px] cursor-pointer transition-all flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
+                    className={`rounded overflow-hidden text-[10px] cursor-pointer transition-all flex items-center gap-1 pr-1 ${d.completed ? "opacity-40" : "hover:brightness-95"}`}
                     style={{ backgroundColor: blockColor + "28" }}
                     title="클릭: 상세 열기"
                   >
@@ -4419,7 +4419,7 @@ function CalendarSection({
                         setCtxMenu({ x: e.clientX, y: e.clientY });
                       }}
                       className={`absolute left-0.5 right-0.5 rounded-lg overflow-hidden z-10 select-none group/block ${resizing?.blockId !== block.id && !isBeingDragged ? "cursor-grab hover:brightness-95" : ""} ${isBeingDragged ? "opacity-30" : ""} ${isSelected ? "ring-2 ring-primary ring-offset-1" : ""}`}
-                      style={{ top, height, backgroundColor: color + "28", opacity: block.completed ? 0.45 : isBeingDragged ? 0.3 : 1 }}
+                      style={{ top, height, backgroundColor: color + "28", opacity: block.completed ? 0.35 : isBeingDragged ? 0.3 : 1 }}
                       onClick={e => {
                         if (resizing || dragBlockId || justResizedRef.current) return;
                         e.stopPropagation();
@@ -4575,7 +4575,7 @@ function CalendarSection({
                         <div
                           key={d.id}
                           onClick={e => { e.stopPropagation(); onSelectDeadline?.(d); }}
-                          className={`rounded overflow-hidden text-[9px] cursor-pointer transition-colors flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
+                          className={`rounded overflow-hidden text-[9px] cursor-pointer transition-colors flex items-center gap-1 pr-1 ${d.completed ? "opacity-40" : "hover:brightness-95"}`}
                           style={{ backgroundColor: blockColor + "28" }}
                           title="클릭: 상세 열기"
                         >
@@ -4602,7 +4602,7 @@ function CalendarSection({
                       return (
                         <div key={b.id}
                           onClick={e => { e.stopPropagation(); onSelect(b); }}
-                          className={`rounded overflow-hidden text-[9px] cursor-pointer transition-all ${b.completed ? "opacity-60" : "hover:brightness-95"}`}
+                          className={`rounded overflow-hidden text-[9px] cursor-pointer transition-all ${b.completed ? "opacity-40" : "hover:brightness-95"}`}
                           style={{ backgroundColor: color + "28" }}
                           title={`${hh}:${mm} ${b.title || "제목 없음"}`}
                         >
@@ -4630,8 +4630,8 @@ function CalendarSection({
                     return (
                     <div key={t.id}
                       onClick={e => { e.stopPropagation(); onSelectTodo?.(t); }}
-                      className={`rounded border overflow-hidden text-[9px] cursor-pointer transition-all flex items-center gap-1 px-1 py-0.5 ${t.completed ? "opacity-60" : "hover:shadow-sm"}`}
-                      style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
+                      className={`rounded border overflow-hidden text-[9px] cursor-pointer transition-all flex items-center gap-1 px-1 py-0.5 ${t.completed ? "opacity-40" : "hover:shadow-sm"}`}
+                      style={{ backgroundColor: color + "18", borderColor: color + "55" }}
                       title={t.category ? `[${t.category}] 상세 열기` : "상세 열기"}
                     >
                       <button
@@ -5152,8 +5152,8 @@ function TodoPanel({
       <div
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
-        className={`flex items-center rounded-lg border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "opacity-60" : ""}`}
-        style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
+        className={`flex items-center rounded-lg border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "opacity-40" : ""}`}
+        style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
         title="클릭: 상세 열기"
       >
         <button
@@ -5243,11 +5243,11 @@ function TodoPanel({
         className={`group/todo relative flex items-center rounded-lg border transition-all ${opts.compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${
           onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
         } ${
-          t.completed ? "opacity-60"
+          t.completed ? "opacity-40"
             : dragTodoId === t.id ? "opacity-50"
             : "hover:shadow-sm"
         }`}
-        style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
+        style={{ backgroundColor: color + "18", borderColor: color + "55" }}
         title="클릭: 상세 열기 · 더블클릭: 제목 편집"
       >
         {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
@@ -6023,7 +6023,7 @@ function DeadlinesSection({
                     key={d.id}
                     onClick={() => setBoardId(d.id)}
                     className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
-                    style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
+                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                   >
                     <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                     <div className="flex-1 min-w-0">
@@ -6064,7 +6064,7 @@ function DeadlinesSection({
                   key={d.id}
                   onClick={() => setBoardId(d.id)}
                   className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
-                  style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
+                  style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                 >
                   <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                   <div className="flex-1 min-w-0">
@@ -6134,7 +6134,7 @@ function DeadlinesSection({
         {completed.length > 0 && (
           <div>
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">완료됨</div>
-            <div className="space-y-2 opacity-50">
+            <div className="space-y-2 opacity-40">
               {completed.map(d => (
                 <div key={d.id} onClick={() => setBoardId(d.id)} className="group/dl flex items-center gap-4 px-4 py-3 rounded-xl border cursor-pointer hover:bg-muted/50 transition-colors">
                   <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><CheckCircle2 size={18} className="text-sky-600" /></button>
@@ -6693,8 +6693,8 @@ function KanbanBoard({
                         onClick={() => startEdit(card)}
                         className="group/kcard relative rounded-lg border overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
                         style={{
-                          backgroundColor: cardColor + "2E",
-                          borderColor: cardColor + "88",
+                          backgroundColor: cardColor + "18",
+                          borderColor: cardColor + "55",
                           opacity: dragCardId === card.id ? 0.3 : 1,
                         }}
                       >
