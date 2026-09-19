@@ -4621,6 +4621,9 @@ function CalendarSection({
                             style={{ color }}
                           >
                             <span className="opacity-70 mr-1">{hh}:{mm}</span>
+                            {b.category && (
+                              <span className="text-[8px] font-semibold uppercase tracking-wide px-1 rounded-sm mr-1" style={{ backgroundColor: color + "30" }}>{b.category}</span>
+                            )}
                             {b.title}
                           </span>
                         </div>
@@ -4629,8 +4632,8 @@ function CalendarSection({
                   </div>
                 )}
                 {/* Todo — 마감 아래. 주 보기 할 일 카드와 같은 디자인(흰 카드 + 원형 체크 + 제목)을
-                     월 셀 크기에 맞춰 축소한 것. 카테고리 색은 체크 아이콘에만. 클릭 → 상세 패널.
-                     월 뷰 셀은 좁아서 카테고리 라벨·메모 프리뷰는 생략. */}
+                     월 셀 크기에 맞춰 축소한 것. 카테고리는 제목 앞 소형 뱃지로. 클릭 → 상세 패널.
+                     월 뷰 셀은 좁아서 메모 프리뷰는 생략. */}
                 <div className="space-y-0.5">
                   {dayTodos.map(t => {
                     const color = getCategoryColor(templates, t.category);
@@ -4649,6 +4652,12 @@ function CalendarSection({
                           ? <CheckCircle2 size={10} style={{ color }} />
                           : <Circle size={10} className="text-muted-foreground" />}
                       </button>
+                      {t.category && (
+                        <span
+                          className="text-[8px] font-semibold uppercase tracking-wide px-1 rounded-sm flex-shrink-0 truncate max-w-[45%]"
+                          style={{ color, backgroundColor: color + "22" }}
+                        >{t.category}</span>
+                      )}
                       <span className={`truncate leading-tight font-medium min-w-0 ${t.completed ? "text-muted-foreground" : ""}`}>
                         {t.title}
                       </span>
