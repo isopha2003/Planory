@@ -4450,7 +4450,6 @@ function CalendarSection({
                            inset-y-2.5 로 채우고, flex column + justify-center 로 실제 텍스트를 중앙 정렬. */}
                       <div className="absolute inset-x-0 inset-y-2.5 px-1.5 flex flex-col justify-center min-w-0">
                         <div className="text-[10px] font-semibold truncate flex items-center gap-1" style={{ color }}>
-                          {block.repeatGroupId && <span title="반복 일정" style={{ fontSize: 9 }}>↻</span>}
                           <span className="truncate">{block.title}</span>
                         </div>
                         {height > 32 && (
