@@ -5382,7 +5382,6 @@ function TodoPanel({
             />
           ) : (
             <div className="flex items-baseline gap-1.5 min-w-0">
-              {t.repeatGroupId && <span title="반복 할 일" className="text-xs text-muted-foreground flex-shrink-0">↻</span>}
               <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
               {opts.showCategory && t.category && !opts.compact && (
                 <span
