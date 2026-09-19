@@ -2475,7 +2475,6 @@ export default function App() {
               onUpdateTodoTitle={(id, title) => requestTodoEdit(id, { title })}
               onMoveTodo={moveTodoToDate}
               onReorderTodo={reorderTodoBeside}
-              onToggleTodo={toggleTodo}
               categoryRankFor={categoryRankFor}
               onReorderCategory={requestCategoryReorder}
             />
@@ -3606,7 +3605,7 @@ function CalendarSection({
   onAddTemplate, onDeleteBlockTemplate,
   paletteColors, onAddPaletteColor, onRemovePaletteColor,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat,
-  todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onReorderTodo, onToggleTodo,
+  todos, onAddTodo, onDeleteTodo, onUpdateTodoTitle, onMoveTodo, onReorderTodo,
   categoryRankFor, onReorderCategory, initialDate, onOpenDay,
 }: {
   blocks: Block[];
@@ -3645,7 +3644,6 @@ function CalendarSection({
   onUpdateTodoTitle: (id: string, title: string) => void;
   onMoveTodo: (id: string, newDate: string) => void;
   onReorderTodo: (movedId: string, targetId: string, place: "before" | "after", date?: string) => void;
-  onToggleTodo: (id: string) => void;
   // 날짜별 카테고리 표시 순서 — 그 날짜 전용 순서가 있으면 그것, 없으면 전역 기본 순서.
   categoryRankFor: (date: string) => CategoryRank;
   // 카테고리 경계를 넘겨 드래그 — 적용 범위를 묻는 모달을 띄움.
@@ -4665,9 +4663,9 @@ function CalendarSection({
                     })}
                   </div>
                 )}
-                {/* Todo — 마감 아래. 주 보기 할 일 카드와 같은 디자인(흰 카드 + 원형 체크 + 제목)을
-                     월 셀 크기에 맞춰 축소한 것. 카테고리는 제목 앞 소형 뱃지로. 클릭 → 상세 패널.
-                     월 뷰 셀은 좁아서 메모 프리뷰는 생략. */}
+                {/* Todo — 마감 아래. 주 보기 할 일 카드와 같은 디자인(카테고리 뱃지 + 제목)을
+                     월 셀 크기에 맞춰 축소한 것. 완료 여부는 카드 흐림으로만, 토글은 상세 패널에서.
+                     클릭 → 상세 패널. 월 뷰 셀은 좁아서 메모 프리뷰는 생략. */}
                 <div className="space-y-0.5">
                   {dayTodos.map(t => {
                     const color = getCategoryColor(templates, t.category);
@@ -4678,15 +4676,6 @@ function CalendarSection({
                       style={{ backgroundColor: color + "18", borderColor: color + "55" }}
                       title={t.category ? `[${t.category}] 상세 열기` : "상세 열기"}
                     >
-                      <button
-                        onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }}
-                        className="flex-shrink-0 flex items-center"
-                        title={t.completed ? "완료 해제" : "완료 처리"}
-                      >
-                        {t.completed
-                          ? <CheckCircle2 size={10} style={{ color }} />
-                          : <Circle size={10} className="text-muted-foreground" />}
-                      </button>
                       {t.category && (
                         <span
                           className="text-[8px] font-semibold uppercase tracking-wide px-1 rounded-sm flex-shrink-0 truncate max-w-[45%]"
@@ -4948,7 +4937,6 @@ function CalendarSection({
                   onDelete={onDeleteTodo}
                   onUpdateTitle={onUpdateTodoTitle}
                   onSelectTodo={onSelectTodo}
-                  onToggleTodo={onToggleTodo}
                   deadlines={deadlines}
                   onToggleDeadline={onToggleDeadline}
                   onSelectDeadline={onSelectDeadline}
@@ -5037,7 +5025,7 @@ function CalendarSection({
 // 카드 목록. 새 할 일 추가는 열 hover 시 "+ 새 할 일" 고스트(카테고리 픽커를 거쳐 생성).
 function TodoPanel({
   todos, templates, todoChecklistItems, viewDays, paletteColors,
-  onAdd, onAddTemplate, onDeleteBlockTemplate, onDelete, onUpdateTitle, onSelectTodo, onToggleTodo,
+  onAdd, onAddTemplate, onDeleteBlockTemplate, onDelete, onUpdateTitle, onSelectTodo,
   deadlines, onToggleDeadline, onSelectDeadline,
   showDayHeader, onGoPrev, onGoNext, onSelectDate, onMoveTodo, onReorderTodo,
   categoryRankFor, onReorderCategory,
@@ -5054,7 +5042,6 @@ function TodoPanel({
   onUpdateTitle: (id: string, title: string) => void;
   // 할 일 카드 클릭 → 상세 패널 열기. 없으면 기존 인라인 편집 fallback.
   onSelectTodo?: (t: Todo) => void;
-  onToggleTodo: (id: string) => void;
   // 할 일만 보는 모드(showDayHeader=true) 에서만 자체 마감 섹션을 그림. 시간 그리드가 함께 보일
   // 땐 그쪽 상단의 마감 행이 유일한 소스.
   deadlines: Deadline[];
