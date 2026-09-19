@@ -4047,7 +4047,7 @@ function CalendarSection({
                     key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
                     className={`rounded overflow-hidden text-[10px] cursor-pointer transition-all flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
-                    style={{ backgroundColor: blockColor + "28", borderLeft: `3px solid ${blockColor}` }}
+                    style={{ backgroundColor: blockColor + "28" }}
                     title="클릭: 상세 열기"
                   >
                     <span
@@ -4429,7 +4429,7 @@ function CalendarSection({
                         setCtxMenu({ x: e.clientX, y: e.clientY });
                       }}
                       className={`absolute left-0.5 right-0.5 rounded-lg overflow-hidden z-10 select-none group/block ${resizing?.blockId !== block.id && !isBeingDragged ? "cursor-grab hover:brightness-95" : ""} ${isBeingDragged ? "opacity-30" : ""} ${isSelected ? "ring-2 ring-primary ring-offset-1" : ""}`}
-                      style={{ top, height, backgroundColor: color + "28", borderLeft: `3px solid ${color}`, opacity: block.completed ? 0.45 : isBeingDragged ? 0.3 : 1 }}
+                      style={{ top, height, backgroundColor: color + "28", opacity: block.completed ? 0.45 : isBeingDragged ? 0.3 : 1 }}
                       onClick={e => {
                         if (resizing || dragBlockId || justResizedRef.current) return;
                         e.stopPropagation();
@@ -4586,7 +4586,7 @@ function CalendarSection({
                           key={d.id}
                           onClick={e => { e.stopPropagation(); onSelectDeadline?.(d); }}
                           className={`rounded overflow-hidden text-[9px] cursor-pointer transition-colors flex items-center gap-1 pr-1 ${d.completed ? "opacity-60" : "hover:brightness-95"}`}
-                          style={{ backgroundColor: blockColor + "28", borderLeft: `3px solid ${blockColor}` }}
+                          style={{ backgroundColor: blockColor + "28" }}
                           title="클릭: 상세 열기"
                         >
                           <span
@@ -4613,7 +4613,7 @@ function CalendarSection({
                         <div key={b.id}
                           onClick={e => { e.stopPropagation(); onSelect(b); }}
                           className={`rounded overflow-hidden text-[9px] cursor-pointer transition-all ${b.completed ? "opacity-60" : "hover:brightness-95"}`}
-                          style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
+                          style={{ backgroundColor: color + "28" }}
                           title={`${hh}:${mm} ${b.title || "제목 없음"}`}
                         >
                           <span
@@ -4628,26 +4628,28 @@ function CalendarSection({
                     })}
                   </div>
                 )}
-                {/* Todo — 마감 아래. 시간 블록과 동일한 왼쪽 색 스트라이프 + 배경 톤.
-                     클릭 → 상세 패널 (색상/메모 편집). 시간 블록과 동일한 인터랙션.
-                     카테고리는 제목 앞에 소형 라벨로. 월 뷰 셀은 좁아서 메모 프리뷰는 생략. */}
+                {/* Todo — 마감 아래. 주 보기 할 일 카드와 같은 디자인(흰 카드 + 원형 체크 + 제목)을
+                     월 셀 크기에 맞춰 축소한 것. 카테고리 색은 체크 아이콘에만. 클릭 → 상세 패널.
+                     월 뷰 셀은 좁아서 카테고리 라벨·메모 프리뷰는 생략. */}
                 <div className="space-y-0.5">
                   {dayTodos.map(t => {
                     const color = getCategoryColor(templates, t.category);
                     return (
                     <div key={t.id}
                       onClick={e => { e.stopPropagation(); onSelectTodo?.(t); }}
-                      className={`rounded overflow-hidden text-[9px] cursor-pointer transition-all ${t.completed ? "opacity-60" : "hover:brightness-95"}`}
-                      style={{ backgroundColor: color + "28", borderLeft: `3px solid ${color}` }}
+                      className={`rounded border bg-card overflow-hidden text-[9px] cursor-pointer transition-all flex items-center gap-1 px-1 py-0.5 ${t.completed ? "opacity-60" : "hover:shadow-sm"}`}
                       title={t.category ? `[${t.category}] 상세 열기` : "상세 열기"}
                     >
-                      <span
-                        className="truncate leading-tight block px-1 py-0.5 font-medium"
-                        style={{ color }}
+                      <button
+                        onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }}
+                        className="flex-shrink-0 flex items-center"
+                        title={t.completed ? "완료 해제" : "완료 처리"}
                       >
-                        {t.category && (
-                          <span className="opacity-70 mr-1">[{t.category}]</span>
-                        )}
+                        {t.completed
+                          ? <CheckCircle2 size={10} style={{ color }} />
+                          : <Circle size={10} className="text-muted-foreground" />}
+                      </button>
+                      <span className={`truncate leading-tight font-medium min-w-0 ${t.completed ? "text-muted-foreground" : ""}`}>
                         {t.title}
                       </span>
                     </div>
@@ -5283,8 +5285,7 @@ function TodoPanel({
 
   // 할 일 카드 — 스크린샷의 리스트 카드 디자인: 원형 체크박스 + 색 스트라이프 + 제목/부제.
   // 클릭 → 상세 패널, 더블클릭 → 인라인 제목 편집. 드래그로 이동/스왑.
-  // compact — 주 보기 가로 열용. 여백을 줄이고 카테고리 배지를 제목 아래 줄로 내려 좁은 열에서도
-  // 제목이 먼저 읽히게 한다.
+  // compact — 주 보기 가로 열용. 여백을 줄이고 카테고리 배지는 생략(좁은 열에서 제목이 먼저 읽히게).
   const renderTodoCard = (t: Todo, opts: { showDate?: boolean; showCategory?: boolean; sectionDate?: string; compact?: boolean } = {}) => {
     const color = getCategoryColor(templates, t.category);
     const clItems = todoChecklistItems.filter(c => c.todoId === t.id);
@@ -5384,10 +5385,10 @@ function TodoPanel({
             />
           ) : (
             <div className="flex items-baseline gap-1.5 min-w-0">
-              {/* 카테고리 뱃지는 제목 앞에. 좁은 열(compact)에선 크기만 줄여 같은 줄에 둔다. */}
+              {/* 카테고리 뱃지는 제목 앞에(세로 목록에서만 — 주 보기 열에선 호출부가 showCategory 를 끈다). */}
               {opts.showCategory && t.category && (
                 <span
-                  className={`font-semibold uppercase tracking-wide rounded-sm flex-shrink-0 truncate ${opts.compact ? "text-[9px] leading-tight px-1 py-px max-w-[45%]" : "text-[9px] px-1.5 py-0.5"}`}
+                  className="text-[9px] font-semibold uppercase tracking-wide rounded-sm flex-shrink-0 truncate px-1.5 py-0.5"
                   style={{ color, backgroundColor: color + "22" }}
                 >{t.category}</span>
               )}
@@ -5612,7 +5613,7 @@ function TodoPanel({
           {/* 마감 — 해당 날짜 섹션의 가장 상단에 카드로 노출. */}
           {/* 가로 열 배치(compact)에선 마감을 열 안에 섞지 않고 위쪽 전용 행에 따로 그린다. */}
           {!compact && rangeDeadlines.filter(dl => dl.dueDate === dateStr).map(dl => renderDeadlineCard(dl))}
-          {dayTodos.map(t => renderTodoCard(t, { showCategory: true, sectionDate: dateStr, compact }))}
+          {dayTodos.map(t => renderTodoCard(t, { showCategory: !compact, sectionDate: dateStr, compact }))}
           {/* 카테고리 드래그 중 드랍 자리 — hover 중인 섹션은 강조, 나머지는 옅은 자리 표시.
                (항목이 있는 날은 카드들이 이미 드랍 면적을 만들어 주므로 자리 표시 생략) */}
           {tplHoverKey === dateStr ? (
@@ -6671,7 +6672,6 @@ function KanbanBoard({
              팔레트 아이콘으로 마감 커스텀 색 지정(빈 값이면 D-day 톤을 자동으로 따라감).
              D-day 배지는 항상 남은 일수에 따른 톤(초록/노랑/주황/빨강)을 그대로 사용. */}
         <div className="flex items-center gap-3 mb-6 relative">
-          <span className="w-1 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: stripeColor }} />
           <div className="flex-1 min-w-0">
             {editingTitle ? (
               <input
@@ -6810,8 +6810,7 @@ function KanbanBoard({
                     // 클릭으로 편집 중 — 카드 자리를 인라인 폼으로 대체.
                     if (editingId === card.id) {
                       return (
-                        <div key={card.id} className="p-2.5 rounded-lg border bg-card space-y-1.5"
-                          style={{ borderLeft: `3px solid ${editColor || stripeColor}` }}>
+                        <div key={card.id} className="p-2.5 rounded-lg border bg-card space-y-1.5">
                           <input
                             autoFocus
                             value={editTitle}
@@ -6939,7 +6938,6 @@ function KanbanBoard({
                         className="group/kcard relative rounded-lg overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
                         style={{
                           backgroundColor: cardColor + "28",
-                          borderLeft: `3px solid ${cardColor}`,
                           opacity: dragCardId === card.id ? 0.3 : 1,
                         }}
                       >
@@ -6996,8 +6994,7 @@ function KanbanBoard({
                 </div>
 
                 {addingCol === status ? (
-                  <div className="mt-2 p-2.5 rounded-lg border bg-card space-y-1.5"
-                    style={{ borderLeft: `3px solid ${newColor || stripeColor}` }}>
+                  <div className="mt-2 p-2.5 rounded-lg border bg-card space-y-1.5">
                     <input
                       autoFocus
                       value={newTitle}
