@@ -3307,7 +3307,7 @@ function TodaySection({
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
                     className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-60" : "hover:brightness-[0.97]"}`}
-                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+                    style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
@@ -3341,7 +3341,7 @@ function TodaySection({
                   <div key={d.id}
                     onClick={() => onSelectDeadline?.(d)}
                     className={`group/dl flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer ${d.completed ? "opacity-60" : "hover:brightness-[0.97]"}`}
-                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+                    style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
                     title="클릭: 상세 열기"
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
@@ -3418,7 +3418,7 @@ function TodaySection({
                         : dragTodoId === t.id ? "opacity-50"
                         : "hover:brightness-[0.97]"
                     }`}
-                    style={{ backgroundColor: color + "18", borderColor: color + "55" }}
+                    style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
                   >
                     {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
                     {dropTarget?.id === t.id && (
@@ -3490,7 +3490,7 @@ function TodaySection({
               className={`group flex items-center gap-3 px-4 py-3.5 rounded-lg border transition-all cursor-pointer ${
                 block.completed ? "opacity-60" : "hover:shadow-sm"
               }`}
-              style={{ backgroundColor: color + "18", borderColor: color + "55" }}
+              style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
               onClick={() => onSelect(block)}
             >
               <button
@@ -4631,7 +4631,7 @@ function CalendarSection({
                     <div key={t.id}
                       onClick={e => { e.stopPropagation(); onSelectTodo?.(t); }}
                       className={`rounded border overflow-hidden text-[9px] cursor-pointer transition-all flex items-center gap-1 px-1 py-0.5 ${t.completed ? "opacity-60" : "hover:shadow-sm"}`}
-                      style={{ backgroundColor: color + "18", borderColor: color + "55" }}
+                      style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
                       title={t.category ? `[${t.category}] 상세 열기` : "상세 열기"}
                     >
                       <button
@@ -5153,7 +5153,7 @@ function TodoPanel({
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
         className={`flex items-center rounded-lg border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "opacity-60" : ""}`}
-        style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+        style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
         title="클릭: 상세 열기"
       >
         <button
@@ -5247,7 +5247,7 @@ function TodoPanel({
             : dragTodoId === t.id ? "opacity-50"
             : "hover:shadow-sm"
         }`}
-        style={{ backgroundColor: color + "18", borderColor: color + "55" }}
+        style={{ backgroundColor: color + "2E", borderColor: color + "88" }}
         title="클릭: 상세 열기 · 더블클릭: 제목 편집"
       >
         {/* 끼워넣을 자리 표시 — 카드 위/아래 경계에 선 */}
@@ -6023,7 +6023,7 @@ function DeadlinesSection({
                     key={d.id}
                     onClick={() => setBoardId(d.id)}
                     className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
-                    style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+                    style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
                   >
                     <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                     <div className="flex-1 min-w-0">
@@ -6064,7 +6064,7 @@ function DeadlinesSection({
                   key={d.id}
                   onClick={() => setBoardId(d.id)}
                   className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
-                  style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
+                  style={{ backgroundColor: blockColor + "2E", borderColor: blockColor + "88" }}
                 >
                   <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                   <div className="flex-1 min-w-0">
@@ -6693,8 +6693,8 @@ function KanbanBoard({
                         onClick={() => startEdit(card)}
                         className="group/kcard relative rounded-lg border overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
                         style={{
-                          backgroundColor: cardColor + "18",
-                          borderColor: cardColor + "55",
+                          backgroundColor: cardColor + "2E",
+                          borderColor: cardColor + "88",
                           opacity: dragCardId === card.id ? 0.3 : 1,
                         }}
                       >
