@@ -3315,7 +3315,7 @@ function TodaySection({
                         : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
                     <span className="w-0.5 h-6 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
-                    <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</span>
+                    <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</span>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
                       style={{ backgroundColor: dayColor + "22", color: dayColor }}
@@ -3350,7 +3350,7 @@ function TodaySection({
                         : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
                     <span className="w-0.5 h-6 rounded-full flex-shrink-0" style={{ backgroundColor: blockColor }} />
-                    <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</span>
+                    <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</span>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
                       style={{ backgroundColor: dayColor + "22", color: dayColor }}
@@ -3440,7 +3440,7 @@ function TodaySection({
                     <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                       {/* 제목 옆에 카테고리(있으면) 를 인라인 뱃지로. 헤더가 있어도 시각적 강조를 위해 표시. */}
                       <div className="flex items-baseline gap-1.5 min-w-0">
-                        <span className={`text-sm min-w-0 truncate ${t.completed ? "line-through text-muted-foreground" : ""}`}>{t.title}</span>
+                        <span className={`text-sm min-w-0 truncate ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
                         {t.category && (
                           <span
                             className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
@@ -4047,7 +4047,7 @@ function CalendarSection({
                     title="클릭: 상세 열기"
                   >
                     <span
-                      className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
+                      className="truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0"
                       style={{ color: blockColor }}
                     >{d.title}</span>
                     <span className="text-[9px] font-semibold leading-none flex-shrink-0" style={{ color: dayColor }}>
@@ -4587,7 +4587,7 @@ function CalendarSection({
                           title="클릭: 상세 열기"
                         >
                           <span
-                            className={`truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0 ${d.completed ? "line-through" : ""}`}
+                            className="truncate font-medium leading-tight px-1 py-0.5 flex-1 min-w-0"
                             style={{ color: blockColor }}
                           >{d.title}</span>
                           <span className="text-[8px] font-semibold leading-none flex-shrink-0" style={{ color: dayColor }}>
@@ -4639,7 +4639,7 @@ function CalendarSection({
                       title={t.category ? `[${t.category}] 상세 열기` : "상세 열기"}
                     >
                       <span
-                        className={`truncate leading-tight block px-1 py-0.5 font-medium ${t.completed ? "line-through" : ""}`}
+                        className="truncate leading-tight block px-1 py-0.5 font-medium"
                         style={{ color }}
                       >
                         {t.category && (
@@ -5226,7 +5226,7 @@ function TodoPanel({
         </button>
         <span className={`w-0.5 rounded-full flex-shrink-0 ${compact ? "h-6" : "h-8"}`} style={{ backgroundColor: blockColor }} />
         <div className="flex-1 min-w-0">
-          <div className={`font-medium truncate ${compact ? "text-[13px] leading-snug" : "text-sm"} ${d.completed ? "line-through text-muted-foreground" : ""}`}>{d.title}</div>
+          <div className={`font-medium truncate ${compact ? "text-[13px] leading-snug" : "text-sm"} ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</div>
           {/* 가로 열 배치에선 열 머리글이 이미 날짜라 날짜 줄을 생략해 카드를 낮게 유지. */}
           {!compact && <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>}
         </div>
@@ -5384,7 +5384,7 @@ function TodoPanel({
           ) : (
             <div className="flex items-baseline gap-1.5 min-w-0">
               {t.repeatGroupId && <span title="반복 할 일" className="text-xs text-muted-foreground flex-shrink-0">↻</span>}
-              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "line-through text-muted-foreground" : ""}`}>{t.title}</span>
+              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
               {opts.showCategory && t.category && !opts.compact && (
                 <span
                   className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-sm flex-shrink-0"
@@ -6386,7 +6386,7 @@ function DeadlinesSection({
               {completed.map(d => (
                 <div key={d.id} onClick={() => setBoardId(d.id)} className="group/dl flex items-center gap-4 px-4 py-3 rounded-xl border cursor-pointer hover:bg-muted/50 transition-colors">
                   <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><CheckCircle2 size={18} className="text-sky-600" /></button>
-                  <div className="flex-1 min-w-0 text-sm line-through text-muted-foreground">{d.title}</div>
+                  <div className="flex-1 min-w-0 text-sm text-muted-foreground">{d.title}</div>
                   <button
                     onClick={e => { e.stopPropagation(); onDelete(d.id); }}
                     title="삭제"
@@ -6970,7 +6970,7 @@ function KanbanBoard({
                                       : <Circle size={11} className="opacity-60" style={{ color: cardColor }} />}
                                   </button>
                                   <span
-                                    className={`text-[10px] truncate ${item.completed ? "line-through opacity-50" : "opacity-80"}`}
+                                    className={`text-[10px] truncate ${item.completed ? "opacity-50" : "opacity-80"}`}
                                     style={{ color: cardColor }}
                                   >
                                     {item.text}
@@ -10964,10 +10964,10 @@ function ChecklistNode({
           <button
             onClick={() => setEditing(true)}
             title="내용 수정"
-            className={`flex-1 min-w-0 truncate text-left rounded px-1 -mx-1 hover:bg-muted/50 transition-colors ${item.completed ? "line-through text-muted-foreground" : ""}`}
+            className={`flex-1 min-w-0 truncate text-left rounded px-1 -mx-1 hover:bg-muted/50 transition-colors ${item.completed ? "text-muted-foreground" : ""}`}
           >{item.text}</button>
         ) : (
-          <span className={`flex-1 min-w-0 truncate ${item.completed ? "line-through text-muted-foreground" : ""}`}>{item.text}</span>
+          <span className={`flex-1 min-w-0 truncate ${item.completed ? "text-muted-foreground" : ""}`}>{item.text}</span>
         )}
         <button
           onClick={() => onDelete(item.id)}
@@ -11360,7 +11360,7 @@ function TodoDetailPanel({
             {todo.completed
               ? <CheckCircle2 size={16} style={{ color }} />
               : <Circle size={16} className="text-muted-foreground" />}
-            <span className={`text-xs ${todo.completed ? "text-muted-foreground line-through" : ""}`}>
+            <span className={`text-xs ${todo.completed ? "text-muted-foreground" : ""}`}>
               {todo.completed ? "완료됨 — 다시 열기" : "완료 처리"}
             </span>
           </button>
@@ -11485,7 +11485,7 @@ function DeadlineDetailPanel({
           {deadline.completed
             ? <CheckCircle2 size={16} style={{ color: blockColor }} />
             : <Circle size={16} className="text-muted-foreground" />}
-          <span className={`text-xs ${deadline.completed ? "text-muted-foreground line-through" : ""}`}>
+          <span className={`text-xs ${deadline.completed ? "text-muted-foreground" : ""}`}>
             {deadline.completed ? "완료됨 — 다시 열기" : "완료 처리"}
           </span>
         </button>
