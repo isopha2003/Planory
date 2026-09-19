@@ -3491,7 +3491,7 @@ function TodaySection({
             return (
             <div
               key={block.id}
-              className={`group flex items-center gap-3 px-4 py-3.5 rounded-xl border transition-all cursor-pointer ${
+              className={`group flex items-center gap-3 px-4 py-3.5 rounded-lg border transition-all cursor-pointer ${
                 block.completed ? "opacity-60" : "hover:shadow-sm"
               }`}
               style={{ backgroundColor: color + "18", borderColor: color + "55" }}
@@ -5229,7 +5229,7 @@ function TodoPanel({
       <div
         key={d.id}
         onClick={() => onSelectDeadline?.(d)}
-        className={`flex items-center rounded-xl border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "opacity-60" : ""}`}
+        className={`flex items-center rounded-lg border cursor-pointer hover:shadow-sm transition-all ${compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${d.completed ? "opacity-60" : ""}`}
         style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
         title="클릭: 상세 열기"
       >
@@ -5354,7 +5354,7 @@ function TodoPanel({
           else { setEditingDraft(t.title); setEditingId(t.id); }
         }}
         onDoubleClick={e => { e.stopPropagation(); setEditingDraft(t.title); setEditingId(t.id); }}
-        className={`group/todo relative flex items-center rounded-xl border transition-all ${opts.compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${
+        className={`group/todo relative flex items-center rounded-lg border transition-all ${opts.compact ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3"} ${
           onMoveTodo && editingId !== t.id ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
         } ${
           t.completed ? "opacity-60"
@@ -6927,9 +6927,10 @@ function KanbanBoard({
                           reorderCard(id, card.id, e.clientY < rect.top + rect.height / 2);
                         }}
                         onClick={() => startEdit(card)}
-                        className="group/kcard relative rounded-lg overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
+                        className="group/kcard relative rounded-lg border overflow-hidden cursor-grab select-none hover:brightness-95 transition-all"
                         style={{
-                          backgroundColor: cardColor + "28",
+                          backgroundColor: cardColor + "18",
+                          borderColor: cardColor + "55",
                           opacity: dragCardId === card.id ? 0.3 : 1,
                         }}
                       >
