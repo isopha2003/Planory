@@ -5196,6 +5196,9 @@ function TodoPanel({
   const viewDateStrs = viewDays.map(toDateStr);
   // 여러 날을 한꺼번에 보는 주 보기에서는 세로 목록 대신 가로 열 배치.
   const horizontal = viewDays.length > 1;
+  // 단, 카테고리별 묶음은 주 보기에서도 가로 열이 아니라 가운데 세로 목록으로 — 카테고리를 열로
+  // 늘어놓으면 개수에 따라 폭이 들쭉날쭉하고 가로 스크롤이 생겨, 일 보기와 같은 세로 정리가 낫다.
+  const columnLayout = horizontal && groupMode === "date";
   const firstDs = viewDateStrs[0];
   const lastDs = viewDateStrs[viewDateStrs.length - 1];
   // 날짜를 지정할 수 없는 자리(카테고리별 보기)와 추가 폼의 기본 날짜 — 지금 보고 있는 날짜.
@@ -5824,22 +5827,21 @@ function TodoPanel({
         //
         // 가로 열 배치(주 보기)에서는 반대로 오른쪽에만 예약한다 — 위 시간 그리드가 그렇게
         // 하고 있어서, 같은 규칙이어야 요일 열이 위아래로 맞아떨어진다.
-        className={`flex-1 overflow-y-auto ${horizontal ? "pt-3 pb-6 [scrollbar-gutter:stable]" : "p-6 [scrollbar-gutter:stable_both-edges]"}`}
+        className={`flex-1 overflow-y-auto ${columnLayout ? "pt-3 pb-6 [scrollbar-gutter:stable]" : "p-6 [scrollbar-gutter:stable_both-edges]"}`}
         // 패널 어디에 들어오든 "카테고리 드래그 중" 을 감지 — 섹션이 하나도 없는 빈 기간에도
         // 리스트 영역 자체가 이벤트를 받으므로 드랍 자리를 펼칠 수 있음.
         onDragOver={e => { if (isCategoryDrag(e)) setCatDragging(true); }}
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setCatDragging(false); }}
         onDrop={() => setCatDragging(false)}
       >
-        <div className={horizontal ? "w-full min-w-0 min-h-full flex flex-col" : "max-w-lg w-full mx-auto"}>
-          {horizontal ? (
-            /* ── 주 보기: 가로 열 배치 ──
-                 날짜별은 7일을 열로 나란히(빈 날도 열을 유지해 어느 요일인지 한눈에 보이고 드랍
-                 자리도 생김), 카테고리별은 카테고리를 열로. 세로로 길게 쌓으면 일주일치가 한 화면에
-                 안 들어와 훑어보기 어려웠다.
+        <div className={columnLayout ? "w-full min-w-0 min-h-full flex flex-col" : "max-w-lg w-full mx-auto"}>
+          {columnLayout ? (
+            /* ── 주 보기(날짜별): 가로 열 배치 ──
+                 7일을 열로 나란히(빈 날도 열을 유지해 어느 요일인지 한눈에 보이고 드랍 자리도 생김).
+                 세로로 길게 쌓으면 일주일치가 한 화면에 안 들어와 훑어보기 어려웠다.
                  시간 그리드와 함께 보일 때(showDayHeader=false)는 그리드의 시간축(w-12)만큼 왼쪽을
                  비워 위의 요일 열과 정확히 겹치게 한다. */
-            groupMode === "date" ? (
+            (
               /* 열마다 같은 안쪽 여백(px-2.5)과 왼쪽 구분선 — 양 끝(일·토)만 여백이 다르게 보이지 않게
                    일곱 열 모두 같은 조건으로 그린다. 구분선은 시간 그리드의 요일 경계선과 같은 색이라
                    함께 볼 때 한 선으로 이어진다. 첫 열의 왼쪽 선은 시간축(w-12) 자리와 만나는 경계이므로
@@ -5878,27 +5880,6 @@ function TodoPanel({
                 {showDayHeader && <div className="w-8 flex-shrink-0" />}
               </div>
               </>
-            ) : (
-              /* 카테고리 수는 정해져 있지 않으므로 열 최소 폭을 두고 넘치면 가로 스크롤. 카테고리가
-                   한둘뿐일 때 열이 화면 폭을 통째로 차지하지 않도록 최대 폭도 둔다. */
-              <div className="flex items-start gap-3 overflow-x-auto pb-2">
-                {rangeDeadlines.length > 0 && (
-                  <div className="flex-1 min-w-[180px] max-w-md">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-[11px] font-semibold tracking-wide text-muted-foreground">마감</span>
-                      <div className="flex-1 h-px bg-border/60" />
-                    </div>
-                    <div className="space-y-2">
-                      {rangeDeadlines.map(dl => renderDeadlineCard(dl, true))}
-                    </div>
-                  </div>
-                )}
-                {categorySections.map(sec => (
-                  <div key={`col:${sec.category || "__none__"}`} className="flex-1 min-w-[180px] max-w-md">
-                    {renderCategorySection(sec, true)}
-                  </div>
-                ))}
-              </div>
             )
           ) : (
           <div className="space-y-6">
