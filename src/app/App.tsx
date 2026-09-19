@@ -5719,7 +5719,7 @@ function TodoPanel({
             : tplHoverKey === key ? "bg-primary/5" : ""
         } ${dragSectionCat === sec.category ? "opacity-50" : ""}`}
       >
-        {/* 섹션 헤더 — 카테고리 색 점 + 이름 + 라인.
+        {/* 섹션 헤더 — 카드의 카테고리 뱃지와 같은 디자인 + 라인.
              헤더를 끌면 카테고리 순서 변경(미분류는 항상 마지막이라 제외). */}
         <div
           draggable={!!sec.category}
@@ -5733,8 +5733,10 @@ function TodoPanel({
           className={`flex items-center gap-2 mb-2 ${sec.category ? "cursor-grab active:cursor-grabbing" : ""}`}
           title={sec.category ? "드래그해서 카테고리 순서 변경 (모든 날짜에 적용)" : undefined}
         >
-          <span className="size-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
-          <span className="text-[11px] font-semibold tracking-wide text-muted-foreground truncate">{sec.category || "미분류"}</span>
+          <span
+            className="text-[9px] font-semibold uppercase tracking-wide rounded-sm flex-shrink-0 truncate px-1.5 py-0.5"
+            style={{ color, backgroundColor: color + "22" }}
+          >{sec.category || "미분류"}</span>
           <div className="flex-1 h-px bg-border/60" />
         </div>
         <div className="space-y-2">
