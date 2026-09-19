@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
-  SquareCheck, Clock, Play, Pause,
+  CheckCircle2, Circle, Clock, Play, Pause,
   Plus, X, ChevronLeft, ChevronRight, ChevronDown,
   BarChart2, Settings, Calendar, Target, Flame, FileText,
   Edit3, Check, AlertCircle, PictureInPicture2 as PictureInPicture,
@@ -326,6 +326,10 @@ const isCategoryDrag = (e: React.DragEvent) => {
 
 // 미분류(카테고리 없음) todo 의 색상 — 회색 톤. 카테고리를 지정하지 않은 상태에서만 사용.
 const UNCATEGORIZED_TODO_COLOR = "#94A3B8";
+
+// 항목 카드 제목 색 — 카테고리 색을 진하게 만든 값. 카드 배경(색+"18")이 옅어서 카테고리 색을
+// 그대로 쓰면 흐릿하므로 theme.css 의 --item-title-mix(라이트: 검정, 다크: 흰색)와 섞는다.
+const titleColor = (color: string) => `color-mix(in srgb, ${color} 60%, var(--item-title-mix))`;
 
 // 카테고리 이름 → 색상 조회. templates 중 kind='todo' 인 것에서 title 매칭.
 // 매칭 실패(카테고리 삭제/미분류)면 회색 기본색. 렌더링·상세 패널·드래그 모든 경로가 이 함수를
@@ -3311,10 +3315,10 @@ function TodaySection({
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
                       {d.completed
-                        ? <SquareCheck size={16} style={{ color: blockColor }} />
-                        : <Square size={16} style={{ color: blockColor, opacity: 0.85 }} />}
+                        ? <CheckCircle2 size={16} style={{ color: blockColor }} />
+                        : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
-                    <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</span>
+                    <span className={`text-sm flex-1 min-w-0 truncate font-medium ${d.completed ? "text-muted-foreground" : ""}`} style={d.completed ? undefined : { color: titleColor(blockColor) }}>{d.title}</span>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
                       style={{ backgroundColor: dayColor + "22", color: dayColor }}
@@ -3345,10 +3349,10 @@ function TodaySection({
                   >
                     <button onClick={e => { e.stopPropagation(); onToggleDeadline(d.id); }} className="flex-shrink-0" title={d.completed ? "완료 해제" : "완료 처리"}>
                       {d.completed
-                        ? <SquareCheck size={16} style={{ color: blockColor }} />
-                        : <Square size={16} style={{ color: blockColor, opacity: 0.85 }} />}
+                        ? <CheckCircle2 size={16} style={{ color: blockColor }} />
+                        : <Circle size={16} style={{ color: blockColor, opacity: 0.85 }} />}
                     </button>
-                    <span className={`text-sm flex-1 min-w-0 truncate ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</span>
+                    <span className={`text-sm flex-1 min-w-0 truncate font-medium ${d.completed ? "text-muted-foreground" : ""}`} style={d.completed ? undefined : { color: titleColor(blockColor) }}>{d.title}</span>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0"
                       style={{ backgroundColor: dayColor + "22", color: dayColor }}
@@ -3428,8 +3432,8 @@ function TodaySection({
                     )}
                     <button onClick={e => { e.stopPropagation(); onToggleTodo(t.id); }} className="flex-shrink-0 mt-0.5">
                       {t.completed
-                        ? <SquareCheck size={16} style={{ color }} />
-                        : <Square size={16} className="text-muted-foreground" />}
+                        ? <CheckCircle2 size={16} style={{ color }} />
+                        : <Circle size={16} className="text-muted-foreground" />}
                     </button>
                     <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                       {/* 제목 앞에 카테고리(있으면) 를 인라인 뱃지로. */}
@@ -3440,7 +3444,7 @@ function TodaySection({
                             style={{ color, backgroundColor: color + "20" }}
                           >{t.category}</span>
                         )}
-                        <span className={`text-sm min-w-0 truncate ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
+                        <span className={`text-sm font-medium min-w-0 truncate ${t.completed ? "text-muted-foreground" : ""}`} style={t.completed ? undefined : { color: titleColor(color) }}>{t.title}</span>
                       </div>
                       {t.memo && (
                         <span className="text-[11px] text-muted-foreground line-clamp-2 whitespace-pre-wrap break-words">{t.memo}</span>
@@ -3449,7 +3453,7 @@ function TodaySection({
                       {clItems.length > 0 && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground mt-0.5">
                           {clDone === clItems.length
-                            ? <SquareCheck size={11} style={{ color }} />
+                            ? <CheckCircle2 size={11} style={{ color }} />
                             : <Square size={11} className="text-muted-foreground" />}
                           <span>체크리스트 {clDone}/{clItems.length}</span>
                         </span>
@@ -3497,8 +3501,8 @@ function TodaySection({
                 onClick={e => { e.stopPropagation(); onToggle(block.id); }}
               >
                 {block.completed
-                  ? <SquareCheck size={19} style={{ color }} />
-                  : <Square size={19} className="text-muted-foreground group-hover:text-foreground transition-colors" />
+                  ? <CheckCircle2 size={19} style={{ color }} />
+                  : <Circle size={19} className="text-muted-foreground group-hover:text-foreground transition-colors" />
                 }
               </button>
 
@@ -3511,7 +3515,7 @@ function TodaySection({
                       style={{ color, backgroundColor: color + "20" }}
                     >{block.category}</span>
                   )}
-                  <span className={`text-sm font-medium leading-snug min-w-0 truncate ${block.completed ? "text-muted-foreground" : ""}`}>
+                  <span className={`text-sm font-medium leading-snug min-w-0 truncate ${block.completed ? "text-muted-foreground" : ""}`} style={block.completed ? undefined : { color: titleColor(color) }}>
                     {block.title}
                   </span>
                 </div>
@@ -4645,8 +4649,8 @@ function CalendarSection({
                         title={t.completed ? "완료 해제" : "완료 처리"}
                       >
                         {t.completed
-                          ? <SquareCheck size={10} style={{ color }} />
-                          : <Square size={10} className="text-muted-foreground" />}
+                          ? <CheckCircle2 size={10} style={{ color }} />
+                          : <Circle size={10} className="text-muted-foreground" />}
                       </button>
                       {t.category && (
                         <span
@@ -4654,7 +4658,7 @@ function CalendarSection({
                           style={{ color, backgroundColor: color + "22" }}
                         >{t.category}</span>
                       )}
-                      <span className={`truncate leading-tight font-medium min-w-0 ${t.completed ? "text-muted-foreground" : ""}`}>
+                      <span className={`truncate leading-tight font-medium min-w-0 ${t.completed ? "text-muted-foreground" : ""}`} style={t.completed ? undefined : { color: titleColor(color) }}>
                         {t.title}
                       </span>
                     </div>
@@ -5234,11 +5238,11 @@ function TodoPanel({
           title={d.completed ? "완료 해제" : "완료 처리"}
         >
           {d.completed
-            ? <SquareCheck size={compact ? 16 : 18} style={{ color: blockColor }} />
-            : <Square size={compact ? 16 : 18} className="text-muted-foreground" />}
+            ? <CheckCircle2 size={compact ? 16 : 18} style={{ color: blockColor }} />
+            : <Circle size={compact ? 16 : 18} className="text-muted-foreground" />}
         </button>
         <div className="flex-1 min-w-0">
-          <div className={`font-medium truncate ${compact ? "text-[13px] leading-snug" : "text-sm"} ${d.completed ? "text-muted-foreground" : ""}`}>{d.title}</div>
+          <div className={`font-medium truncate ${compact ? "text-[13px] leading-snug" : "text-sm"} ${d.completed ? "text-muted-foreground" : ""}`} style={d.completed ? undefined : { color: titleColor(blockColor) }}>{d.title}</div>
           {/* 가로 열 배치에선 열 머리글이 이미 날짜라 날짜 줄을 생략해 카드를 낮게 유지. */}
           {!compact && <div className="text-[11px] text-muted-foreground">{fmtDateShort(d.dueDate)}</div>}
         </div>
@@ -5372,7 +5376,7 @@ function TodoPanel({
             className="flex-shrink-0"
             title={t.completed ? "완료 해제" : "완료 처리"}
           >
-            {t.completed ? <SquareCheck size={opts.compact ? 16 : 18} style={{ color }} /> : <Square size={opts.compact ? 16 : 18} className="text-muted-foreground" />}
+            {t.completed ? <CheckCircle2 size={opts.compact ? 16 : 18} style={{ color }} /> : <Circle size={opts.compact ? 16 : 18} className="text-muted-foreground" />}
           </button>
         ) : (
           /* 달성률 미포함 항목은 완료 개념이 없음 — 체크박스 자리만 유지해 카드 정렬을 맞춤. */
@@ -5401,7 +5405,7 @@ function TodoPanel({
                   style={{ color, backgroundColor: color + "22" }}
                 >{t.category}</span>
               )}
-              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "text-muted-foreground" : ""}`}>{t.title}</span>
+              <span className={`min-w-0 truncate font-medium ${opts.compact ? "text-[13px] leading-snug" : "text-sm"} ${t.completed ? "text-muted-foreground" : ""}`} style={t.completed ? undefined : { color: titleColor(color) }}>{t.title}</span>
             </div>
           )}
           {editingId !== t.id && (dateLabel || t.memo || clItems.length > 0) && (
@@ -5410,7 +5414,7 @@ function TodoPanel({
               {t.memo && <span className="truncate">{t.memo}</span>}
               {clItems.length > 0 && (
                 <span className="inline-flex items-center gap-0.5 flex-shrink-0" style={{ color }}>
-                  {clDone === clItems.length ? <SquareCheck size={10} /> : <Square size={10} />}
+                  {clDone === clItems.length ? <CheckCircle2 size={10} /> : <Square size={10} />}
                   <span>{clDone}/{clItems.length}</span>
                 </span>
               )}
@@ -6258,7 +6262,7 @@ function DeadlinesSection({
                     className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
                     style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                   >
-                    <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Square size={18} style={{ color: blockColor }} /></button>
+                    <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium">{d.title}</div>
                       <div className="text-[11px] text-muted-foreground mt-0.5">{d.dueDate}</div>
@@ -6299,7 +6303,7 @@ function DeadlinesSection({
                   className="group/dl flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer hover:brightness-[0.97] transition-all"
                   style={{ backgroundColor: blockColor + "18", borderColor: blockColor + "55" }}
                 >
-                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Square size={18} style={{ color: blockColor }} /></button>
+                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><Circle size={18} style={{ color: blockColor }} /></button>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">{d.title}</div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">{d.dueDate}</div>
@@ -6370,7 +6374,7 @@ function DeadlinesSection({
             <div className="space-y-2 opacity-50">
               {completed.map(d => (
                 <div key={d.id} onClick={() => setBoardId(d.id)} className="group/dl flex items-center gap-4 px-4 py-3 rounded-xl border cursor-pointer hover:bg-muted/50 transition-colors">
-                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><SquareCheck size={18} className="text-sky-600" /></button>
+                  <button onClick={e => { e.stopPropagation(); onToggle(d.id); }}><CheckCircle2 size={18} className="text-sky-600" /></button>
                   <div className="flex-1 min-w-0 text-sm text-muted-foreground">{d.title}</div>
                   <button
                     onClick={e => { e.stopPropagation(); onDelete(d.id); }}
@@ -6949,8 +6953,8 @@ function KanbanBoard({
                                     className="flex-shrink-0"
                                   >
                                     {item.completed
-                                      ? <SquareCheck size={11} style={{ color: cardColor }} />
-                                      : <Square size={11} className="opacity-60" style={{ color: cardColor }} />}
+                                      ? <CheckCircle2 size={11} style={{ color: cardColor }} />
+                                      : <Circle size={11} className="opacity-60" style={{ color: cardColor }} />}
                                   </button>
                                   <span
                                     className={`text-[10px] truncate ${item.completed ? "opacity-50" : "opacity-80"}`}
@@ -8290,7 +8294,7 @@ function NoteList({
                         onClick={() => { setMoreMenuOpen(false); setSelectMode(true); }}
                         className="w-full text-left text-xs px-2.5 py-1.5 rounded-md hover:bg-muted transition-colors flex items-center gap-2"
                       >
-                        <SquareCheck size={12} /> 선택
+                        <CheckCircle2 size={12} /> 선택
                       </button>
                     </div>
                   </>
@@ -8836,8 +8840,8 @@ function FolderCard({
       {selectMode && (
         <div className="flex-shrink-0 flex items-center justify-center">
           {selected
-            ? <SquareCheck size={18} className="text-primary" />
-            : <Square size={18} className="text-muted-foreground" />}
+            ? <CheckCircle2 size={18} className="text-primary" />
+            : <Circle size={18} className="text-muted-foreground" />}
         </div>
       )}
       <div className="flex-shrink-0 flex items-center justify-center size-9 rounded-lg" style={{ backgroundColor: folder.color + "22" }}>
@@ -8982,8 +8986,8 @@ function NoteCard({
       {selectMode && (
         <div className="flex-shrink-0 self-center flex items-center justify-center">
           {selected
-            ? <SquareCheck size={18} className="text-primary" />
-            : <Square size={18} className="text-muted-foreground" />}
+            ? <CheckCircle2 size={18} className="text-primary" />
+            : <Circle size={18} className="text-muted-foreground" />}
         </div>
       )}
       <div className="flex-1 min-w-0">
@@ -10858,8 +10862,8 @@ function BlockDetailPanel({
             }`}
           >
             {block.completed
-              ? <SquareCheck size={16} style={{ color }} />
-              : <Square size={16} className="text-muted-foreground" />}
+              ? <CheckCircle2 size={16} style={{ color }} />
+              : <Circle size={16} className="text-muted-foreground" />}
             <span className={`text-xs ${block.completed ? "text-muted-foreground" : ""}`}>
               {block.completed ? "완료됨 — 다시 열기" : "완료 처리"}
             </span>
@@ -10925,8 +10929,8 @@ function ChecklistNode({
       <div className="group flex items-center gap-1.5 text-xs py-0.5">
         <button onClick={() => onToggle(item.id, !item.completed)} className="flex-shrink-0">
           {item.completed
-            ? <SquareCheck size={13} className="text-sky-500" />
-            : <Square size={13} className="text-muted-foreground" />
+            ? <CheckCircle2 size={13} className="text-sky-500" />
+            : <Circle size={13} className="text-muted-foreground" />
           }
         </button>
         {editing ? (
@@ -11340,8 +11344,8 @@ function TodoDetailPanel({
             }`}
           >
             {todo.completed
-              ? <SquareCheck size={16} style={{ color }} />
-              : <Square size={16} className="text-muted-foreground" />}
+              ? <CheckCircle2 size={16} style={{ color }} />
+              : <Circle size={16} className="text-muted-foreground" />}
             <span className={`text-xs ${todo.completed ? "text-muted-foreground" : ""}`}>
               {todo.completed ? "완료됨 — 다시 열기" : "완료 처리"}
             </span>
@@ -11465,8 +11469,8 @@ function DeadlineDetailPanel({
           }`}
         >
           {deadline.completed
-            ? <SquareCheck size={16} style={{ color: blockColor }} />
-            : <Square size={16} className="text-muted-foreground" />}
+            ? <CheckCircle2 size={16} style={{ color: blockColor }} />
+            : <Circle size={16} className="text-muted-foreground" />}
           <span className={`text-xs ${deadline.completed ? "text-muted-foreground" : ""}`}>
             {deadline.completed ? "완료됨 — 다시 열기" : "완료 처리"}
           </span>

@@ -2,6 +2,9 @@
 
 :root {
   --font-size: 15px;
+  /* 항목 카드 제목 색 = 카테고리 색을 이 색과 섞어 진하게. 라이트에선 검정 쪽으로, 다크에선 흰색 쪽으로
+     섞어야 옅은 색 배경 위에서 읽힌다. App.tsx 의 titleColor() 가 color-mix 로 사용. */
+  --item-title-mix: #000000;
   --background: #F3F7FB;
   --foreground: #1E2733;
   --card: #FFFFFF;
@@ -42,6 +45,7 @@
 }
 
 .dark {
+  --item-title-mix: #FFFFFF;
   --background: #1A222E;
   --foreground: #EAF1F8;
   --card: #232B39;
