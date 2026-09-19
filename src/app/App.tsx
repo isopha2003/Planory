@@ -329,7 +329,7 @@ const UNCATEGORIZED_TODO_COLOR = "#94A3B8";
 
 // 항목 카드 제목 색 — 카테고리 색을 진하게 만든 값. 카드 배경(색+"18")이 옅어서 카테고리 색을
 // 그대로 쓰면 흐릿하므로 theme.css 의 --item-title-mix(라이트: 검정, 다크: 흰색)와 섞는다.
-const titleColor = (color: string) => `color-mix(in srgb, ${color} 60%, var(--item-title-mix))`;
+const titleColor = (color: string) => `color-mix(in srgb, ${color} 75%, var(--item-title-mix))`;
 
 // 카테고리 이름 → 색상 조회. templates 중 kind='todo' 인 것에서 title 매칭.
 // 매칭 실패(카테고리 삭제/미분류)면 회색 기본색. 렌더링·상세 패널·드래그 모든 경로가 이 함수를
