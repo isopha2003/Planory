@@ -930,6 +930,10 @@ export default function App() {
 
   // Calendar UI state
   const [calView, setCalView] = useState<"day" | "week" | "month">("week");
+  // 캘린더 콘텐츠 모드 — grid(시간표): 일/주 그리드, 월(블록만). todos(할 일): 월 보기(할 일만) 고정.
+  // 세션 간 유지. 예전 키(cal_content_view)는 "both" 값이 있어 새 키로 시작.
+  // App 에 두는 이유: 오늘 탭 "캘린더로 이동" 이 시간표 모드를 강제해야 해서.
+  const [calContentView, setCalContentView] = usePersistedState<"grid" | "todos">("cal_content_mode", "grid");
 
   // 메모 탭을 처음 연 뒤로는 계속 마운트해 둔다(숨김 전환만). 앱 시작 때부터 마운트하지 않는
   // 이유는 메모를 안 쓰는 세션에서 굳이 노트 전체를 읽어올 필요가 없어서.
@@ -2374,7 +2378,12 @@ export default function App() {
             {navItems.map(({ id, label, Icon }) => (
               <button
                 key={id}
-                onClick={() => { if (id === "today") setTodayViewDate(TODAY_DATE); setSection(id); }}
+                onClick={() => {
+                  // 사이드바로 직접 들어갈 땐 오늘/이번 기간부터 — 이전에 다른 날짜를 보고 있었어도 초기화.
+                  if (id === "today") setTodayViewDate(TODAY_DATE);
+                  if (id === "calendar") setCalendarInitialDate(TODAY_DATE);
+                  setSection(id);
+                }}
                 title={label}
                 className={`flex items-center justify-center lg:justify-start gap-2.5 px-2 lg:px-3 py-2.5 rounded-lg text-sm transition-all ${
                   section === id
@@ -2419,13 +2428,15 @@ export default function App() {
               onSelect={openBlockDetail}
               onSelectTodo={openTodoDetail}
               onSelectDeadline={openDeadlineDetail}
-              onGoToCalendar={() => { setCalendarInitialDate(todayViewDate); setCalView("day"); setSection("calendar"); }}
+              onGoToCalendar={() => { setCalendarInitialDate(todayViewDate); setCalContentView("grid"); setCalView("day"); setSection("calendar"); }}
             />
             );
           })()}
           {section === "calendar" && (
             <CalendarSection
               initialDate={calendarInitialDate}
+              contentView={calContentView}
+              setContentView={setCalContentView}
               onOpenDay={d => { setTodayViewDate(d); setSection("today"); }}
               blocks={blocks}
               deadlines={deadlines}
@@ -3260,7 +3271,8 @@ function TodaySection({
   };
   const sorted = [...blocks].sort((a, b) => a.startH * 60 + a.startM - (b.startH * 60 + b.startM));
   // 마감 섹션은 보고 있는 날짜 기준 — 그 날짜 전에 지난 것 / 그 날짜부터 7일 안에 오는 것.
-  // 배지의 "N일 초과"·D-day 숫자는 실제 오늘 기준(그게 D-day 의 뜻)이라 그대로 둔다.
+  // 배지의 "N일 초과"·D-day 숫자도 같은 기준. (오늘 기준으로 두면 미래 날짜를 볼 때 아직 안 지난
+  // 마감이 "N일 초과" 로 찍히는 모순이 생김.)
   const overdueDeadlines = deadlines
     .filter(d => d.dueDate < viewStr)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -3323,7 +3335,7 @@ function TodaySection({
             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">지난 마감</div>
             <div className="space-y-1.5">
               {overdueDeadlines.map(d => {
-                const daysOver = Math.abs(daysBetween(parseLocalDate(d.dueDate), TODAY_DATE));
+                const daysOver = Math.abs(daysBetween(parseLocalDate(d.dueDate), viewDate));
                 const dayColor = deadlineToneHex(-daysOver);
                 const blockColor = d.color || dayColor;
                 return (
@@ -3357,7 +3369,7 @@ function TodaySection({
             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">일주일 내 마감 일정</div>
             <div className="space-y-1.5">
               {upcomingDeadlines.map(d => {
-                const daysLeft = daysBetween(parseLocalDate(d.dueDate), TODAY_DATE);
+                const daysLeft = daysBetween(parseLocalDate(d.dueDate), viewDate);
                 const dayColor = deadlineToneHex(daysLeft);
                 const blockColor = d.color || dayColor;
                 return (
@@ -3585,7 +3597,7 @@ function CalendarSection({
   blocks, deadlines, templates, calView, setCalView,
   onSelect, onSelectTodo, onSelectDeadline, onToggle, onAddBlock, onUpdateBlock, onUpdateBlockLocal, onDeleteBlock,
   blockClipboard, setBlockClipboard, onBulkMove, onPasteBlocks, onBulkDelete, onBulkSetRepeat,
-  todos, onAddTodo, categoryRankFor, initialDate, onOpenDay,
+  todos, onAddTodo, categoryRankFor, initialDate, onOpenDay, contentView, setContentView,
 }: {
   blocks: Block[];
   deadlines: Deadline[];
@@ -3594,6 +3606,9 @@ function CalendarSection({
   initialDate: Date;
   // 날짜 하나를 자세히 보기 — 오늘 탭을 그 날짜로 연다(일 보기 대체).
   onOpenDay: (date: Date) => void;
+  // 콘텐츠 모드 — grid(시간표) / todos(할 일). App 이 들고 있음(오늘 탭에서 시간표 모드를 강제하기 위해).
+  contentView: "grid" | "todos";
+  setContentView: (v: "grid" | "todos") => void;
   calView: "day" | "week" | "month";
   setCalView: (v: "day" | "week" | "month") => void;
   onSelect: (b: Block) => void;
@@ -3618,9 +3633,6 @@ function CalendarSection({
   const HOUR_H = 64;
   const TOTAL_H = 24;
   const gridScrollRef = useRef<HTMLDivElement>(null);
-  // 콘텐츠 모드 — grid(시간표): 일/주 그리드, 월(블록만) 전환 가능. todos(할 일): 월 보기(할 일만) 고정.
-  // 세션 간 유지. 예전 키(cal_content_view)는 "both" 값이 있어 새 키로 시작.
-  const [contentView, setContentView] = usePersistedState<"grid" | "todos">("cal_content_mode", "grid");
   // 실제로 그리는 뷰 — 할 일 모드는 항상 월. 이동/라벨/팝오버는 전부 이 값을 기준으로.
   const view: "day" | "week" | "month" = contentView === "todos" ? "month" : calView;
 
