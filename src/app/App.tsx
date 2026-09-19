@@ -3291,13 +3291,13 @@ function TodaySection({
             className="size-6 -ml-1.5 rounded-md flex items-center justify-center hover:bg-muted/60 hover:text-foreground transition-colors"
             title="이전 날"
           ><ChevronLeft size={14} /></button>
-          {/* 날짜 라벨 — 공휴일·일요일은 빨강, 토요일은 파랑(캘린더 요일 헤더와 같은 규칙). 공휴일 이름은 옆에. */}
-          <span className={`px-1 ${
-            holidayName || dow === 0 ? "text-red-400 font-medium"
-              : dow === 6 ? "text-blue-400 font-medium"
-              : isToday ? "" : "text-foreground font-medium"
-          }`}>
-            {`${viewDate.getFullYear()}년 ${viewDate.getMonth() + 1}월 ${viewDate.getDate()}일 ${DAYS_KO[dow]}요일`}
+          {/* 날짜 라벨 — 요일 부분만 색을 준다: 공휴일·일요일 빨강, 토요일 파랑(캘린더 요일 헤더와 같은 규칙).
+               공휴일 이름은 옆에 배지로. */}
+          <span className={`px-1 ${isToday ? "" : "text-foreground font-medium"}`}>
+            {`${viewDate.getFullYear()}년 ${viewDate.getMonth() + 1}월 ${viewDate.getDate()}일 `}
+            <span className={holidayName || dow === 0 ? "text-red-400" : dow === 6 ? "text-blue-400" : ""}>
+              {`${DAYS_KO[dow]}요일`}
+            </span>
           </span>
           {holidayName && (
             <span className="text-[10px] font-medium text-red-400 px-1.5 py-0.5 rounded-full bg-red-400/10 flex-shrink-0">{holidayName}</span>
